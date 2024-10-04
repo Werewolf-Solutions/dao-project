@@ -11,7 +11,8 @@ contract DAO is Ownable {
 
     struct Proposal {
         address proposer;
-        uint256 amount; // Amount of tokens to mint
+        address targetContract; // Contract to call
+        bytes callData; // Encoded function call with arguments
         uint256 votes; // Total votes in favor
         bool executed; // Whether the proposal has been executed
     }
@@ -25,28 +26,29 @@ contract DAO is Ownable {
         treasury = Treasury(_treasury);
     }
 
-    // Function to propose minting tokens to Treasury
-    function proposeMintToTreasury(uint256 amount) external onlyOwner {
-        token.mint(amount);
-    }
+    // Function to create a generalized proposal
+    function createProposal(
+        address _targetContract,
+        string memory _functionSignature,
+        bytes memory _functionParams
+    ) public onlyOwner {
+        // Encode the function call data
+        bytes memory callData = abi.encodeWithSignature(
+            _functionSignature,
+            _functionParams
+        );
 
-    // Function to propose adding allowed token to Treasury
-    function proposeAddAllowedToken(address _token) external onlyOwner {
-        treasury.addAllowedToken(_token);
-    }
-
-    // Create a proposal to mint new tokens
-    function createProposal(uint256 amount) external {
         proposals[proposalCount] = Proposal({
             proposer: msg.sender,
-            amount: amount,
+            targetContract: _targetContract,
+            callData: callData,
             votes: 0,
             executed: false
         });
         proposalCount++;
     }
 
-    // Vote on a proposal
+    // Voting function
     function vote(uint256 proposalId) external {
         Proposal storage proposal = proposals[proposalId];
         require(!voted[msg.sender][proposalId], "Already voted");
@@ -56,7 +58,7 @@ contract DAO is Ownable {
         proposal.votes += voterBalance;
     }
 
-    // Execute proposal to mint tokens
+    // Function to execute a proposal
     function executeProposal(uint256 proposalId) external {
         Proposal storage proposal = proposals[proposalId];
         require(!proposal.executed, "Proposal already executed");
@@ -67,7 +69,52 @@ contract DAO is Ownable {
 
         proposal.executed = true;
 
-        // Mint tokens to the Treasury
-        token.mint(proposal.amount);
+        // Execute the function call using low-level call
+        (bool success, ) = proposal.targetContract.call(proposal.callData);
+        require(success, "Function call failed");
+    }
+
+    // Helper function to create specific proposals for minting tokens
+    function proposeMintToTreasury(uint256 amount) external {
+        createProposal(
+            address(token),
+            "mint(address,uint256)",
+            abi.encode(address(treasury), amount)
+        );
+    }
+
+    // Helper function to propose adding allowed token in Treasury
+    function proposeAddAllowedToken(address _token) external {
+        createProposal(
+            address(treasury),
+            "addAllowedToken(address)",
+            abi.encode(_token)
+        );
+    }
+
+    // Helper function to propose setting a new Treasury in the Token contract
+    function proposeSetTreasury(address newTreasury) external {
+        createProposal(
+            address(token),
+            "setTreasury(address)",
+            abi.encode(newTreasury)
+        );
+    }
+
+    // Example for token sale function call
+    function proposeStartTokenSale(uint256 amount, uint256 price) external {
+        createProposal(
+            address(token), // Assuming token sale is part of token
+            "startSale(uint256,uint256)",
+            abi.encode(amount, price)
+        );
+    }
+
+    function delegate(address delegatee) external {
+        // Implement delegation logic efficiently
+    }
+
+    function undelegate() external {
+        // Implement undelegation logic efficiently
     }
 }

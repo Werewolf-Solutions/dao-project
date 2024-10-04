@@ -29,34 +29,77 @@ describe("DAO Contract", function () {
   });
 
   it("should allow the DAO to mint tokens to Treasury", async function () {
-    const mintAmount = 1000;
+    const mintAmount = hre.ethers.utils.parseUnits("1000", 18);
 
-    // Propose minting tokens to Treasury
-    await dao.proposeMintToTreasury(mintAmount);
+    const treasuryBalanceBefore = await token.balanceOf(treasury.address);
+    console.log(hre.ethers.utils.formatUnits(treasuryBalanceBefore, 18));
+
+    // Propose minting tokens to Treasury (create the proposal with function signature)
+    const mintProposalCallData = hre.ethers.utils.defaultAbiCoder.encode(
+      ["address", "uint256"],
+      [treasury.address, mintAmount]
+    );
+    await dao.createProposal(
+      token.address,
+      "mint(address,uint256)",
+      mintProposalCallData
+    );
+
+    // Addr1 and addr2 vote
+    await dao.connect(addr1).vote(0);
+    await dao.connect(addr2).vote(0);
+
+    // Execute the proposal
+    await dao.executeProposal(0);
 
     // Check Treasury balance after minting
     const treasuryBalance = await token.balanceOf(treasury.address);
+    console.log(hre.ethers.utils.formatUnits(treasuryBalance, 18));
+
     expect(treasuryBalance.toString()).to.equal(
       hre.ethers.utils.parseUnits("1000", 18).toString()
     );
   });
 
-  it("should allow creating proposals", async function () {
+  it("should allow creating proposals with function signatures", async function () {
     const mintAmount = hre.ethers.utils.parseUnits("5000", 18);
 
+    // Encode the mint function proposal
+    const mintProposalCallData = hre.ethers.utils.defaultAbiCoder.encode(
+      ["address", "uint256"],
+      [treasury.address, mintAmount]
+    );
+
     // Create a proposal
-    await dao.connect(addr1).createProposal(mintAmount);
+    await dao
+      .connect(addr1)
+      .createProposal(
+        token.address,
+        "mint(address,uint256)",
+        mintProposalCallData
+      );
 
     const proposal = await dao.proposals(0);
-    expect(proposal.amount.toString()).to.equal(mintAmount.toString());
     expect(proposal.proposer).to.equal(addr1.address);
   });
 
   it("should allow voting on proposals", async function () {
     const mintAmount = hre.ethers.utils.parseUnits("5000", 18);
 
+    // Encode the mint function proposal
+    const mintProposalCallData = hre.ethers.utils.defaultAbiCoder.encode(
+      ["address", "uint256"],
+      [treasury.address, mintAmount]
+    );
+
     // Create a proposal
-    await dao.connect(addr1).createProposal(mintAmount);
+    await dao
+      .connect(addr1)
+      .createProposal(
+        token.address,
+        "mint(address,uint256)",
+        mintProposalCallData
+      );
 
     // Transfer some tokens to addr1 and addr2 for voting
     await token.transfer(
@@ -81,8 +124,20 @@ describe("DAO Contract", function () {
   it("should mint tokens to Treasury when 'Token Sale' proposal passes", async function () {
     const mintAmount = hre.ethers.utils.parseUnits("5000", 18);
 
+    // Encode the mint function proposal
+    const mintProposalCallData = hre.ethers.utils.defaultAbiCoder.encode(
+      ["address", "uint256"],
+      [treasury.address, mintAmount]
+    );
+
     // Create a proposal to mint 5,000 tokens
-    await dao.connect(addr1).createProposal(mintAmount);
+    await dao
+      .connect(addr1)
+      .createProposal(
+        token.address,
+        "mint(address,uint256)",
+        mintProposalCallData
+      );
 
     // Transfer tokens to addr1 and addr2 for voting
     await token.transfer(
@@ -111,8 +166,20 @@ describe("DAO Contract", function () {
   it("should not allow executing failed proposals", async function () {
     const mintAmount = hre.ethers.utils.parseUnits("5000", 18);
 
+    // Encode the mint function proposal
+    const mintProposalCallData = hre.ethers.utils.defaultAbiCoder.encode(
+      ["address", "uint256"],
+      [treasury.address, mintAmount]
+    );
+
     // Create a proposal
-    await dao.connect(addr1).createProposal(mintAmount);
+    await dao
+      .connect(addr1)
+      .createProposal(
+        token.address,
+        "mint(address,uint256)",
+        mintProposalCallData
+      );
 
     // Addr1 votes (without reaching majority)
     await token.transfer(

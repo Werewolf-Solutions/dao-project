@@ -14,7 +14,6 @@ contract Token is ERC20, Ownable {
         treasury = _treasury; // Set the Treasury address
         // Mint initial 1M tokens directly to the DAO (deployer)
         _mint(msg.sender, 1_000_000 * 10 ** decimals());
-        transferOwnership(msg.sender); // DAO is initially the owner
     }
 
     // Only allow DAO to mint tokens
