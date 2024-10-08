@@ -5,7 +5,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "./Token.sol";
 import "./Treasury.sol";
 
-contract DAO is Ownable {
+contract DAO {
     Token public token;
     Treasury public treasury;
 
@@ -20,10 +20,13 @@ contract DAO is Ownable {
     uint256 public proposalCount;
     mapping(uint256 => Proposal) public proposals;
     mapping(address => mapping(uint256 => bool)) public voted; // Tracks votes by user for each proposal
+    address public treasuryAddress;
+    uint256 public proposalCost = 10 * (10 ** 18); // cost to create a proposal in tokens
 
-    constructor(address _token, address _treasury) Ownable(msg.sender) {
+    constructor(address _token, address _treasury) {
         token = Token(_token);
         treasury = Treasury(_treasury);
+        treasuryAddress = _treasury;
     }
 
     // Function to create a generalized proposal
@@ -31,11 +34,23 @@ contract DAO is Ownable {
         address _targetContract,
         string memory _functionSignature,
         bytes memory _functionParams
-    ) public onlyOwner {
+    ) public {
+        require(
+            token.balanceOf(msg.sender) >= proposalCost,
+            "Insufficient balance to create proposal"
+        );
+
+        // Transfer the proposal cost to the treasury address
+        require(
+            token.transferFrom(msg.sender, treasuryAddress, proposalCost),
+            "Token transfer for proposal cost failed"
+        );
+
         // Encode the function call data
+        // Encode the function call data with the function signature and parameters directly
         bytes memory callData = abi.encodeWithSignature(
             _functionSignature,
-            _functionParams
+            abi.decode(_functionParams, (uint256)) // Decode and re-encode to match the signature
         );
 
         proposals[proposalCount] = Proposal({
@@ -49,6 +64,7 @@ contract DAO is Ownable {
     }
 
     // Voting function
+    // TODO: change voting power?
     function vote(uint256 proposalId) external {
         Proposal storage proposal = proposals[proposalId];
         require(!voted[msg.sender][proposalId], "Already voted");
@@ -62,8 +78,14 @@ contract DAO is Ownable {
     function executeProposal(uint256 proposalId) external {
         Proposal storage proposal = proposals[proposalId];
         require(!proposal.executed, "Proposal already executed");
+
+        // Calculate circulating supply
+        uint256 circulatingSupply = token.totalSupply() -
+            token.balanceOf(address(treasury));
+
+        // Check if votes exceed half of the circulating supply
         require(
-            proposal.votes > token.totalSupply() / 2,
+            proposal.votes > circulatingSupply / 2,
             "Proposal must be passed to execute"
         );
 
@@ -74,13 +96,10 @@ contract DAO is Ownable {
         require(success, "Function call failed");
     }
 
-    // Helper function to create specific proposals for minting tokens
-    function proposeMintToTreasury(uint256 amount) external {
-        createProposal(
-            address(token),
-            "mint(address,uint256)",
-            abi.encode(address(treasury), amount)
-        );
+    // BUG: remove in deploy
+    // Helper function to mint tokens
+    function mintToTreasury(uint256 amount) external {
+        token.mint(amount);
     }
 
     // Helper function to propose adding allowed token in Treasury

@@ -2,24 +2,54 @@ import { expect } from "chai";
 import hre from "hardhat";
 
 describe("Token Contract", function () {
-  let Token, Treasury, token, treasury, owner, addr1, addr2, dao;
+  let Token, DAO, Treasury, token, treasury, founder, addr1, addr2, dao;
 
   beforeEach(async function () {
     // Get the contract factories and signers
     Token = await hre.ethers.getContractFactory("Token");
     Treasury = await hre.ethers.getContractFactory("Treasury");
-    [owner, addr1, addr2] = await hre.ethers.getSigners();
+    DAO = await hre.ethers.getContractFactory("DAO");
+    [founder, addr1, addr2] = await hre.ethers.getSigners();
 
-    // Deploy the treasury contract
-    treasury = await Treasury.deploy(owner.address); // DAO (owner) will be set later
+    // Deploy the treasury contract first
+    treasury = await Treasury.deploy(founder.address); // Deployer will be owner
     await treasury.deployed();
 
-    // Deploy the token contract with Treasury address
+    // Deploy the token contract with the Treasury address
     token = await Token.deploy(treasury.address);
     await token.deployed();
 
-    // Simulate DAO being set
-    await token.setDAO(owner.address); // owner as the DAO in this test case
+    // Deploy the DAO contract with Token and Treasury addresses
+    dao = await DAO.deploy(token.address, treasury.address);
+    await dao.deployed();
+
+    // Set the DAO as the owner of the Token and Treasury
+    await token.transferOwnership(dao.address);
+    await treasury.transferOwnership(dao.address);
+
+    // Airdrop tokens to founder, addr1, and addr2
+    const airdropAmount = hre.ethers.utils.parseUnits("1000", 18);
+    // await token.testMint(founder.address, airdropAmount);
+    await token.testMint(addr1.address, airdropAmount);
+    await token.testMint(addr2.address, airdropAmount);
+
+    // Log balances
+    console.log(
+      "Founder balance:",
+      hre.ethers.utils.formatUnits(await token.balanceOf(founder.address), 18)
+    );
+    console.log(
+      "Addr1 balance:",
+      hre.ethers.utils.formatUnits(await token.balanceOf(addr1.address), 18)
+    );
+    console.log(
+      "Addr2 balance:",
+      hre.ethers.utils.formatUnits(await token.balanceOf(addr2.address), 18)
+    );
+    console.log(
+      "Treasury balance:",
+      hre.ethers.utils.formatUnits(await token.balanceOf(treasury.address), 18)
+    );
   });
 
   it("should assign initial total supply to the Treasury", async function () {

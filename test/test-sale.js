@@ -47,9 +47,9 @@ describe("Token Sale Contract", function () {
     await tokenSale.deployed();
 
     // Transfer some tokens to the sale contract
-    await token.transfer(
+    await token.testMint(
       tokenSale.address,
-      hre.ethers.utils.parseUnits("1000", 18)
+      hre.ethers.utils.parseUnits("100000", 18)
     );
   });
 

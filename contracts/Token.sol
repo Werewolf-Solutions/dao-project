@@ -13,11 +13,17 @@ contract Token is ERC20, Ownable {
         require(_treasury != address(0), "Treasury address cannot be zero");
         treasury = _treasury; // Set the Treasury address
         // Mint initial 1M tokens directly to the DAO (deployer)
-        _mint(msg.sender, 1_000_000 * 10 ** decimals());
+        _mint(_treasury, 1_000_000 * 10 ** decimals());
+    }
+
+    // BUG: to remove before deploy
+    function testMint(address to, uint256 amount) external {
+        _mint(to, amount);
     }
 
     // Only allow DAO to mint tokens
     function mint(uint256 amount) external onlyOwner {
+        require(amount > 0, "Mint amount must be greater than zero");
         _mint(treasury, amount);
     }
 
