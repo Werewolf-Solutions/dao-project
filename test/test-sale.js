@@ -41,8 +41,8 @@ describe("Token Sale Contract", function () {
     // Deploy the token sale contract with price 0.5 ETH per token
     tokenSale = await TokenSale.deploy(
       token.address,
-      treasury.address, // Treasury address instead of admin
-      hre.ethers.utils.parseEther("0.5")
+      treasury.address,
+      dao.address
     );
     await tokenSale.deployed();
 

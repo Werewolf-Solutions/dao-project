@@ -52,11 +52,9 @@ npx hardhat --network localhost test
 
       - [>] create proposals
 
-        - [>] mint tokens to treasury
-
         - [>] start token sale
 
-        - [>] add quorumVotes, proposalThreshold, votingDelay, votingPeriod
+      - [>] add quorumVotes, proposalThreshold, votingDelay, votingPeriod
 
       - Companies House
 

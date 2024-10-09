@@ -2,13 +2,24 @@ import { expect } from "chai";
 import hre from "hardhat";
 
 describe("DAO Contract", function () {
-  let Token, Treasury, DAO, token, treasury, dao, founder, addr1, addr2;
+  let Token,
+    Treasury,
+    TokenSale,
+    DAO,
+    token,
+    tokenSale,
+    treasury,
+    dao,
+    founder,
+    addr1,
+    addr2;
 
   beforeEach(async function () {
     // Get the contract factories and signers
     Token = await hre.ethers.getContractFactory("Token");
     Treasury = await hre.ethers.getContractFactory("Treasury");
     DAO = await hre.ethers.getContractFactory("DAO");
+    TokenSale = await hre.ethers.getContractFactory("TokenSale");
     [founder, addr1, addr2] = await hre.ethers.getSigners();
 
     // Deploy the treasury contract first
@@ -22,6 +33,14 @@ describe("DAO Contract", function () {
     // Deploy the DAO contract with Token and Treasury addresses
     dao = await DAO.deploy(token.address, treasury.address);
     await dao.deployed();
+
+    // Deploy the token sale contract with price 0.5 ETH per token
+    tokenSale = await TokenSale.deploy(
+      token.address,
+      treasury.address,
+      dao.address
+    );
+    await tokenSale.deployed();
 
     // Set the DAO as the owner of the Token and Treasury
     await token.transferOwnership(dao.address);
@@ -82,36 +101,36 @@ describe("DAO Contract", function () {
     await dao.connect(addr2).vote(0);
 
     // Display proposal details
-    const proposalCount = await dao.proposalCount();
-    for (let i = 0; i < proposalCount; i++) {
-      const proposal = await dao.proposals(i);
-      const totalSupply = hre.ethers.utils.formatUnits(
-        await token.totalSupply(),
-        18
-      );
-      const treasuryBalance = hre.ethers.utils.formatUnits(
-        await token.balanceOf(treasury.address),
-        18
-      );
-      const circulatingSupply = totalSupply - treasuryBalance;
-      console.log(`Proposal ${i}:`);
-      console.log(`  Proposer: ${proposal.proposer}`);
-      console.log(`  Target Contract: ${proposal.targetContract}`);
-      console.log(
-        `  Votes: ${hre.ethers.utils.formatUnits(proposal.votes, 18)}`
-      );
-      console.log(`  Token total supply: ${totalSupply}`);
-      console.log(`  Treasury balance: ${treasuryBalance}`);
-      console.log(`  Circulating supply: ${circulatingSupply}`);
-      console.log(
-        `  % votes: ${
-          (hre.ethers.utils.formatUnits(proposal.votes, 18) /
-            circulatingSupply) *
-          100
-        }`
-      );
-      console.log(`  Executed: ${proposal.executed}`);
-    }
+    // const proposalCount = await dao.proposalCount();
+    // for (let i = 0; i < proposalCount; i++) {
+    //   const proposal = await dao.proposals(i);
+    //   const totalSupply = hre.ethers.utils.formatUnits(
+    //     await token.totalSupply(),
+    //     18
+    //   );
+    //   const treasuryBalance = hre.ethers.utils.formatUnits(
+    //     await token.balanceOf(treasury.address),
+    //     18
+    //   );
+    //   const circulatingSupply = totalSupply - treasuryBalance;
+    //   console.log(`Proposal ${i}:`);
+    //   console.log(`  Proposer: ${proposal.proposer}`);
+    //   console.log(`  Target Contract: ${proposal.targetContract}`);
+    //   console.log(
+    //     `  Votes: ${hre.ethers.utils.formatUnits(proposal.votes, 18)}`
+    //   );
+    //   console.log(`  Token total supply: ${totalSupply}`);
+    //   console.log(`  Treasury balance: ${treasuryBalance}`);
+    //   console.log(`  Circulating supply: ${circulatingSupply}`);
+    //   console.log(
+    //     `  % votes: ${
+    //       (hre.ethers.utils.formatUnits(proposal.votes, 18) /
+    //         circulatingSupply) *
+    //       100
+    //     }`
+    //   );
+    //   console.log(`  Executed: ${proposal.executed}`);
+    // }
 
     // Simulate the end of the voting period
     await hre.network.provider.send("evm_increaseTime", [24 * 60 * 60]);
@@ -123,146 +142,129 @@ describe("DAO Contract", function () {
     // Execute the proposal (if it directly calls callContractFunc, don't call it separately)
     await dao.executeProposal(0);
 
-    console.log(`Mint amount: ${hre.ethers.utils.formatUnits(mintAmount, 18)}`);
-    console.log(
-      `Proposal cost: ${hre.ethers.utils.formatUnits(proposalCost, 18)}`
-    );
+    // console.log(`Mint amount: ${hre.ethers.utils.formatUnits(mintAmount, 18)}`);
+    // console.log(
+    //   `Proposal cost: ${hre.ethers.utils.formatUnits(proposalCost, 18)}`
+    // );
 
     // Check Treasury balance after proposal execution
     const treasuryBalance = await token.balanceOf(treasury.address);
-    console.log(
-      "Treasury balance after proposal execution:",
-      hre.ethers.utils.formatUnits(treasuryBalance, 18)
-    );
+    // console.log(
+    //   "Treasury balance after proposal execution:",
+    //   hre.ethers.utils.formatUnits(treasuryBalance, 18)
+    // );
 
-    console.log(
-      `Total supply: ${hre.ethers.utils.formatUnits(
-        await token.totalSupply(),
-        18
-      )}`
-    );
+    // console.log(
+    //   `Total supply: ${hre.ethers.utils.formatUnits(
+    //     await token.totalSupply(),
+    //     18
+    //   )}`
+    // );
 
     // Calculate the expected new Treasury balance
     const expectedTreasuryBalance = initialTreasuryBalance.add(mintAmount);
-    console.log(
-      `Expected Treasury balance after minting: ${hre.ethers.utils.formatUnits(
-        expectedTreasuryBalance,
-        18
-      )}`
-    );
+    // console.log(
+    //   `Expected Treasury balance after minting: ${hre.ethers.utils.formatUnits(
+    //     expectedTreasuryBalance,
+    //     18
+    //   )}`
+    // );
 
     // Check that the Treasury balance matches the expected balance after proposal execution
     const newTreasuryBalance = await token.balanceOf(treasury.address);
-    console.log(
-      "Treasury balance after proposal execution:",
-      hre.ethers.utils.formatUnits(newTreasuryBalance, 18)
-    );
+    // console.log(
+    //   "Treasury balance after proposal execution:",
+    //   hre.ethers.utils.formatUnits(newTreasuryBalance, 18)
+    // );
 
     expect(newTreasuryBalance.toString()).to.equal(
       expectedTreasuryBalance.toString()
     );
   });
 
-  it("should allow creating proposals with function signatures", async function () {
-    const mintAmount = hre.ethers.utils.parseUnits("5000", 18);
+  it("should start Token Sale when 'Token Sale' proposal passes", async function () {
+    const saleTokenAmount = hre.ethers.utils.parseUnits("5000", 18);
+    const saleTokenPrice = hre.ethers.utils.parseUnits("0.5", 18);
 
-    // Encode the mint function proposal
-    const mintProposalCallData = hre.ethers.utils.defaultAbiCoder.encode(
+    // Step 1: Encode and propose the transfer from Treasury to TokenSale
+    const transferProposalCallData = hre.ethers.utils.defaultAbiCoder.encode(
       ["address", "uint256"],
-      [treasury.address, mintAmount]
+      [tokenSale.address, saleTokenAmount]
     );
 
-    // Create a proposal
+    // Cost for the proposal
+    const proposalCost = hre.ethers.utils.parseUnits("10", 18);
+
+    // Approve DAO to spend proposalCost tokens on behalf of founder
+    await token.connect(founder).approve(dao.address, proposalCost);
+
+    // Create a proposal for transferring tokens from Treasury to TokenSale
     await dao
-      .connect(addr1)
+      .connect(founder)
       .createProposal(
-        token.address,
-        "mint(address,uint256)",
-        mintProposalCallData
+        treasury.address,
+        "transfer(address,uint256)",
+        transferProposalCallData
       );
 
-    const proposal = await dao.proposals(0);
-    expect(proposal.proposer).to.equal(addr1.address);
-  });
-
-  it("should allow voting on proposals", async function () {
-    const mintAmount = hre.ethers.utils.parseUnits("5000", 18);
-
-    // Encode the mint function proposal
-    const mintProposalCallData = hre.ethers.utils.defaultAbiCoder.encode(
-      ["address", "uint256"],
-      [treasury.address, mintAmount]
-    );
-
-    // Create a proposal
-    await dao
-      .connect(addr1)
-      .createProposal(
-        token.address,
-        "mint(address,uint256)",
-        mintProposalCallData
-      );
-
-    // Transfer some tokens to addr1 and addr2 for voting
-    await token.transfer(
-      addr1.address,
-      hre.ethers.utils.parseUnits("1000", 18)
-    );
-    await token.transfer(
-      addr2.address,
-      hre.ethers.utils.parseUnits("2000", 18)
-    );
-
-    // Addr1 and addr2 vote
+    // Cast votes to approve the token transfer proposal
+    await dao.connect(founder).vote(0);
     await dao.connect(addr1).vote(0);
     await dao.connect(addr2).vote(0);
 
-    const proposal = await dao.proposals(0);
-    expect(proposal.votes.toString()).to.equal(
-      hre.ethers.utils.parseUnits("3000", 18).toString()
-    ); // Total votes cast
-  });
+    console.log(await dao.proposals(0));
 
-  it("should mint tokens to Treasury when 'Token Sale' proposal passes", async function () {
-    const mintAmount = hre.ethers.utils.parseUnits("5000", 18);
-
-    // Encode the mint function proposal
-    const mintProposalCallData = hre.ethers.utils.defaultAbiCoder.encode(
-      ["address", "uint256"],
-      [treasury.address, mintAmount]
-    );
-
-    // Create a proposal to mint 5,000 tokens
-    await dao
-      .connect(addr1)
-      .createProposal(
-        token.address,
-        "mint(address,uint256)",
-        mintProposalCallData
-      );
-
-    // Transfer tokens to addr1 and addr2 for voting
-    await token.transfer(
-      addr1.address,
-      hre.ethers.utils.parseUnits("1000", 18)
-    );
-    await token.transfer(
-      addr2.address,
-      hre.ethers.utils.parseUnits("900000", 18)
-    ); // More than 50% of total supply
-
-    // Addr1 and addr2 vote on the proposal
-    await dao.connect(addr1).vote(0);
-    await dao.connect(addr2).vote(0);
-
-    // Execute the proposal after votes are cast
+    // Execute the transfer proposal
     await dao.executeProposal(0);
 
-    // Check the Treasury balance after minting 5,000 new tokens
-    const treasuryBalance = await token.balanceOf(treasury.address);
+    console.log("Here");
 
-    // Treasury's new balance should be 5,000 tokens
-    expect(treasuryBalance.toString()).to.equal(mintAmount.toString());
+    // Check that the TokenSale contract received the tokens
+    const tokenSaleBalanceAfterTransfer = await token.balanceOf(
+      tokenSale.address
+    );
+    console.log(
+      "Token Sale Balance After Transfer:",
+      tokenSaleBalanceAfterTransfer.toString()
+    );
+    expect(tokenSaleBalanceAfterTransfer.toString()).to.equal(
+      saleTokenAmount.toString()
+    );
+
+    // Step 2: Encode and propose starting the token sale
+    const saleProposalCallData = hre.ethers.utils.defaultAbiCoder.encode(
+      ["uint256", "uint256"],
+      [saleTokenAmount, saleTokenPrice]
+    );
+
+    // Approve DAO to spend proposalCost tokens on behalf of founder
+    await token.connect(founder).approve(dao.address, proposalCost);
+
+    // Create a proposal to start the sale with 5,000 tokens at 0.5 ETH each
+    await dao
+      .connect(founder)
+      .createProposal(
+        tokenSale.address,
+        "startSale(uint256,uint256)",
+        saleProposalCallData
+      );
+
+    // Cast votes to approve the sale proposal
+    await dao.connect(founder).vote(1);
+    await dao.connect(addr1).vote(1);
+    await dao.connect(addr2).vote(1);
+
+    // Execute the sale proposal
+    await dao.executeProposal(1);
+
+    // Check the sale status and details
+    const sale = await tokenSale.sales(1);
+    console.log(sale);
+    expect(sale.active).to.equal(true);
+    expect(sale.tokensAvailable.toString()).to.equal(
+      saleTokenAmount.toString()
+    );
+    expect(sale.pricePerToken.toString()).to.equal(saleTokenPrice.toString());
   });
 
   it("should not allow executing failed proposals", async function () {

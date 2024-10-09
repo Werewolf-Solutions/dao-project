@@ -29,7 +29,7 @@ contract DAO {
         treasuryAddress = _treasury;
     }
 
-    // Function to create a generalized proposal
+    // Function to create a proposal
     function createProposal(
         address _targetContract,
         string memory _functionSignature,
@@ -46,7 +46,6 @@ contract DAO {
             "Token transfer for proposal cost failed"
         );
 
-        // Encode the function call data
         // Encode the function call data with the function signature and parameters directly
         bytes memory callData = abi.encodeWithSignature(
             _functionSignature,
@@ -94,12 +93,6 @@ contract DAO {
         // Execute the function call using low-level call
         (bool success, ) = proposal.targetContract.call(proposal.callData);
         require(success, "Function call failed");
-    }
-
-    // BUG: remove in deploy
-    // Helper function to mint tokens
-    function mintToTreasury(uint256 amount) external {
-        token.mint(amount);
     }
 
     // Helper function to propose adding allowed token in Treasury
