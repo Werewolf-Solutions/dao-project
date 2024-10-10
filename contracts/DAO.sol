@@ -46,10 +46,15 @@ contract DAO {
             "Token transfer for proposal cost failed"
         );
 
-        // Encode the function call data with the function signature and parameters directly
+        // Directly encode the function call data with the function signature and parameters
+        // bytes memory callData = abi.encodePacked(
+        //     abi.encodeWithSignature(_functionSignature),
+        //     _functionParams
+        // );
+
         bytes memory callData = abi.encodeWithSignature(
             _functionSignature,
-            abi.decode(_functionParams, (uint256)) // Decode and re-encode to match the signature
+            _functionParams
         );
 
         proposals[proposalCount] = Proposal({
@@ -77,6 +82,12 @@ contract DAO {
     function executeProposal(uint256 proposalId) external {
         Proposal storage proposal = proposals[proposalId];
         require(!proposal.executed, "Proposal already executed");
+
+        // Before the function call
+        require(
+            proposal.targetContract != address(0),
+            "Invalid target contract"
+        );
 
         // Calculate circulating supply
         uint256 circulatingSupply = token.totalSupply() -

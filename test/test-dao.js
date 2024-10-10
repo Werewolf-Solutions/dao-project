@@ -46,29 +46,20 @@ describe("DAO Contract", function () {
     await token.transferOwnership(dao.address);
     await treasury.transferOwnership(dao.address);
 
+    // console.log(`DAO address: ${dao.address}`);
+    // console.log(`token owner: ${await token.owner()}`);
+    // console.log(`token sale owner: ${await tokenSale.owner()}`);
+    // console.log(`treasury owner: ${await treasury.owner()}`);
+
     // Airdrop tokens to founder, addr1, and addr2
     const airdropAmount = hre.ethers.utils.parseUnits("1000", 18);
     await token.testMint(founder.address, airdropAmount);
     await token.testMint(addr1.address, airdropAmount);
     await token.testMint(addr2.address, airdropAmount);
-
-    // Log balances
-    console.log(
-      "Founder balance:",
-      hre.ethers.utils.formatUnits(await token.balanceOf(founder.address), 18)
-    );
-    console.log(
-      "Addr1 balance:",
-      hre.ethers.utils.formatUnits(await token.balanceOf(addr1.address), 18)
-    );
-    console.log(
-      "Addr2 balance:",
-      hre.ethers.utils.formatUnits(await token.balanceOf(addr2.address), 18)
-    );
-    console.log(
-      "Treasury balance:",
-      hre.ethers.utils.formatUnits(await token.balanceOf(treasury.address), 18)
-    );
+    // await token.testMint(
+    //   tokenSale.address,
+    //   hre.ethers.utils.parseUnits("100", 18)
+    // );
   });
 
   it("should allow the DAO to mint new tokens to Treasury", async function () {
@@ -183,17 +174,38 @@ describe("DAO Contract", function () {
   });
 
   it("should start Token Sale when 'Token Sale' proposal passes", async function () {
+    // Log balances
+    console.log(
+      "Founder balance:",
+      hre.ethers.utils.formatUnits(await token.balanceOf(founder.address), 18)
+    );
+    console.log(
+      "Addr1 balance:",
+      hre.ethers.utils.formatUnits(await token.balanceOf(addr1.address), 18)
+    );
+    console.log(
+      "Addr2 balance:",
+      hre.ethers.utils.formatUnits(await token.balanceOf(addr2.address), 18)
+    );
+    console.log(
+      "Treasury balance:",
+      hre.ethers.utils.formatUnits(await token.balanceOf(treasury.address), 18)
+    );
+    console.log(
+      "Token sale balance:",
+      hre.ethers.utils.formatUnits(await token.balanceOf(tokenSale.address), 18)
+    );
     const saleTokenAmount = hre.ethers.utils.parseUnits("5000", 18);
     const saleTokenPrice = hre.ethers.utils.parseUnits("0.5", 18);
+
+    // Cost for the proposal
+    const proposalCost = hre.ethers.utils.parseUnits("10", 18);
 
     // Step 1: Encode and propose the transfer from Treasury to TokenSale
     const transferProposalCallData = hre.ethers.utils.defaultAbiCoder.encode(
       ["address", "uint256"],
       [tokenSale.address, saleTokenAmount]
     );
-
-    // Cost for the proposal
-    const proposalCost = hre.ethers.utils.parseUnits("10", 18);
 
     // Approve DAO to spend proposalCost tokens on behalf of founder
     await token.connect(founder).approve(dao.address, proposalCost);
@@ -214,10 +226,12 @@ describe("DAO Contract", function () {
 
     console.log(await dao.proposals(0));
 
+    console.log("Here1");
+
     // Execute the transfer proposal
     await dao.executeProposal(0);
 
-    console.log("Here");
+    console.log("Here2");
 
     // Check that the TokenSale contract received the tokens
     const tokenSaleBalanceAfterTransfer = await token.balanceOf(
