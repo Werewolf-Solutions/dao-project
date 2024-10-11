@@ -46,16 +46,28 @@ contract DAO {
             "Token transfer for proposal cost failed"
         );
 
-        // Directly encode the function call data with the function signature and parameters
+        // This works with mint
+        bytes memory callData = abi.encodePacked(
+            abi.encodeWithSignature(_functionSignature),
+            _functionParams
+        );
+
         // bytes memory callData = abi.encodePacked(
-        //     abi.encodeWithSignature(_functionSignature),
+        //     bytes4(keccak256(bytes(_functionSignature))),
         //     _functionParams
         // );
 
-        bytes memory callData = abi.encodeWithSignature(
-            _functionSignature,
-            _functionParams
-        );
+        // bytes memory callData = abi.encodeWithSignature(
+        //     _functionSignature,
+        //     _functionParams
+        // );
+
+        // Example encoding to call transfer function
+        // bytes memory callData = abi.encodeWithSignature(
+        //     "transfer(address,uint256)",
+        //     to,
+        //     amount
+        // );
 
         proposals[proposalCount] = Proposal({
             proposer: msg.sender,

@@ -71,6 +71,8 @@ describe("DAO Contract", function () {
       [mintAmount]
     );
 
+    console.log(mintProposalCallData);
+
     // Cost for the proposal
     const proposalCost = hre.ethers.utils.parseUnits("10", 18);
 
@@ -129,6 +131,10 @@ describe("DAO Contract", function () {
 
     // Record the initial Treasury balance before minting
     const initialTreasuryBalance = await token.balanceOf(treasury.address);
+    console.log(
+      "Treasury balance before proposal execution:",
+      hre.ethers.utils.formatUnits(initialTreasuryBalance, 18)
+    );
 
     // Execute the proposal (if it directly calls callContractFunc, don't call it separately)
     await dao.executeProposal(0);
@@ -163,10 +169,10 @@ describe("DAO Contract", function () {
 
     // Check that the Treasury balance matches the expected balance after proposal execution
     const newTreasuryBalance = await token.balanceOf(treasury.address);
-    // console.log(
-    //   "Treasury balance after proposal execution:",
-    //   hre.ethers.utils.formatUnits(newTreasuryBalance, 18)
-    // );
+    console.log(
+      "Treasury balance after proposal execution:",
+      hre.ethers.utils.formatUnits(newTreasuryBalance, 18)
+    );
 
     expect(newTreasuryBalance.toString()).to.equal(
       expectedTreasuryBalance.toString()
@@ -206,6 +212,17 @@ describe("DAO Contract", function () {
       ["address", "uint256"],
       [tokenSale.address, saleTokenAmount]
     );
+
+    console.log(transferProposalCallData);
+
+    const types = ["address", "uint256"];
+
+    const values = [tokenSale.address, saleTokenAmount];
+    const message = hre.ethers.utils.defaultAbiCoder.encode(types, values);
+    console.log(message);
+    const hash = hre.ethers.utils.keccak256(message);
+
+    console.log(hash);
 
     // Approve DAO to spend proposalCost tokens on behalf of founder
     await token.connect(founder).approve(dao.address, proposalCost);
