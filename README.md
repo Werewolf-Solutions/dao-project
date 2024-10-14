@@ -54,6 +54,24 @@ npx hardhat --network localhost test
 
         - [>] start token sale
 
+        - test this proposals
+
+          ```solidity
+          createProposal(
+            address(token),
+            "setTreasury(address)",
+            abi.encode(newTreasury)
+          );
+          ```
+
+          ```solidity
+          createProposal(
+            address(treasury),
+            "addAllowedToken(address)",
+            abi.encode(_token)
+          );
+          ```
+
       - [>] add quorumVotes, proposalThreshold, votingDelay, votingPeriod
 
       - Companies House
@@ -101,3 +119,70 @@ npx hardhat --network localhost test
   - [] DAO: GovernorV1
 
   - [] ...
+
+Hi there! I have a problem with abi encoding. What I would like to do is to call contract One function callFunc and call both functions with one and 2 params and ideally even more
+
+This code works with functions with one param and I don't understand why it doesn't work with 2. Could someone explain that to me please?
+
+```solidity
+  contract One {
+  function callFunc(
+          address _targetContract,
+          string memory _functionSignature,
+          bytes memory _functionParams
+      ) public {
+          bytes memory callData = abi.encodePacked(
+              abi.encodeWithSignature(_functionSignature),
+              _functionParams
+          );
+  targetContract.call(callData);
+      }
+  }
+```
+
+```solidity
+  contract Two {
+  function oneParam(address a) ...{
+  ...
+  }
+  function twoParams(address a, uint256 b) ...{
+  ...
+  }
+  }
+```
+
+I'm encoding \_funcParams like this
+
+```js
+const oneParam = hre.ethers.utils.defaultAbiCoder.encode(["address"], [a]);
+```
+
+and
+
+```js
+const twoParams = hre.ethers.utils.defaultAbiCoder.encode(
+  ["address", "uint256"],
+  [a, b]
+);
+```
+
+Then I call the functions like this
+
+```js
+callFunc(targetAddress, "oneParam(address)", oneParam);
+```
+
+and
+
+```js
+callFunc(targetAddress, "twoParams(address,uint256)", twoParams);
+```
+
+and please can you tell me why just this doesn't work?
+
+```solidity
+  bytes memory callData = abi.encodeWithSignature(
+            _functionSignature,
+            _functionParams
+        );
+```

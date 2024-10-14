@@ -42,6 +42,26 @@ describe("DAO Contract", function () {
     );
     await tokenSale.deployed();
 
+    console.log("Here");
+
+    /**--- */
+    // TODO: check this functions when deploy
+    // Approve Treasury contract to spend founder's tokens
+    await token
+      .connect(founder)
+      .approve(treasury.address, hre.ethers.utils.parseUnits("100000", 18));
+
+    // Transfer tokens from founder to another address (e.g., treasury)
+    await treasury.transfer(
+      treasury.address,
+      founder.address, // replace with the desired recipient
+      hre.ethers.utils.parseUnits("100000", 18)
+    );
+
+    /**--- */
+
+    console.log("Here2");
+
     // Set the DAO as the owner of the Token and Treasury
     await token.transferOwnership(dao.address);
     await treasury.transferOwnership(dao.address);
@@ -53,13 +73,17 @@ describe("DAO Contract", function () {
 
     // Airdrop tokens to founder, addr1, and addr2
     const airdropAmount = hre.ethers.utils.parseUnits("1000", 18);
-    await token.testMint(founder.address, airdropAmount);
+
     await token.testMint(addr1.address, airdropAmount);
     await token.testMint(addr2.address, airdropAmount);
     // await token.testMint(
     //   tokenSale.address,
     //   hre.ethers.utils.parseUnits("100", 18)
     // );
+    console.log(
+      "Token total supply:",
+      hre.ethers.utils.formatUnits(await token.totalSupply(), 18)
+    );
   });
 
   it("should allow the DAO to mint new tokens to Treasury", async function () {
@@ -70,8 +94,6 @@ describe("DAO Contract", function () {
       ["uint256"],
       [mintAmount]
     );
-
-    console.log(mintProposalCallData);
 
     // Cost for the proposal
     const proposalCost = hre.ethers.utils.parseUnits("10", 18);
@@ -131,10 +153,10 @@ describe("DAO Contract", function () {
 
     // Record the initial Treasury balance before minting
     const initialTreasuryBalance = await token.balanceOf(treasury.address);
-    console.log(
-      "Treasury balance before proposal execution:",
-      hre.ethers.utils.formatUnits(initialTreasuryBalance, 18)
-    );
+    // console.log(
+    //   "Treasury balance before proposal execution:",
+    //   hre.ethers.utils.formatUnits(initialTreasuryBalance, 18)
+    // );
 
     // Execute the proposal (if it directly calls callContractFunc, don't call it separately)
     await dao.executeProposal(0);
@@ -160,12 +182,12 @@ describe("DAO Contract", function () {
 
     // Calculate the expected new Treasury balance
     const expectedTreasuryBalance = initialTreasuryBalance.add(mintAmount);
-    // console.log(
-    //   `Expected Treasury balance after minting: ${hre.ethers.utils.formatUnits(
-    //     expectedTreasuryBalance,
-    //     18
-    //   )}`
-    // );
+    console.log(
+      `Expected Treasury balance after minting: ${hre.ethers.utils.formatUnits(
+        expectedTreasuryBalance,
+        18
+      )}`
+    );
 
     // Check that the Treasury balance matches the expected balance after proposal execution
     const newTreasuryBalance = await token.balanceOf(treasury.address);
@@ -213,19 +235,36 @@ describe("DAO Contract", function () {
       [tokenSale.address, saleTokenAmount]
     );
 
-    console.log(transferProposalCallData);
-
-    const types = ["address", "uint256"];
-
-    const values = [tokenSale.address, saleTokenAmount];
-    const message = hre.ethers.utils.defaultAbiCoder.encode(types, values);
-    console.log(message);
-    const hash = hre.ethers.utils.keccak256(message);
-
-    console.log(hash);
-
     // Approve DAO to spend proposalCost tokens on behalf of founder
     await token.connect(founder).approve(dao.address, proposalCost);
+
+    /**
+     * Compound Test
+     */
+    // Test parameters
+    const treasuryAddress = treasury.address; // Contract address for the treasury
+    const recipientAddress = tokenSale.address; // Replace with recipient address for the transfer
+
+    // Prepare proposal arguments
+    const targets = [treasuryAddress];
+    const values = [0]; // No ETH transfer, just a token transfer
+    const signatures = ["transfer(address,uint256)"];
+    const calldatas = [
+      ethers.utils.defaultAbiCoder.encode(
+        ["address", "uint256"],
+        [recipientAddress, saleTokenAmount]
+      ),
+    ];
+    const description =
+      "Proposal to transfer tokens from treasury to recipient";
+
+    // Execute the propose function
+    await dao
+      .connect(founder)
+      .propose(targets, values, signatures, calldatas, description);
+
+    console.log("--------------------------");
+    console.log("End Compound tests");
 
     // Create a proposal for transferring tokens from Treasury to TokenSale
     await dao

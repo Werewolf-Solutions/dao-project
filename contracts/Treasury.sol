@@ -14,20 +14,29 @@ contract Treasury is Ownable {
         require(_token != address(0), "Token address cannot be zero");
         token = _token;
         allowedTokens[_token] = true; // Set initial token as allowed
-        // BUG: Do I need this?
-        transferOwnership(msg.sender); // Set DAO as owner (the deployer)
     }
 
     // Function to transfer tokens to a specified address
-    function transfer(address _to, uint256 _amount) external onlyOwner {
+    function transfer(
+        address _from,
+        address _to,
+        uint256 _amount
+    ) external onlyOwner {
         require(_to != address(0), "Cannot transfer to zero address");
         require(_amount > 0, "Amount must be greater than zero");
-        // require(allowedTokens[token], "Token is not allowed");
 
-        // Execute the transfer using ERC20's transfer function
-        bool success = IERC20(token).transfer(_to, _amount);
-        require(success, "Token transfer failed");
+        IERC20(token).transferFrom(_from, _to, _amount); // Adjust to use transferFrom
     }
+    // function transfer(address _to, uint256 _amount) external onlyOwner {
+    //     require(_to != address(0), "Cannot transfer to zero address");
+    //     require(_amount > 0, "Amount must be greater than zero");
+    //     // require(allowedTokens[token], "Token is not allowed");
+
+    //     // Execute the transfer using ERC20's transfer function
+    //     bytes memory callData = abi.encodeCall(IERC20.transfer, (_to, _amount));
+    //     (bool success, ) = token.call(callData);
+    //     require(success, "Token transfer failed");
+    // }
 
     // Function to add allowed tokens, can only be called by the DAO
     function addAllowedToken(address _token) external onlyOwner {
