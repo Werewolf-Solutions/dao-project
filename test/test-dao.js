@@ -27,7 +27,11 @@ describe("DAO Contract", function () {
     await treasury.deployed();
 
     // Deploy the token contract with the Treasury address
-    token = await Token.deploy(treasury.address);
+    token = await Token.deploy(
+      treasury.address,
+      founder.address,
+      addr1.address
+    );
     await token.deployed();
 
     // Deploy the DAO contract with Token and Treasury addresses
@@ -42,26 +46,6 @@ describe("DAO Contract", function () {
     );
     await tokenSale.deployed();
 
-    console.log("Here");
-
-    /**--- */
-    // TODO: check this functions when deploy
-    // Approve Treasury contract to spend founder's tokens
-    await token
-      .connect(founder)
-      .approve(treasury.address, hre.ethers.utils.parseUnits("100000", 18));
-
-    // Transfer tokens from founder to another address (e.g., treasury)
-    await treasury.transfer(
-      treasury.address,
-      founder.address, // replace with the desired recipient
-      hre.ethers.utils.parseUnits("100000", 18)
-    );
-
-    /**--- */
-
-    console.log("Here2");
-
     // Set the DAO as the owner of the Token and Treasury
     await token.transferOwnership(dao.address);
     await treasury.transferOwnership(dao.address);
@@ -74,15 +58,65 @@ describe("DAO Contract", function () {
     // Airdrop tokens to founder, addr1, and addr2
     const airdropAmount = hre.ethers.utils.parseUnits("1000", 18);
 
-    await token.testMint(addr1.address, airdropAmount);
-    await token.testMint(addr2.address, airdropAmount);
+    // await token.testMint(addr1.address, airdropAmount);
+    // await token.testMint(addr2.address, airdropAmount);
     // await token.testMint(
     //   tokenSale.address,
     //   hre.ethers.utils.parseUnits("100", 18)
     // );
+
     console.log(
       "Token total supply:",
       hre.ethers.utils.formatUnits(await token.totalSupply(), 18)
+    );
+  });
+
+  it("should allow only the DAO to call airdrop through proposals", async function () {
+    // Create a proposal to airdrop tokens from Treasury to addr1
+    const airdropArgs = hre.ethers.utils.defaultAbiCoder.encode(
+      ["address", "uint256"],
+      [addr1.address, ethers.utils.parseUnits("100", 18)]
+    );
+    const proposalId1 = await dao.createProposal(
+      treasury.address,
+      "airdrop(address,uint256)",
+      airdropArgs
+    );
+
+    // Create a proposal to airdrop tokens from Treasury to addr2
+    const airdropArgs2 = hre.ethers.utils.defaultAbiCoder.encode(
+      ["address", "uint256"],
+      [addr2.address, ethers.utils.parseUnits("100", 18)]
+    );
+    const proposalId2 = await dao.createProposal(
+      treasury.address,
+      "airdrop(address,uint256)",
+      airdropArgs2
+    );
+
+    // Token holders (addr1, addr2) vote on the proposal
+    await dao.connect(addr1).vote(proposalId1);
+    await dao.connect(addr2).vote(proposalId2);
+
+    // Execute the proposals after voting
+    await dao.executeProposal(proposalId1);
+    await dao.executeProposal(proposalId2);
+
+    console.log(
+      "Addr1 balance: " +
+        hre.ethers.utils.parseUnits(await token.balanceOf(addr1.address), 18)
+    );
+    console.log(
+      "Addr2 balance: " +
+        hre.ethers.utils.parseUnits(await token.balanceOf(addr2.address), 18)
+    );
+
+    // Check that the airdrop has been completed
+    expect(await token.balanceOf(addr1.address)).to.equal(
+      hre.ethers.utils.parseUnits("100", 18)
+    );
+    expect(await token.balanceOf(addr2.address)).to.equal(
+      hre.ethers.utils.parseUnits("100", 18)
     );
   });
 

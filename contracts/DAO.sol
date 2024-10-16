@@ -11,41 +11,41 @@ contract DAO {
 
     uint public constant GRACE_PERIOD = 14 days;
 
-    // struct Proposal {
-    //     address proposer;
-    //     address targetContract; // Contract to call
-    //     bytes callData; // Encoded function call with arguments
-    //     uint256 votes; // Total votes in favor
-    //     bool executed; // Whether the proposal has been executed
-    // }
     struct Proposal {
-        /// @notice Unique id for looking up a proposal
-        uint id;
-        /// @notice Creator of the proposal
         address proposer;
-        /// @notice The timestamp that the proposal will be available for execution, set once the vote succeeds
-        uint eta;
-        /// @notice the ordered list of target addresses for calls to be made
-        address[] targets;
-        /// @notice The ordered list of values (i.e. msg.value) to be passed to the calls to be made
-        uint[] values;
-        /// @notice The ordered list of function signatures to be called
-        string[] signatures;
-        /// @notice The ordered list of calldata to be passed to each call
-        bytes[] calldatas;
-        /// @notice The block at which voting begins: holders must delegate their votes prior to this block
-        uint startBlock;
-        /// @notice The block at which voting ends: votes must be cast prior to this block
-        uint endBlock;
-        /// @notice Current number of votes in favor of this proposal
-        uint forVotes;
-        /// @notice Current number of votes in opposition to this proposal
-        uint againstVotes;
-        /// @notice Flag marking whether the proposal has been canceled
-        bool canceled;
-        /// @notice Flag marking whether the proposal has been executed
-        bool executed;
+        address targetContract; // Contract to call
+        bytes callData; // Encoded function call with arguments
+        uint256 votes; // Total votes in favor
+        bool executed; // Whether the proposal has been executed
     }
+    // struct Proposal {
+    //     /// @notice Unique id for looking up a proposal
+    //     uint id;
+    //     /// @notice Creator of the proposal
+    //     address proposer;
+    //     /// @notice The timestamp that the proposal will be available for execution, set once the vote succeeds
+    //     uint eta;
+    //     /// @notice the ordered list of target addresses for calls to be made
+    //     address[] targets;
+    //     /// @notice The ordered list of values (i.e. msg.value) to be passed to the calls to be made
+    //     uint[] values;
+    //     /// @notice The ordered list of function signatures to be called
+    //     string[] signatures;
+    //     /// @notice The ordered list of calldata to be passed to each call
+    //     bytes[] calldatas;
+    //     /// @notice The block at which voting begins: holders must delegate their votes prior to this block
+    //     uint startBlock;
+    //     /// @notice The block at which voting ends: votes must be cast prior to this block
+    //     uint endBlock;
+    //     /// @notice Current number of votes in favor of this proposal
+    //     uint forVotes;
+    //     /// @notice Current number of votes in opposition to this proposal
+    //     uint againstVotes;
+    //     /// @notice Flag marking whether the proposal has been canceled
+    //     bool canceled;
+    //     /// @notice Flag marking whether the proposal has been executed
+    //     bool executed;
+    // }
 
     struct Receipt {
         /// @notice Whether or not a vote has been cast
@@ -119,104 +119,141 @@ contract DAO {
         treasuryAddress = _treasury;
     }
 
+    // BUG: debugging
+    function callFunc(
+        address _targetContract,
+        string memory _functionSignature,
+        bytes memory _functionParams
+    ) public {
+        // Encode the function signature and parameters together
+        bytes memory callData = abi.encodeWithSignature(
+            _functionSignature,
+            _functionParams
+        );
+        (bool success, ) = _targetContract.call(callData);
+        require(success, "Function call failed");
+    }
+
     // Function to create a proposal
-    // function createProposal(
-    //     address _targetContract,
-    //     string memory _functionSignature,
-    //     bytes memory _functionParams
-    // ) public {
-    //     require(
-    //         token.balanceOf(msg.sender) >= proposalCost,
-    //         "Insufficient balance to create proposal"
-    //     );
+    function createProposal(
+        address _targetContract,
+        string memory _functionSignature,
+        bytes memory _functionParams
+    ) public {
+        require(
+            token.balanceOf(msg.sender) >= proposalCost,
+            "Insufficient balance to create proposal"
+        );
 
-    //     // Transfer the proposal cost to the treasury address
-    //     require(
-    //         token.transferFrom(msg.sender, treasuryAddress, proposalCost),
-    //         "Token transfer for proposal cost failed"
-    //     );
+        // Transfer the proposal cost to the treasury address
+        require(
+            token.transferFrom(msg.sender, treasuryAddress, proposalCost),
+            "Token transfer for proposal cost failed"
+        );
 
-    //     // Compute the selector
-    //     // bytes4 selector = bytes4(keccak256(bytes(_functionSignature)));
+        // Compute the selector
+        // bytes4 selector = bytes4(keccak256(bytes(_functionSignature)));
 
-    //     // // Encode the selector with parameters
-    //     // bytes memory callData = abi.encodeWithSelector(
-    //     //     selector,
-    //     //     abi.decode(_functionParams, (address, uint256))
-    //     // );
+        // // Encode the selector with parameters
+        // bytes memory callData = abi.encodeWithSelector(
+        //     selector,
+        //     abi.decode(_functionParams, (address, uint256))
+        // );
 
-    //     // This works with mint
-    //     // bytes memory callData = abi.encodePacked(
-    //     //     abi.encodeWithSignature(_functionSignature),
-    //     //     _functionParams
-    //     // );
+        // This works with mint
+        // bytes memory callData = abi.encodePacked(
+        //     abi.encodeWithSignature(_functionSignature),
+        //     _functionParams
+        // );
 
-    //     // This works with mint
-    //     // bytes memory callData = abi.encodePacked(
-    //     //     bytes4(keccak256(bytes(_functionSignature))),
-    //     //     _functionParams
-    //     // );
+        // This works with mint
+        // bytes memory callData = abi.encodePacked(
+        //     bytes4(keccak256(bytes(_functionSignature))),
+        //     _functionParams
+        // );
 
-    //     // What I'd like to use
-    //     bytes memory callData = abi.encodeWithSignature(
-    //         _functionSignature,
-    //         _functionParams
-    //     );
+        // What I'd like to use
+        bytes memory callData = abi.encodeWithSignature(
+            _functionSignature,
+            _functionParams
+        );
 
-    //     // Example encoding to call transfer function
-    //     // bytes memory callData = abi.encodeWithSignature(
-    //     //     "transfer(address,uint256)",
-    //     //     to,
-    //     //     amount
-    //     // );
+        // Example encoding to call transfer function
+        // bytes memory callData = abi.encodeWithSignature(
+        //     "transfer(address,uint256)",
+        //     to,
+        //     amount
+        // );
 
-    //     proposals[proposalCount] = Proposal({
-    //         proposer: msg.sender,
-    //         targetContract: _targetContract,
-    //         callData: callData,
-    //         votes: 0,
-    //         executed: false
-    //     });
-    //     proposalCount++;
-    // }
+        proposals[proposalCount] = Proposal({
+            proposer: msg.sender,
+            targetContract: _targetContract,
+            callData: callData,
+            votes: 0,
+            executed: false
+        });
+        proposalCount++;
+    }
 
     // Function to execute a proposal
-    // function executeProposal(uint256 proposalId) external {
-    //     Proposal storage proposal = proposals[proposalId];
-    //     require(!proposal.executed, "Proposal already executed");
+    function executeProposal(uint256 proposalId) external {
+        Proposal storage proposal = proposals[proposalId];
+        require(!proposal.executed, "Proposal already executed");
 
-    //     // Before the function call
-    //     require(
-    //         proposal.targetContract != address(0),
-    //         "Invalid target contract"
-    //     );
+        // Before the function call
+        require(
+            proposal.targetContract != address(0),
+            "Invalid target contract"
+        );
 
-    //     // Calculate circulating supply
-    //     uint256 circulatingSupply = token.totalSupply() -
-    //         token.balanceOf(address(treasury));
+        // Calculate circulating supply
+        uint256 circulatingSupply = token.totalSupply() -
+            token.balanceOf(address(treasury));
 
-    //     // Check if votes exceed half of the circulating supply
-    //     require(
-    //         proposal.votes > circulatingSupply / 2,
-    //         "Proposal must be passed to execute"
-    //     );
+        // Check if votes exceed half of the circulating supply
+        require(
+            proposal.votes > circulatingSupply / 2,
+            "Proposal must be passed to execute"
+        );
 
-    //     proposal.executed = true;
+        proposal.executed = true;
 
-    //     // Execute the function call using low-level call
-    //     (bool success, ) = proposal.targetContract.call(proposal.callData);
-    //     require(success, "Function call failed");
-    // }
+        // Execute the function call using low-level call
+        (bool success, ) = proposal.targetContract.call(proposal.callData);
+        require(success, "Function call failed");
+    }
 
     // Voting function
     // TODO: change voting power?
-    // function vote(uint256 proposalId) external {
-    //     Proposal storage proposal = proposals[proposalId];
-    //     require(!voted[msg.sender][proposalId], "Already voted");
-    //     voted[msg.sender][proposalId] = true;
+    function vote(uint256 proposalId) external {
+        Proposal storage proposal = proposals[proposalId];
+        require(!voted[msg.sender][proposalId], "Already voted");
+        voted[msg.sender][proposalId] = true;
 
-    //     uint256 voterBalance = token.balanceOf(msg.sender);
-    //     proposal.votes += voterBalance;
+        uint256 voterBalance = token.balanceOf(msg.sender);
+        proposal.votes += voterBalance;
+    }
+
+    // function vote(uint256 proposalId, bool support) external {
+    //     Proposal storage proposal = proposals[proposalId];
+    //     require(state(proposalId) == ProposalState.Active, "Voting closed");
+    //     require(
+    //         !proposalReceipts[proposalId][msg.sender].hasVoted,
+    //         "Already voted"
+    //     );
+
+    //     uint96 votes = token.getPriorVotes(msg.sender, proposal.startBlock);
+    //     proposalReceipts[proposalId][msg.sender] = Receipt({
+    //         hasVoted: true,
+    //         support: support,
+    //         votes: votes
+    //     });
+
+    //     if (support) {
+    //         proposal.forVotes += votes;
+    //     } else {
+    //         proposal.againstVotes += votes;
+    //     }
     // }
 
     function delegate(address delegatee) external {
@@ -227,108 +264,133 @@ contract DAO {
         // Implement undelegation logic efficiently
     }
 
+    // function executeProposal(uint proposalId) external {
+    //     Proposal storage proposal = proposals[proposalId];
+    //     require(
+    //         state(proposalId) == ProposalState.Succeeded,
+    //         "Proposal not passed"
+    //     );
+    //     proposal.executed = true;
+    //     // Execute each call
+    //     for (uint i = 0; i < proposal.targets.length; i++) {
+    //         bytes memory callData;
+    //         if (bytes(proposal.signatures[i]).length == 0) {
+    //             callData = proposal.calldatas[i];
+    //         } else {
+    //             callData = abi.encodeWithSignature(
+    //                 proposal.signatures[i],
+    //                 proposal.calldatas[i]
+    //             );
+    //         }
+    //         (bool success, ) = proposal.targets[i].call{
+    //             value: proposal.values[i]
+    //         }(callData);
+    //         require(success, "DAO::executeProposal: call failed");
+    //     }
+    // }
+
     // Compound GovernorAlpha test
-    function propose(
-        address[] memory targets,
-        uint[] memory values,
-        string[] memory signatures,
-        bytes[] memory calldatas,
-        string memory description
-    ) public returns (uint) {
-        require(
-            token.getPriorVotes(msg.sender, sub256(block.number, 1)) >
-                proposalThreshold(),
-            "DAO::propose: proposer votes below proposal threshold"
-        );
-        require(
-            targets.length == values.length &&
-                targets.length == signatures.length &&
-                targets.length == calldatas.length,
-            "DAO::propose: proposal function information arity mismatch"
-        );
-        require(targets.length != 0, "DAO::propose: must provide actions");
-        require(
-            targets.length <= proposalMaxOperations(),
-            "DAO::propose: too many actions"
-        );
+    // function propose(
+    //     address[] memory targets,
+    //     uint[] memory values,
+    //     string[] memory signatures,
+    //     bytes[] memory calldatas,
+    //     string memory description
+    // ) public returns (uint) {
+    //     require(
+    //         token.getPriorVotes(msg.sender, sub256(block.number, 1)) >
+    //             proposalThreshold(),
+    //         "DAO::propose: proposer votes below proposal threshold"
+    //     );
+    //     require(
+    //         targets.length == values.length &&
+    //             targets.length == signatures.length &&
+    //             targets.length == calldatas.length,
+    //         "DAO::propose: proposal function information arity mismatch"
+    //     );
+    //     require(targets.length != 0, "DAO::propose: must provide actions");
+    //     require(
+    //         targets.length <= proposalMaxOperations(),
+    //         "DAO::propose: too many actions"
+    //     );
 
-        uint latestProposalId = latestProposalIds[msg.sender];
-        if (latestProposalId != 0) {
-            ProposalState proposersLatestProposalState = state(
-                latestProposalId
-            );
-            require(
-                proposersLatestProposalState != ProposalState.Active,
-                "DAO::propose: one live proposal per proposer, found an already active proposal"
-            );
-            require(
-                proposersLatestProposalState != ProposalState.Pending,
-                "DAO::propose: one live proposal per proposer, found an already pending proposal"
-            );
-        }
+    //     uint latestProposalId = latestProposalIds[msg.sender];
+    //     if (latestProposalId != 0) {
+    //         ProposalState proposersLatestProposalState = state(
+    //             latestProposalId
+    //         );
+    //         require(
+    //             proposersLatestProposalState != ProposalState.Active,
+    //             "DAO::propose: one live proposal per proposer, found an already active proposal"
+    //         );
+    //         require(
+    //             proposersLatestProposalState != ProposalState.Pending,
+    //             "DAO::propose: one live proposal per proposer, found an already pending proposal"
+    //         );
+    //     }
 
-        uint startBlock = add256(block.number, votingDelay());
-        uint endBlock = add256(startBlock, votingPeriod());
+    //     uint startBlock = add256(block.number, votingDelay());
+    //     uint endBlock = add256(startBlock, votingPeriod());
 
-        proposalCount++;
-        Proposal storage newProposal = proposals[proposalCount];
-        newProposal.id = proposalCount;
-        newProposal.proposer = msg.sender;
-        newProposal.eta = 0;
-        newProposal.targets = targets;
-        newProposal.values = values;
-        newProposal.signatures = signatures;
-        newProposal.calldatas = calldatas;
-        newProposal.startBlock = startBlock;
-        newProposal.endBlock = endBlock;
-        newProposal.forVotes = 0;
-        newProposal.againstVotes = 0;
-        newProposal.canceled = false;
-        newProposal.executed = false;
+    //     proposalCount++;
+    //     Proposal storage newProposal = proposals[proposalCount];
+    //     newProposal.id = proposalCount;
+    //     newProposal.proposer = msg.sender;
+    //     newProposal.eta = 0;
+    //     newProposal.targets = targets;
+    //     newProposal.values = values;
+    //     newProposal.signatures = signatures;
+    //     newProposal.calldatas = calldatas;
+    //     newProposal.startBlock = startBlock;
+    //     newProposal.endBlock = endBlock;
+    //     newProposal.forVotes = 0;
+    //     newProposal.againstVotes = 0;
+    //     newProposal.canceled = false;
+    //     newProposal.executed = false;
 
-        latestProposalIds[newProposal.proposer] = newProposal.id;
+    //     latestProposalIds[newProposal.proposer] = newProposal.id;
 
-        emit ProposalCreated(
-            newProposal.id,
-            msg.sender,
-            targets,
-            values,
-            signatures,
-            calldatas,
-            startBlock,
-            endBlock,
-            description
-        );
-        return newProposal.id;
-    }
+    //     emit ProposalCreated(
+    //         newProposal.id,
+    //         msg.sender,
+    //         targets,
+    //         values,
+    //         signatures,
+    //         calldatas,
+    //         startBlock,
+    //         endBlock,
+    //         description
+    //     );
+    //     return newProposal.id;
+    // }
 
-    function state(uint proposalId) public view returns (ProposalState) {
-        require(
-            proposalCount >= proposalId && proposalId > 0,
-            "GovernorAlpha::state: invalid proposal id"
-        );
-        Proposal storage proposal = proposals[proposalId];
-        if (proposal.canceled) {
-            return ProposalState.Canceled;
-        } else if (block.number <= proposal.startBlock) {
-            return ProposalState.Pending;
-        } else if (block.number <= proposal.endBlock) {
-            return ProposalState.Active;
-        } else if (
-            proposal.forVotes <= proposal.againstVotes ||
-            proposal.forVotes < quorumVotes()
-        ) {
-            return ProposalState.Defeated;
-        } else if (proposal.eta == 0) {
-            return ProposalState.Succeeded;
-        } else if (proposal.executed) {
-            return ProposalState.Executed;
-        } else if (block.timestamp >= add256(proposal.eta, GRACE_PERIOD)) {
-            return ProposalState.Expired;
-        } else {
-            return ProposalState.Queued;
-        }
-    }
+    // function state(uint proposalId) public view returns (ProposalState) {
+    //     require(
+    //         proposalCount >= proposalId && proposalId > 0,
+    //         "GovernorAlpha::state: invalid proposal id"
+    //     );
+    //     Proposal storage proposal = proposals[proposalId];
+    //     if (proposal.canceled) {
+    //         return ProposalState.Canceled;
+    //     } else if (block.number <= proposal.startBlock) {
+    //         return ProposalState.Pending;
+    //     } else if (block.number <= proposal.endBlock) {
+    //         return ProposalState.Active;
+    //     } else if (
+    //         proposal.forVotes <= proposal.againstVotes ||
+    //         proposal.forVotes < quorumVotes()
+    //     ) {
+    //         return ProposalState.Defeated;
+    //     } else if (proposal.eta == 0) {
+    //         return ProposalState.Succeeded;
+    //     } else if (proposal.executed) {
+    //         return ProposalState.Executed;
+    //     } else if (block.timestamp >= add256(proposal.eta, GRACE_PERIOD)) {
+    //         return ProposalState.Expired;
+    //     } else {
+    //         return ProposalState.Queued;
+    //     }
+    // }
 
     function sub256(uint256 a, uint256 b) internal pure returns (uint) {
         require(b <= a, "subtraction underflow");

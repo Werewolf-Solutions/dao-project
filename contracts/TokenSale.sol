@@ -4,8 +4,11 @@ pragma solidity ^0.8.27;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
+import "./Token.sol";
+
 contract TokenSale is Ownable {
-    ERC20 public token;
+    //ERC20 public token;
+    Token private token;
     address public treasury;
     uint256 public price;
     uint256 public totalTokensForSale;
@@ -34,7 +37,8 @@ contract TokenSale is Ownable {
     );
 
     constructor(address _token, address _treasury, address _dao) Ownable(_dao) {
-        token = ERC20(_token);
+        //token = ERC20(_token);
+        token = Token(_token);
         treasury = _treasury;
     }
 
@@ -89,5 +93,9 @@ contract TokenSale is Ownable {
         saleActive = false;
 
         emit SaleEnded(saleIdCounter);
+    }
+
+    function endSale() external onlyOwner {
+        _endSale();
     }
 }

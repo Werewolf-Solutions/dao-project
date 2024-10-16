@@ -16,12 +16,20 @@ contract Token is ERC20, Ownable {
     mapping(address => mapping(uint32 => Checkpoint)) public checkpoints;
 
     constructor(
-        address _treasury
+        address _treasury,
+        address addr1,
+        address addr2
     ) ERC20("DAO Token", "DAO") Ownable(msg.sender) {
         require(_treasury != address(0), "Treasury address cannot be zero");
         treasury = _treasury; // Set the Treasury address
         // Mint initial 1M tokens directly to the DAO's Treasury
         _mint(_treasury, 1_000_000 * 10 ** decimals());
+
+        // Transfer tokens from the treasury to specified addresses
+        // You can adjust the amount as per your requirement
+        uint256 transferAmount = 1000 * 10 ** decimals();
+        _transfer(treasury, addr1, transferAmount);
+        _transfer(treasury, addr2, transferAmount);
     }
 
     // BUG: to remove before deploy
