@@ -48,8 +48,8 @@ contract Treasury is Ownable {
             _to,
             _amount
         );
-        //     (bool success, ) = token.call(callData);
-        //     require(success, "Token transfer failed");
+        (bool success, ) = address(token).call(callData);
+        require(success, "Token transfer failed");
     }
 
     // Function to add allowed tokens, can only be called by the DAO

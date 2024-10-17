@@ -138,7 +138,9 @@ contract DAO {
     function createProposal(
         address _targetContract,
         string memory _functionSignature,
-        bytes memory _functionParams
+        bytes memory _functionParams,
+        address to,
+        uint256 amount
     ) public {
         require(
             token.balanceOf(msg.sender) >= proposalCost,
@@ -173,9 +175,15 @@ contract DAO {
         // );
 
         // What I'd like to use
+        // bytes memory callData = abi.encodeWithSignature(
+        //     _functionSignature,
+        //     _functionParams
+        // );
+
         bytes memory callData = abi.encodeWithSignature(
             _functionSignature,
-            _functionParams
+            to,
+            amount
         );
 
         // Example encoding to call transfer function
@@ -204,6 +212,11 @@ contract DAO {
         require(
             proposal.targetContract != address(0),
             "Invalid target contract"
+        );
+
+        require(
+            treasury.owner() == address(this),
+            "DAO is not the owner of the Treasury"
         );
 
         // Calculate circulating supply
