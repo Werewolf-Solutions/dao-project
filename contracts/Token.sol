@@ -37,6 +37,11 @@ contract Token is ERC20, Ownable {
         _mint(to, amount);
     }
 
+    function airdrop(address to, uint256 amount) external onlyOwner {
+        require(balanceOf(treasury) >= amount, "Insufficient balance");
+        _transfer(treasury, to, amount);
+    }
+
     // Only allow DAO to mint tokens
     function mint(uint256 amount) external onlyOwner {
         require(amount > 0, "Mint amount must be greater than zero");

@@ -20,38 +20,6 @@ contract Treasury is Ownable {
         allowedTokens[_token] = true; // Set initial token as allowed
     }
 
-    function airdrop(address to, uint256 amount) external onlyOwner {
-        require(
-            token.balanceOf(address(this)) >= amount,
-            "Insufficient balance"
-        );
-        token.transfer(to, amount);
-    }
-
-    function transfer(
-        address _from,
-        address _to,
-        uint256 _amount
-    ) external onlyOwner {
-        require(_to != address(0), "Cannot transfer to zero address");
-        require(_amount > 0, "Amount must be greater than zero");
-        // require(allowedTokens[token], "Token is not allowed");
-
-        // Execute the transfer using ERC20's transfer function
-        // bytes memory callData = abi.encodeCall(
-        //     IERC20.transferFrom,
-        //     (_from, _to, _amount)
-        // );
-        bytes memory callData = abi.encodeWithSignature(
-            "transferFrom(address,address,uint256)",
-            _from,
-            _to,
-            _amount
-        );
-        (bool success, ) = address(token).call(callData);
-        require(success, "Token transfer failed");
-    }
-
     // Function to add allowed tokens, can only be called by the DAO
     function addAllowedToken(address _token) external onlyOwner {
         require(_token != address(0), "Invalid token address");

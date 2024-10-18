@@ -119,28 +119,11 @@ contract DAO {
         treasuryAddress = _treasury;
     }
 
-    // BUG: debugging
-    function callFunc(
-        address _targetContract,
-        string memory _functionSignature,
-        bytes memory _functionParams
-    ) public {
-        // Encode the function signature and parameters together
-        bytes memory callData = abi.encodeWithSignature(
-            _functionSignature,
-            _functionParams
-        );
-        (bool success, ) = _targetContract.call(callData);
-        require(success, "Function call failed");
-    }
-
     // Function to create a proposal
     function createProposal(
         address _targetContract,
         string memory _functionSignature,
-        bytes memory _functionParams,
-        address to,
-        uint256 amount
+        bytes memory _functionParams
     ) public {
         require(
             token.balanceOf(msg.sender) >= proposalCost,
@@ -153,45 +136,11 @@ contract DAO {
             "Token transfer for proposal cost failed"
         );
 
-        // Compute the selector
-        // bytes4 selector = bytes4(keccak256(bytes(_functionSignature)));
-
-        // // Encode the selector with parameters
-        // bytes memory callData = abi.encodeWithSelector(
-        //     selector,
-        //     abi.decode(_functionParams, (address, uint256))
-        // );
-
         // This works with mint
-        // bytes memory callData = abi.encodePacked(
-        //     abi.encodeWithSignature(_functionSignature),
-        //     _functionParams
-        // );
-
-        // This works with mint
-        // bytes memory callData = abi.encodePacked(
-        //     bytes4(keccak256(bytes(_functionSignature))),
-        //     _functionParams
-        // );
-
-        // What I'd like to use
-        // bytes memory callData = abi.encodeWithSignature(
-        //     _functionSignature,
-        //     _functionParams
-        // );
-
-        bytes memory callData = abi.encodeWithSignature(
-            _functionSignature,
-            to,
-            amount
+        bytes memory callData = abi.encodePacked(
+            bytes4(keccak256(bytes(_functionSignature))),
+            _functionParams
         );
-
-        // Example encoding to call transfer function
-        // bytes memory callData = abi.encodeWithSignature(
-        //     "transfer(address,uint256)",
-        //     to,
-        //     amount
-        // );
 
         proposals[proposalCount] = Proposal({
             proposer: msg.sender,
@@ -220,6 +169,8 @@ contract DAO {
         );
 
         // Calculate circulating supply
+        // TODO: this i not right cause it doesn't count for
+        // token sale and any other contract the could hold tokens
         uint256 circulatingSupply = token.totalSupply() -
             token.balanceOf(address(treasury));
 
