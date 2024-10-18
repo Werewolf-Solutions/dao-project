@@ -60,7 +60,7 @@ contract Token is ERC20, Ownable {
     ) public view returns (uint96) {
         require(
             blockNumber < block.number,
-            "Comp::getPriorVotes: not yet determined"
+            "Token::getPriorVotes: not yet determined"
         );
 
         uint32 nCheckpoints = numCheckpoints[account];

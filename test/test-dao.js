@@ -96,8 +96,8 @@ describe("DAO Contract", function () {
       );
 
     // Token holders (founder, addr1) vote on the proposal
-    await dao.connect(addr1).vote(0);
-    await dao.connect(founder).vote(0);
+    await dao.connect(addr1).vote(0, true);
+    await dao.connect(founder).vote(0, true);
 
     // Execute the proposals after voting
     await dao.connect(founder).executeProposal(0);
@@ -133,9 +133,9 @@ describe("DAO Contract", function () {
     await hre.network.provider.send("evm_mine");
 
     // Cast votes from all participants
-    await dao.connect(founder).vote(0);
-    await dao.connect(addr1).vote(0);
-    await dao.connect(addr2).vote(0);
+    await dao.connect(founder).vote(0, true);
+    await dao.connect(addr1).vote(0, true);
+    await dao.connect(addr2).vote(0, true);
 
     // Simulate the end of the voting period
     await hre.network.provider.send("evm_increaseTime", [24 * 60 * 60]);
@@ -238,9 +238,9 @@ describe("DAO Contract", function () {
       );
 
     // Cast votes to approve the token airdrop proposal
-    await dao.connect(founder).vote(0);
-    await dao.connect(addr1).vote(0);
-    await dao.connect(addr2).vote(0);
+    await dao.connect(founder).vote(0, true);
+    await dao.connect(addr1).vote(0, true);
+    await dao.connect(addr2).vote(0, true);
 
     // console.log(await dao.proposals(0));
     console.log(await dao.proposalCount());
@@ -300,9 +300,9 @@ describe("DAO Contract", function () {
     // console.log(await dao.proposals(1));
 
     // Cast votes to approve the sale proposal
-    await dao.connect(founder).vote(1);
-    await dao.connect(addr1).vote(1);
-    await dao.connect(addr2).vote(1);
+    await dao.connect(founder).vote(1, true);
+    await dao.connect(addr1).vote(1, true);
+    await dao.connect(addr2).vote(1, true);
 
     const proposalCount = await dao.proposalCount();
 
