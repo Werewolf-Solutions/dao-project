@@ -2,73 +2,70 @@ import { expect } from "chai";
 import hre from "hardhat";
 
 describe("DAO Contract", function () {
-  let Token,
+  let WerewolfTokenV1,
     Treasury,
     TokenSale,
+    Timelock,
     DAO,
-    token,
+    werewolfToken,
     tokenSale,
     treasury,
+    timelock,
     dao,
     founder,
     addr1,
     addr2;
 
+  const votingPeriod = 24 * 60 * 60 * 2; // 2 days
+
   beforeEach(async function () {
     // Get the contract factories and signers
-    Token = await hre.ethers.getContractFactory("Token");
+    WerewolfTokenV1 = await hre.ethers.getContractFactory("WerewolfTokenV1");
     Treasury = await hre.ethers.getContractFactory("Treasury");
     DAO = await hre.ethers.getContractFactory("DAO");
     TokenSale = await hre.ethers.getContractFactory("TokenSale");
+    Timelock = await hre.ethers.getContractFactory("Timelock");
     [founder, addr1, addr2] = await hre.ethers.getSigners();
 
     // Deploy the treasury contract first
     treasury = await Treasury.deploy(founder.address); // Deployer will be owner
     await treasury.deployed();
 
-    // Deploy the token contract with the Treasury address
-    token = await Token.deploy(
+    // Deploy the werewolfToken contract with the Treasury address
+    werewolfToken = await WerewolfTokenV1.deploy(
       treasury.address,
       founder.address,
       addr1.address
     );
-    await token.deployed();
+    await werewolfToken.deployed();
 
-    // Deploy the DAO contract with Token and Treasury addresses
-    dao = await DAO.deploy(token.address, treasury.address);
+    timelock = await Timelock.deploy(dao.address, votingPeriod);
+    await timelock.deployed();
+
+    // Deploy the DAO contract with WerewolfTokenV1 and Treasury addresses
+    dao = await DAO.deploy(
+      werewolfToken.address,
+      treasury.address,
+      timelock.address
+    );
     await dao.deployed();
 
-    // Deploy the token sale contract with price 0.5 ETH per token
+    // Deploy the werewolfToken sale contract with price 0.5 ETH per werewolfToken
     tokenSale = await TokenSale.deploy(
-      token.address,
+      werewolfToken.address,
       treasury.address,
       dao.address
     );
     await tokenSale.deployed();
 
-    // Set the DAO as the owner of the Token and Treasury
-    await token.transferOwnership(dao.address);
+    // Set the DAO as the owner of the WerewolfTokenV1 and Treasury
+    await werewolfToken.transferOwnership(dao.address);
     await treasury.transferOwnership(dao.address);
 
     // console.log(`DAO address: ${dao.address}`);
-    // console.log(`token owner: ${await token.owner()}`);
-    // console.log(`token sale owner: ${await tokenSale.owner()}`);
+    // console.log(`werewolfToken owner: ${await werewolfToken.owner()}`);
+    // console.log(`werewolfToken sale owner: ${await tokenSale.owner()}`);
     // console.log(`treasury owner: ${await treasury.owner()}`);
-
-    // Airdrop tokens to founder, addr1, and addr2
-    const airdropAmount = hre.ethers.utils.parseUnits("1000", 18);
-
-    // await token.testMint(addr1.address, airdropAmount);
-    // await token.testMint(addr2.address, airdropAmount);
-    // await token.testMint(
-    //   tokenSale.address,
-    //   hre.ethers.utils.parseUnits("100", 18)
-    // );
-
-    // console.log(
-    //   "Token total supply:",
-    //   hre.ethers.utils.formatUnits(await token.totalSupply(), 18)
-    // );
   });
 
   it("should allow only the DAO to call airdrop through proposals", async function () {
@@ -85,24 +82,32 @@ describe("DAO Contract", function () {
     );
 
     // Approve DAO to spend proposalCost tokens on behalf of founder
-    await token.connect(founder).approve(dao.address, proposalCost);
+    await werewolfToken.connect(founder).approve(dao.address, proposalCost);
 
     await dao
       .connect(founder)
       .createProposal(
-        token.address,
-        "airdrop(address,uint256)",
-        functionParams
+        [werewolfToken.address],
+        ["airdrop(address,uint256)"],
+        [functionParams]
       );
 
-    // Token holders (founder, addr1) vote on the proposal
+    // Simulate delay for voting period
+    await simulateBlocks(votingPeriod);
+
+    // WerewolfTokenV1 holders (founder, addr1) vote on the proposal
     await dao.connect(addr1).vote(0, true);
     await dao.connect(founder).vote(0, true);
+
+    // Simulate the end of the voting period
+    // await simulateBlocks(24 * 60 * 60);
+
+    await dao.connect(founder).queueProposal(0);
 
     // Execute the proposals after voting
     await dao.connect(founder).executeProposal(0);
 
-    const addr2Balance = await token.balanceOf(addr2.address);
+    const addr2Balance = await werewolfToken.balanceOf(addr2.address);
 
     // Check that the airdrop has been completed
     expect(addr2Balance.toString()).to.equal(airdropAmount.toString());
@@ -121,28 +126,31 @@ describe("DAO Contract", function () {
     const proposalCost = hre.ethers.utils.parseUnits("10", 18);
 
     // Approve DAO to spend proposalCost tokens on behalf of founder
-    await token.connect(founder).approve(dao.address, proposalCost);
+    await werewolfToken.connect(founder).approve(dao.address, proposalCost);
 
     // Founder creates a proposal to mint tokens to the Treasury
     await dao
       .connect(founder)
-      .createProposal(token.address, "mint(uint256)", mintProposalCallData);
+      .createProposal(
+        werewolfToken.address,
+        "mint(uint256)",
+        mintProposalCallData
+      );
 
     // Simulate 1 day delay for voting period
-    await hre.network.provider.send("evm_increaseTime", [24 * 60 * 60]);
-    await hre.network.provider.send("evm_mine");
+    await simulateBlocks(24 * 60 * 60);
 
     // Cast votes from all participants
     await dao.connect(founder).vote(0, true);
     await dao.connect(addr1).vote(0, true);
-    await dao.connect(addr2).vote(0, true);
 
     // Simulate the end of the voting period
-    await hre.network.provider.send("evm_increaseTime", [24 * 60 * 60]);
-    await hre.network.provider.send("evm_mine");
+    await simulateBlocks(24 * 60 * 60);
 
     // Record the initial Treasury balance before minting
-    const initialTreasuryBalance = await token.balanceOf(treasury.address);
+    const initialTreasuryBalance = await werewolfToken.balanceOf(
+      treasury.address
+    );
     // console.log(
     //   "Treasury balance before proposal execution:",
     //   hre.ethers.utils.formatUnits(initialTreasuryBalance, 18)
@@ -157,7 +165,7 @@ describe("DAO Contract", function () {
     // );
 
     // Check Treasury balance after proposal execution
-    const treasuryBalance = await token.balanceOf(treasury.address);
+    const treasuryBalance = await werewolfToken.balanceOf(treasury.address);
     // console.log(
     //   "Treasury balance after proposal execution:",
     //   hre.ethers.utils.formatUnits(treasuryBalance, 18)
@@ -165,7 +173,7 @@ describe("DAO Contract", function () {
 
     // console.log(
     //   `Total supply: ${hre.ethers.utils.formatUnits(
-    //     await token.totalSupply(),
+    //     await werewolfToken.totalSupply(),
     //     18
     //   )}`
     // );
@@ -180,7 +188,7 @@ describe("DAO Contract", function () {
     // );
 
     // Check that the Treasury balance matches the expected balance after proposal execution
-    const newTreasuryBalance = await token.balanceOf(treasury.address);
+    const newTreasuryBalance = await werewolfToken.balanceOf(treasury.address);
     // console.log(
     //   "Treasury balance after proposal execution:",
     //   hre.ethers.utils.formatUnits(newTreasuryBalance, 18)
@@ -191,28 +199,28 @@ describe("DAO Contract", function () {
     );
   });
 
-  it("should start Token Sale when 'Token Sale' proposal passes", async function () {
+  it("should start WerewolfTokenV1 Sale when 'WerewolfTokenV1 Sale' proposal passes", async function () {
     // Log balances
-    console.log(
-      "Founder balance:",
-      hre.ethers.utils.formatUnits(await token.balanceOf(founder.address), 18)
-    );
-    console.log(
-      "Addr1 balance:",
-      hre.ethers.utils.formatUnits(await token.balanceOf(addr1.address), 18)
-    );
-    console.log(
-      "Addr2 balance:",
-      hre.ethers.utils.formatUnits(await token.balanceOf(addr2.address), 18)
-    );
-    console.log(
-      "Treasury balance:",
-      hre.ethers.utils.formatUnits(await token.balanceOf(treasury.address), 18)
-    );
-    console.log(
-      "Token sale balance:",
-      hre.ethers.utils.formatUnits(await token.balanceOf(tokenSale.address), 18)
-    );
+    // console.log(
+    //   "Founder balance:",
+    //   hre.ethers.utils.formatUnits(await werewolfToken.balanceOf(founder.address), 18)
+    // );
+    // console.log(
+    //   "Addr1 balance:",
+    //   hre.ethers.utils.formatUnits(await werewolfToken.balanceOf(addr1.address), 18)
+    // );
+    // console.log(
+    //   "Addr2 balance:",
+    //   hre.ethers.utils.formatUnits(await werewolfToken.balanceOf(addr2.address), 18)
+    // );
+    // console.log(
+    //   "Treasury balance:",
+    //   hre.ethers.utils.formatUnits(await werewolfToken.balanceOf(treasury.address), 18)
+    // );
+    // console.log(
+    //   "WerewolfTokenV1 sale balance:",
+    //   hre.ethers.utils.formatUnits(await werewolfToken.balanceOf(tokenSale.address), 18)
+    // );
     const saleTokenAmount = hre.ethers.utils.parseUnits("10000", 18);
     const saleTokenPrice = hre.ethers.utils.parseUnits("0.05", 18);
 
@@ -226,67 +234,82 @@ describe("DAO Contract", function () {
     );
 
     // Approve DAO to spend proposalCost tokens on behalf of founder
-    await token.connect(founder).approve(dao.address, proposalCost);
+    await werewolfToken.connect(founder).approve(dao.address, proposalCost);
 
     // Create a proposal for transferring tokens from Treasury to TokenSale
     await dao
       .connect(founder)
       .createProposal(
-        token.address,
+        werewolfToken.address,
         "airdrop(address,uint256)",
         transferProposalCallData
       );
 
-    // Cast votes to approve the token airdrop proposal
+    // Simulate 1 day delay for voting period
+    await simulateBlocks(24 * 60 * 60);
+
+    // Cast votes to approve the werewolfToken airdrop proposal
     await dao.connect(founder).vote(0, true);
     await dao.connect(addr1).vote(0, true);
-    await dao.connect(addr2).vote(0, true);
 
-    // console.log(await dao.proposals(0));
-    console.log(await dao.proposalCount());
+    let proposalCount = await dao.proposalCount();
+
+    // for (let i = 0; i < proposalCount; i++) {
+    //   const proposal = await dao.proposals(i);
+    //   const totalVotes =
+    //     Number(proposal.votesFor) + Number(proposal.votesAgainst);
+    //   console.log(`Proposal ${i}:`);
+    //   console.log(`  Votes for: ${proposal.votesFor}`);
+    //   console.log(`  Votes against: ${proposal.votesAgainst}`);
+    //   console.log(`  Total votes: ${totalVotes}`);
+    //   console.log(`  % votes for: ${(proposal.votesFor / totalVotes) * 100}`);
+    // }
+
+    // Simulate the end of the voting period
+    await simulateBlocks(24 * 60 * 60);
 
     // Execute the transfer proposal
     await dao.executeProposal(0);
 
     // Log balances
-    console.log(
-      "Founder balance:",
-      hre.ethers.utils.formatUnits(await token.balanceOf(founder.address), 18)
-    );
-    console.log(
-      "Addr1 balance:",
-      hre.ethers.utils.formatUnits(await token.balanceOf(addr1.address), 18)
-    );
-    console.log(
-      "Addr2 balance:",
-      hre.ethers.utils.formatUnits(await token.balanceOf(addr2.address), 18)
-    );
-    console.log(
-      "Treasury balance:",
-      hre.ethers.utils.formatUnits(await token.balanceOf(treasury.address), 18)
-    );
-    console.log(
-      "Token sale balance:",
-      hre.ethers.utils.formatUnits(await token.balanceOf(tokenSale.address), 18)
-    );
+    // console.log(
+    //   "Founder balance:",
+    //   hre.ethers.utils.formatUnits(await werewolfToken.balanceOf(founder.address), 18)
+    // );
+    // console.log(
+    //   "Addr1 balance:",
+    //   hre.ethers.utils.formatUnits(await werewolfToken.balanceOf(addr1.address), 18)
+    // );
+    // console.log(
+    //   "Addr2 balance:",
+    //   hre.ethers.utils.formatUnits(await werewolfToken.balanceOf(addr2.address), 18)
+    // );
+    // console.log(
+    //   "Treasury balance:",
+    //   hre.ethers.utils.formatUnits(await werewolfToken.balanceOf(treasury.address), 18)
+    // );
+    // console.log(
+    //   "WerewolfTokenV1 sale balance:",
+    //   hre.ethers.utils.formatUnits(await werewolfToken.balanceOf(tokenSale.address), 18)
+    // );
 
     // Check that the TokenSale contract received the tokens
-    const tokenSaleBalanceAfterTransfer = await token.balanceOf(
+    const tokenSaleBalanceAfterTransfer = await werewolfToken.balanceOf(
       tokenSale.address
     );
     // console.log(
-    //   "Token Sale Balance After Transfer:",
+    //   "WerewolfTokenV1 Sale Balance After Transfer:",
     //   hre.ethers.utils.formatUnits(tokenSaleBalanceAfterTransfer, 18)
     // );
 
-    // Step 2: Encode and propose starting the token sale
+    // Step 2: Encode and propose starting the werewolfToken sale
     const saleProposalCallData = hre.ethers.utils.defaultAbiCoder.encode(
       ["uint256", "uint256"],
       [saleTokenAmount, saleTokenPrice]
     );
 
     // Approve DAO to spend proposalCost tokens on behalf of founder
-    await token.connect(founder).approve(dao.address, proposalCost);
+    await werewolfToken.connect(founder).approve(dao.address, proposalCost);
 
     // Create a proposal to start the sale with 5,000 tokens at 0.5 ETH each
     await dao
@@ -297,44 +320,31 @@ describe("DAO Contract", function () {
         saleProposalCallData
       );
 
+    // Simulate 1 day delay for voting period
+    await simulateBlocks(24 * 60 * 60);
+
     // console.log(await dao.proposals(1));
 
     // Cast votes to approve the sale proposal
     await dao.connect(founder).vote(1, true);
     await dao.connect(addr1).vote(1, true);
-    await dao.connect(addr2).vote(1, true);
+    // await dao.connect(addr2).vote(1, true);
 
-    const proposalCount = await dao.proposalCount();
+    proposalCount = await dao.proposalCount();
 
-    for (let i = 0; i < proposalCount; i++) {
-      const proposal = await dao.proposals(i);
-      const totalSupply = hre.ethers.utils.formatUnits(
-        await token.totalSupply(),
-        18
-      );
-      const treasuryBalance = hre.ethers.utils.formatUnits(
-        await token.balanceOf(treasury.address),
-        18
-      );
-      const circulatingSupply = totalSupply - treasuryBalance;
-      console.log(`Proposal ${i}:`);
-      console.log(`  Proposer: ${proposal.proposer}`);
-      console.log(`  Target Contract: ${proposal.targetContract}`);
-      console.log(
-        `  Votes: ${hre.ethers.utils.formatUnits(proposal.votes, 18)}`
-      );
-      console.log(`  Token total supply: ${totalSupply}`);
-      console.log(`  Treasury balance: ${treasuryBalance}`);
-      console.log(`  Circulating supply: ${circulatingSupply}`);
-      console.log(
-        `  % votes: ${
-          (hre.ethers.utils.formatUnits(proposal.votes, 18) /
-            circulatingSupply) *
-          100
-        }`
-      );
-      console.log(`  Executed: ${proposal.executed}`);
-    }
+    // for (let i = 0; i < proposalCount; i++) {
+    //   const proposal = await dao.proposals(i);
+    //   const totalVotes =
+    //     Number(proposal.votesFor) + Number(proposal.votesAgainst);
+    //   console.log(`Proposal ${i}:`);
+    //   console.log(`  Votes for: ${proposal.votesFor}`);
+    //   console.log(`  Votes against: ${proposal.votesAgainst}`);
+    //   console.log(`  Total votes: ${totalVotes}`);
+    //   console.log(`  % votes for: ${(proposal.votesFor / totalVotes) * 100}`);
+    // }
+
+    // Simulate the end of the voting period
+    await simulateBlocks(24 * 60 * 60);
 
     // console.log(await dao.proposals(1));
 
@@ -343,7 +353,7 @@ describe("DAO Contract", function () {
 
     // Check the sale status and details
     const sale = await tokenSale.sales(1);
-    console.log(sale);
+    // console.log(sale);
     expect(tokenSaleBalanceAfterTransfer.toString()).to.equal(
       saleTokenAmount.toString()
     );
@@ -367,13 +377,13 @@ describe("DAO Contract", function () {
     await dao
       .connect(addr1)
       .createProposal(
-        token.address,
+        werewolfToken.address,
         "mint(address,uint256)",
         mintProposalCallData
       );
 
     // Addr1 votes (without reaching majority)
-    await token.transfer(
+    await werewolfToken.transfer(
       addr1.address,
       hre.ethers.utils.parseUnits("1000", 18)
     );
@@ -390,3 +400,9 @@ describe("DAO Contract", function () {
     }
   });
 });
+
+// Simulate blocks
+async function simulateBlocks(delay) {
+  await hre.network.provider.send("evm_increaseTime", [delay]);
+  await hre.network.provider.send("evm_mine");
+}

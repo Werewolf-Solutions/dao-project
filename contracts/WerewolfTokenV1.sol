@@ -4,7 +4,7 @@ pragma solidity ^0.8.27;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-contract Token is ERC20, Ownable {
+contract WerewolfTokenV1 is ERC20, Ownable {
     address public treasury;
 
     struct Checkpoint {
@@ -19,7 +19,7 @@ contract Token is ERC20, Ownable {
         address _treasury,
         address addr1,
         address addr2
-    ) ERC20("DAO Token", "DAO") Ownable(msg.sender) {
+    ) ERC20("Werewolf Token", "WLF") Ownable(msg.sender) {
         require(_treasury != address(0), "Treasury address cannot be zero");
         treasury = _treasury; // Set the Treasury address
         // Mint initial 1M tokens directly to the DAO's Treasury
@@ -38,6 +38,11 @@ contract Token is ERC20, Ownable {
     }
 
     function airdrop(address to, uint256 amount) external onlyOwner {
+        require(balanceOf(treasury) >= amount, "Insufficient balance");
+        _transfer(treasury, to, amount);
+    }
+
+    function payEmployee(address to, uint256 amount) external onlyOwner {
         require(balanceOf(treasury) >= amount, "Insufficient balance");
         _transfer(treasury, to, amount);
     }

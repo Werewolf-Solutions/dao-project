@@ -4,11 +4,11 @@ pragma solidity ^0.8.27;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-import "./Token.sol";
+import "./WerewolfTokenV1.sol";
 
 contract TokenSale is Ownable {
-    //ERC20 public token;
-    Token private token;
+    //ERC20 public werewolfToken;
+    WerewolfTokenV1 private werewolfToken;
     address public treasury;
     uint256 public price;
     uint256 public totalTokensForSale;
@@ -37,8 +37,8 @@ contract TokenSale is Ownable {
     );
 
     constructor(address _token, address _treasury, address _dao) Ownable(_dao) {
-        //token = ERC20(_token);
-        token = Token(_token);
+        //werewolfToken = ERC20(_token);
+        werewolfToken = WerewolfTokenV1(_token);
         treasury = _treasury;
     }
 
@@ -49,7 +49,7 @@ contract TokenSale is Ownable {
             "Amount and price must be greater than zero"
         );
         require(
-            token.balanceOf(address(this)) >= _amount,
+            werewolfToken.balanceOf(address(this)) >= _amount,
             "Not enough tokens for sale"
         );
 
@@ -74,10 +74,10 @@ contract TokenSale is Ownable {
             "Incorrect ETH amount sent"
         );
 
-        uint256 tokenAmount = _amount * 10 ** token.decimals();
+        uint256 tokenAmount = _amount * 10 ** werewolfToken.decimals();
         currentSale.tokensAvailable -= _amount;
 
-        token.transfer(msg.sender, tokenAmount);
+        werewolfToken.transfer(msg.sender, tokenAmount);
         payable(treasury).transfer(msg.value);
 
         emit TokensPurchased(msg.sender, _amount, saleIdCounter);
