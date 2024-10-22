@@ -76,14 +76,35 @@ npx hardhat --network localhost test
   }
   ```
 
-  - [] test al vulnerabilities
+- [] create Constitution
 
-  - [] Companies House
+  ```solidity
+  uint256 public lawCount;
+  mapping(uint256 => Law) public laws;
 
-    - [] create business
+  struct Law {
+      string name;
+      string description;
+  }
 
-    - [] hire/fire/pause employees
+  function addLaw(
+        string memory _name,
+        string memory _description
+    ) external onlyOwner {
+        // save new law
+        lawCount++;
+        laws[lawCount] = Law({name: _name, description: _description});
+    }
+  ```
 
-    - [] payEmployees
+- [] test al vulnerabilities
 
-    - [] give/revoke roles
+- [] Companies House
+
+  - [] create business
+
+  - [] hire/fire/pause employees
+
+  - [] payEmployees
+
+  - [] give/revoke roles

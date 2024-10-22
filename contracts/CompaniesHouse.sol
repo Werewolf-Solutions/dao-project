@@ -8,13 +8,13 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "./Treasury.sol";
 import "./WerewolfTokenV1.sol";
 
-contract CompanyHouseV1 is AccessControl {
+contract CompaniesHouseV1 is AccessControl {
     WerewolfTokenV1 private werewolfToken;
     // CompanyV1 creator;
     // address owner;
     // string name;
 
-    bytes32 public constant STAFF_ROLE = keccak256("STAFF_ROLE");
+    bytes32 public constant STAFF_ROLE = keccak256("CEO");
 
     uint256 public index = 0; // Number of companies
     uint256 public employeesIndex = 0; // Number of employees in company
@@ -24,17 +24,19 @@ contract CompanyHouseV1 is AccessControl {
     // Company Struct
     struct CompanyStruct {
         uint256 companyId;
-        uint256 number;
         address owner;
         string industry;
         string name;
         uint256 createdAt;
         bool active;
         address[] employees;
+        string domain;
+        string[] roles;
     }
 
     CompanyStruct public company;
     CompanyStruct[] public companies;
+    // mapping(address => mapping(uint32 => CompanyStruct)) public companies;
 
     mapping(uint256 => CompanyStruct[]) public companiesByOwner;
 
@@ -42,6 +44,19 @@ contract CompanyHouseV1 is AccessControl {
     event CompanyDeleted(CompanyStruct company); // Event
 
     struct Employee {
+        uint256 salary;
+        uint256 lastPayDate;
+        uint256 employeeId;
+        address payableAddress;
+        string name;
+        uint256 companyId;
+        string role;
+        uint256 hiredAt;
+        bool active;
+        string currency;
+    }
+
+    struct InventoryItem {
         uint256 salary;
         uint256 lastPayDate;
         uint256 employeeId;
@@ -63,7 +78,7 @@ contract CompanyHouseV1 is AccessControl {
     event EmployeePaid(address indexed employee, uint256 amount);
 
     constructor(address _token, address treasuryAddress) {
-        werewolfToken = _token;
+        werewolfToken = WerewolfTokenV1(_token);
         _treasuryAddress = treasuryAddress;
         // _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
         // _setupRole(STAFF_ROLE, msg.sender);
@@ -79,7 +94,9 @@ contract CompanyHouseV1 is AccessControl {
 
     function createCompany(
         string memory _name,
-        string memory _industry
+        string memory _industry,
+        string memory domain,
+        string[] memory roles
     ) public payable {
         require(
             werewolfToken.balanceOf(msg.sender) >= amountToPay + fee,
@@ -100,13 +117,14 @@ contract CompanyHouseV1 is AccessControl {
         address[] memory employees;
         CompanyStruct memory newCompany = CompanyStruct({
             companyId: index,
-            number: index,
             owner: msg.sender,
             industry: _industry,
             name: _name,
             createdAt: block.timestamp,
             active: true,
-            employees: employees
+            employees: employees,
+            domain: domain,
+            roles: roles
         });
         companies.push(newCompany);
         emit CompanyCreated(newCompany); // Triggering event
@@ -129,6 +147,26 @@ contract CompanyHouseV1 is AccessControl {
         return companies[_companyId];
     }
 
+    function retrieveEmployee(
+        uint256 _companyId,
+        address _employee
+    ) public view returns (Employee memory) {
+        // Ensure that only the owner of the company can retrieve employee details
+        require(
+            msg.sender == companies[_companyId].owner,
+            "Only the owner of the company can retrieve employee details"
+        );
+
+        // Check if the employee exists in the employees mapping
+        Employee memory employee = _employees[_employee];
+        require(
+            employee.companyId == _companyId,
+            "Employee does not belong to this company"
+        );
+
+        return employee;
+    }
+
     function hireEmployee(
         address employeeAddress,
         string memory _name,
@@ -136,7 +174,11 @@ contract CompanyHouseV1 is AccessControl {
         uint256 _companyId,
         uint256 salary,
         string memory _currency
-    ) public onlyRole(STAFF_ROLE) {
+    ) public {
+        require(
+            msg.sender == companies[_companyId].owner,
+            "Only owner of the company can hire employee"
+        );
         Employee storage employee = _employees[employeeAddress];
         employee.salary = salary;
         employee.lastPayDate = block.timestamp;
@@ -186,8 +228,6 @@ contract CompanyHouseV1 is AccessControl {
         uint256 payAmount = payPeriod * employee.salary;
         require(payAmount > 0, "Not enough time has passed to pay employee");
 
-        Treasury treasury = Treasury(_treasuryAddress);
-        //treasury.transferFunds(employeeAddress, payAmount);
         werewolfToken.payEmployee(employeeAddress, payAmount);
 
         employee.lastPayDate = block.timestamp;
@@ -195,41 +235,84 @@ contract CompanyHouseV1 is AccessControl {
         emit EmployeePaid(employeeAddress, payAmount);
     }
 
-    function payEmployees(address[] memory employeesAddress) public {
-        Treasury treasury = Treasury(_treasuryAddress);
-        for (uint256 i = 0; i < _employees.length; i++) {
-            Employee storage employee = _employees[i];
+    function payEmployees(uint256 _companyId) public {
+        CompanyStruct storage _company = companies[_companyId];
+        // Treasury treasury = Treasury(_treasuryAddress);
+
+        for (uint256 i = 0; i < _company.employees.length; i++) {
+            address employeeAddress = _company.employees[i];
+            Employee storage employee = _employees[employeeAddress];
+
             require(employee.salary > 0, "Employee not found");
 
-            uint256 payPeriod = block.timestamp - _employees[i].lastPayDate;
-            uint256 payAmount = payPeriod * _employees[i].salary;
+            uint256 payPeriod = block.timestamp - employee.lastPayDate;
+            uint256 payAmount = payPeriod * employee.salary;
+
             require(
                 werewolfToken.balanceOf(_treasuryAddress) > payAmount,
-                "Treasury has not enough liquidity to pay employees."
+                "Treasury has insufficient liquidity to pay employees."
             );
-            require(_employees[i].salary > 0, "Employee not found");
             require(
                 payAmount > 0,
                 "Not enough time has passed to pay employee"
             );
 
-            treasury.transferFunds(_employees[i].employeeAddress, payAmount);
+            // Transfer funds from treasury to employee
+            werewolfToken.payEmployee(employeeAddress, payAmount);
+            // Update the employee's last pay date
+            employee.lastPayDate = block.timestamp;
 
-            _employees[i].lastPayDate = block.timestamp;
-
-            emit EmployeePaid(_employees[i].employeeAddress, payAmount);
+            // Emit the EmployeePaid event
+            emit EmployeePaid(employeeAddress, payAmount);
         }
     }
 
-    function hireContractor(address _contractor) public onlyRole(STAFF_ROLE) {
-        // hire contractor
+    function hireContractor(
+        address contractorAddress,
+        string memory _name,
+        uint256 _companyId,
+        uint256 payment,
+        string memory _currency
+    ) public onlyRole(STAFF_ROLE) {
+        // Hiring contractor (similar to hiring an employee)
+        require(
+            companies[_companyId].owner == msg.sender,
+            "Only owner can hire"
+        );
+
+        Employee storage contractor = _employees[contractorAddress];
+        contractor.salary = payment; // Payment per task or project
+        contractor.employeeId = employeesIndex;
+        contractor.payableAddress = contractorAddress;
+        contractor.name = _name;
+        contractor.companyId = _companyId;
+        contractor.role = "Contractor";
+        contractor.hiredAt = block.timestamp;
+        contractor.active = true;
+        contractor.currency = _currency;
+
+        emit EmployeeHired(contractorAddress, payment);
+        companies[_companyId].employees.push(contractorAddress);
+        employeesIndex += 1;
     }
 
-    function setCompanyRole(address _employee) public onlyRole(STAFF_ROLE) {
-        // set company role
+    function setCompanyRole(
+        address employeeAddress,
+        string memory newRole
+    ) public onlyRole(STAFF_ROLE) {
+        Employee storage employee = _employees[employeeAddress];
+        require(employee.active, "Employee must be active");
+        employee.role = newRole;
     }
 
-    function addCompanyRole(string memory _role) public onlyRole(STAFF_ROLE) {
-        // add company role
+    function addCompanyRole(
+        uint256 _companyId,
+        string memory _newRole
+    ) public onlyRole(STAFF_ROLE) {
+        require(
+            companies[_companyId].owner == msg.sender,
+            "Only the owner can add roles"
+        );
+        companies[_companyId].roles.push(_newRole);
     }
 }

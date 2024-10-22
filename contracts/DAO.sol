@@ -14,14 +14,14 @@ contract DAO {
     struct Proposal {
         address proposer;
         address[] targets; // Contract to call
-        string[] functionSignatures; // Contract to call
+        string[] signatures; // Contract to call
         bytes[] datas; // Encoded function call with arguments
         uint256 votesFor; // Votes in favor of the proposal
         uint256 votesAgainst; // Votes against the proposal
         uint startBlock;
         uint endBlock;
-        uint eta;
         bool executed; // Whether the proposal has been executed
+        uint eta;
     }
 
     struct Receipt {
@@ -108,6 +108,7 @@ contract DAO {
         proposals[proposalCount] = Proposal({
             proposer: msg.sender,
             targets: _targets,
+            signatures: _signatures,
             datas: _datas,
             startBlock: startBlock,
             endBlock: endBlock,
@@ -127,7 +128,7 @@ contract DAO {
         for (uint i = 0; i < proposal.targets.length; i++) {
             _queueOrRevert(
                 proposal.targets[i],
-                proposal.functionSignatures[i],
+                proposal.signatures[i],
                 proposal.datas[i],
                 eta
             );
@@ -154,9 +155,6 @@ contract DAO {
         Proposal storage proposal = proposals[proposalId];
         require(!proposal.executed, "Proposal already executed");
 
-        // Ensure the target contract is valid
-        require(proposal.targets != address(0), "Invalid target contract");
-
         require(
             treasury.owner() == address(this),
             "DAO is not the owner of the Treasury"
@@ -173,20 +171,21 @@ contract DAO {
         proposal.executed = true;
 
         for (uint i = 0; i < proposal.targets.length; i++) {
-            timelock.executeTransaction(
-                proposal.targets[i],
-                proposal.values[i],
-                proposal.signatures[i],
-                proposal.calldatas[i],
-                proposal.eta
+            // timelock.executeTransaction(
+            //     proposal.targets[i],
+            //     proposal.signatures[i],
+            //     proposal.datas[i],
+            //     proposal.eta
+            // );
+            bytes memory callData = abi.encodePacked(
+                bytes4(keccak256(bytes(proposal.signatures[i]))),
+                proposal.datas[i]
             );
+            // Execute the function call using low-level call
+            (bool success, ) = proposal.targets[i].call(callData);
+            require(success, "Function call failed");
+            emit ProposalExecuted(proposalId);
         }
-
-        // Execute the function call using low-level call
-        // (bool success, ) = proposal.targets.call(proposal.callData);
-        // require(success, "Function call failed");
-
-        emit ProposalExecuted(proposalId);
     }
 
     // Voting function

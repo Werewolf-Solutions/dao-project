@@ -32,11 +32,6 @@ contract WerewolfTokenV1 is ERC20, Ownable {
         _transfer(treasury, addr2, transferAmount);
     }
 
-    // BUG: to remove before deploy
-    function testMint(address to, uint256 amount) external {
-        _mint(to, amount);
-    }
-
     function airdrop(address to, uint256 amount) external onlyOwner {
         require(balanceOf(treasury) >= amount, "Insufficient balance");
         _transfer(treasury, to, amount);

@@ -39,7 +39,7 @@ describe("DAO Contract", function () {
     );
     await werewolfToken.deployed();
 
-    timelock = await Timelock.deploy(dao.address, votingPeriod);
+    timelock = await Timelock.deploy(founder.address, votingPeriod);
     await timelock.deployed();
 
     // Deploy the DAO contract with WerewolfTokenV1 and Treasury addresses
@@ -61,6 +61,10 @@ describe("DAO Contract", function () {
     // Set the DAO as the owner of the WerewolfTokenV1 and Treasury
     await werewolfToken.transferOwnership(dao.address);
     await treasury.transferOwnership(dao.address);
+    await timelock.transferOwnership(dao.address);
+
+    // await timelock.setPendingAdmin(dao.address); // Set the DAO as the pending admin
+    // await timelock.acceptAdmin(); // DAO becomes the admin of the Timelock
 
     // console.log(`DAO address: ${dao.address}`);
     // console.log(`werewolfToken owner: ${await werewolfToken.owner()}`);
@@ -99,9 +103,22 @@ describe("DAO Contract", function () {
     await dao.connect(addr1).vote(0, true);
     await dao.connect(founder).vote(0, true);
 
-    // Simulate the end of the voting period
-    // await simulateBlocks(24 * 60 * 60);
+    await simulateBlocks(votingPeriod * 2);
 
+    let proposalCount = await dao.proposalCount();
+
+    // for (let i = 0; i < proposalCount; i++) {
+    //   const proposal = await dao.proposals(i);
+    //   const totalVotes =
+    //     Number(proposal.votesFor) + Number(proposal.votesAgainst);
+    //   console.log(`Proposal ${i}:`);
+    //   console.log(`  Votes for: ${proposal.votesFor}`);
+    //   console.log(`  Votes against: ${proposal.votesAgainst}`);
+    //   console.log(`  Total votes: ${totalVotes}`);
+    //   console.log(`  % votes for: ${(proposal.votesFor / totalVotes) * 100} %`);
+    // }
+
+    // Queue the proposal
     await dao.connect(founder).queueProposal(0);
 
     // Execute the proposals after voting
@@ -132,20 +149,20 @@ describe("DAO Contract", function () {
     await dao
       .connect(founder)
       .createProposal(
-        werewolfToken.address,
-        "mint(uint256)",
-        mintProposalCallData
+        [werewolfToken.address],
+        ["mint(uint256)"],
+        [mintProposalCallData]
       );
 
     // Simulate 1 day delay for voting period
-    await simulateBlocks(24 * 60 * 60);
+    await simulateBlocks(votingPeriod);
 
     // Cast votes from all participants
     await dao.connect(founder).vote(0, true);
     await dao.connect(addr1).vote(0, true);
 
     // Simulate the end of the voting period
-    await simulateBlocks(24 * 60 * 60);
+    await simulateBlocks(votingPeriod);
 
     // Record the initial Treasury balance before minting
     const initialTreasuryBalance = await werewolfToken.balanceOf(
@@ -233,6 +250,12 @@ describe("DAO Contract", function () {
       [tokenSale.address, saleTokenAmount]
     );
 
+    // Step 2: Encode and propose starting the werewolfToken sale
+    const saleProposalCallData = hre.ethers.utils.defaultAbiCoder.encode(
+      ["uint256", "uint256"],
+      [saleTokenAmount, saleTokenPrice]
+    );
+
     // Approve DAO to spend proposalCost tokens on behalf of founder
     await werewolfToken.connect(founder).approve(dao.address, proposalCost);
 
@@ -240,13 +263,13 @@ describe("DAO Contract", function () {
     await dao
       .connect(founder)
       .createProposal(
-        werewolfToken.address,
-        "airdrop(address,uint256)",
-        transferProposalCallData
+        [werewolfToken.address, tokenSale.address],
+        ["airdrop(address,uint256)", "startSale(uint256,uint256)"],
+        [transferProposalCallData, saleProposalCallData]
       );
 
     // Simulate 1 day delay for voting period
-    await simulateBlocks(24 * 60 * 60);
+    await simulateBlocks(votingPeriod);
 
     // Cast votes to approve the werewolfToken airdrop proposal
     await dao.connect(founder).vote(0, true);
@@ -266,7 +289,7 @@ describe("DAO Contract", function () {
     // }
 
     // Simulate the end of the voting period
-    await simulateBlocks(24 * 60 * 60);
+    await simulateBlocks(votingPeriod);
 
     // Execute the transfer proposal
     await dao.executeProposal(0);
@@ -302,55 +325,6 @@ describe("DAO Contract", function () {
     //   hre.ethers.utils.formatUnits(tokenSaleBalanceAfterTransfer, 18)
     // );
 
-    // Step 2: Encode and propose starting the werewolfToken sale
-    const saleProposalCallData = hre.ethers.utils.defaultAbiCoder.encode(
-      ["uint256", "uint256"],
-      [saleTokenAmount, saleTokenPrice]
-    );
-
-    // Approve DAO to spend proposalCost tokens on behalf of founder
-    await werewolfToken.connect(founder).approve(dao.address, proposalCost);
-
-    // Create a proposal to start the sale with 5,000 tokens at 0.5 ETH each
-    await dao
-      .connect(founder)
-      .createProposal(
-        tokenSale.address,
-        "startSale(uint256,uint256)",
-        saleProposalCallData
-      );
-
-    // Simulate 1 day delay for voting period
-    await simulateBlocks(24 * 60 * 60);
-
-    // console.log(await dao.proposals(1));
-
-    // Cast votes to approve the sale proposal
-    await dao.connect(founder).vote(1, true);
-    await dao.connect(addr1).vote(1, true);
-    // await dao.connect(addr2).vote(1, true);
-
-    proposalCount = await dao.proposalCount();
-
-    // for (let i = 0; i < proposalCount; i++) {
-    //   const proposal = await dao.proposals(i);
-    //   const totalVotes =
-    //     Number(proposal.votesFor) + Number(proposal.votesAgainst);
-    //   console.log(`Proposal ${i}:`);
-    //   console.log(`  Votes for: ${proposal.votesFor}`);
-    //   console.log(`  Votes against: ${proposal.votesAgainst}`);
-    //   console.log(`  Total votes: ${totalVotes}`);
-    //   console.log(`  % votes for: ${(proposal.votesFor / totalVotes) * 100}`);
-    // }
-
-    // Simulate the end of the voting period
-    await simulateBlocks(24 * 60 * 60);
-
-    // console.log(await dao.proposals(1));
-
-    // Execute the sale proposal
-    await dao.executeProposal(1);
-
     // Check the sale status and details
     const sale = await tokenSale.sales(1);
     // console.log(sale);
@@ -367,27 +341,29 @@ describe("DAO Contract", function () {
   it("should not allow executing failed proposals", async function () {
     const mintAmount = hre.ethers.utils.parseUnits("5000", 18);
 
+    // Cost for the proposal
+    const proposalCost = hre.ethers.utils.parseUnits("10", 18);
+
     // Encode the mint function proposal
     const mintProposalCallData = hre.ethers.utils.defaultAbiCoder.encode(
       ["address", "uint256"],
-      [treasury.address, mintAmount]
+      [tokenSale.address, mintAmount]
     );
+
+    // Approve DAO to spend proposalCost tokens on behalf of founder
+    await werewolfToken.connect(founder).approve(dao.address, proposalCost);
 
     // Create a proposal
     await dao
-      .connect(addr1)
+      .connect(founder)
       .createProposal(
-        werewolfToken.address,
-        "mint(address,uint256)",
-        mintProposalCallData
+        [werewolfToken.address],
+        ["mint(address,uint256)"],
+        [mintProposalCallData]
       );
 
-    // Addr1 votes (without reaching majority)
-    await werewolfToken.transfer(
-      addr1.address,
-      hre.ethers.utils.parseUnits("1000", 18)
-    );
-    await dao.connect(addr1).vote(0);
+    // Addr1 votes against
+    await dao.connect(addr1).vote(0, false);
 
     // Try to execute the proposal without majority and catch the revert
     try {
@@ -396,7 +372,9 @@ describe("DAO Contract", function () {
       expect.fail("Execution should have reverted, but it didn't");
     } catch (error) {
       // Assert that the error message contains the revert reason
-      expect(error.message).to.include("Proposal must be passed to execute");
+      expect(error.message).to.include(
+        "Proposal must have majority votes to pass"
+      );
     }
   });
 });
