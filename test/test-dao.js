@@ -61,7 +61,7 @@ describe("DAO Contract", function () {
     // Set the DAO as the owner of the WerewolfTokenV1 and Treasury
     await werewolfToken.transferOwnership(dao.address);
     await treasury.transferOwnership(dao.address);
-    await timelock.transferOwnership(dao.address);
+    // await timelock.transferOwnership(dao.address);
 
     // await timelock.setPendingAdmin(dao.address); // Set the DAO as the pending admin
     // await timelock.acceptAdmin(); // DAO becomes the admin of the Timelock
@@ -173,8 +173,11 @@ describe("DAO Contract", function () {
     //   hre.ethers.utils.formatUnits(initialTreasuryBalance, 18)
     // );
 
-    // Execute the proposal (if it directly calls callContractFunc, don't call it separately)
-    await dao.executeProposal(0);
+    // Queue the proposal
+    await dao.connect(founder).queueProposal(0);
+
+    // Execute the proposals after voting
+    await dao.connect(founder).executeProposal(0);
 
     // console.log(`Mint amount: ${hre.ethers.utils.formatUnits(mintAmount, 18)}`);
     // console.log(
@@ -291,8 +294,11 @@ describe("DAO Contract", function () {
     // Simulate the end of the voting period
     await simulateBlocks(votingPeriod);
 
-    // Execute the transfer proposal
-    await dao.executeProposal(0);
+    // Queue the proposal
+    await dao.connect(founder).queueProposal(0);
+
+    // Execute the proposals after voting
+    await dao.connect(founder).executeProposal(0);
 
     // Log balances
     // console.log(
@@ -367,7 +373,11 @@ describe("DAO Contract", function () {
 
     // Try to execute the proposal without majority and catch the revert
     try {
-      await dao.executeProposal(0);
+      // Queue the proposal
+      await dao.connect(founder).queueProposal(0);
+
+      // Execute the proposals after voting
+      await dao.connect(founder).executeProposal(0);
       // If the above line doesn't throw, this will fail the test
       expect.fail("Execution should have reverted, but it didn't");
     } catch (error) {

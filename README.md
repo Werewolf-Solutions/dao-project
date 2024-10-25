@@ -44,39 +44,29 @@ npx hardhat --network localhost test
 
 # v0.0.1 - init
 
-- [>] change names
-
-  - [] Token: WerewolfTokenV1
-
-  - [] DAO: DAOv1
-
-  - [] ...
-
 - [>] create&execute proposals
+
+  - [>] eta is wrong, if commented out it should work
 
   - [>] add quorumVotes, proposalThreshold, votingDelay, votingPeriod
 
-  - [>] change into arrays so it can execute multiple functions
-
-  - [] write Timelock contract to handle voting delay, execution after voting period and so on
+  - [>] write Timelock contract to handle voting delay, execution after voting period and so on
 
   > https://etherscan.io/address/0x6d903f6003cca6255D85CcA4D3B5E5146dC33925#code
 
-  ```solidity
-  contract Timelock {
-      mapping(uint256 => uint256) public proposalTimelocks;
+- [>] Companies House
 
-      function setTimelock(uint256 proposalId, uint256 delay) external {
-          // Implement efficient timelock management
-      }
+  - [] create business
 
-      function executeProposal(uint256 proposalId) external {
-          // Ensure timelocked proposals execute correctly
-      }
-  }
-  ```
+  - [] hire/fire/pause employees
 
-- [] create Constitution
+  - [] payEmployees
+
+  - [] give/revoke roles
+
+- [>>] test al vulnerabilities
+
+- [] Constitution.sol
 
   ```solidity
   uint256 public lawCount;
@@ -96,15 +86,3 @@ npx hardhat --network localhost test
         laws[lawCount] = Law({name: _name, description: _description});
     }
   ```
-
-- [] test al vulnerabilities
-
-- [] Companies House
-
-  - [] create business
-
-  - [] hire/fire/pause employees
-
-  - [] payEmployees
-
-  - [] give/revoke roles

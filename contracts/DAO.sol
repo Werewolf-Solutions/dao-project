@@ -10,6 +10,9 @@ contract DAO {
     WerewolfTokenV1 public werewolfToken;
     Treasury public treasury;
     Timelock public timelock;
+    address public werewolfTokenAddress;
+
+    mapping(address => bool) public authorizedCallers;
 
     struct Proposal {
         address proposer;
@@ -72,13 +75,44 @@ contract DAO {
 
     event ProposalCreated(uint256 proposalId, address proposer);
     event ProposalExecuted(uint256 proposalId);
+    event QueueTransaction(
+        bytes32 indexed txHash,
+        address indexed target,
+        string signature,
+        bytes data,
+        uint eta
+    );
     event Voted(uint256 proposalId, address voter, bool support, uint256 votes);
+
+    // Modifier to ensure that only the Timelock can execute specific functions
+    modifier onlyTimelock() {
+        require(msg.sender == address(timelock), "Only Timelock can execute");
+        _;
+    }
 
     constructor(address _token, address _treasury, address _timelock) {
         werewolfToken = WerewolfTokenV1(_token);
         treasury = Treasury(_treasury);
         timelock = Timelock(_timelock);
         treasuryAddress = _treasury;
+        werewolfTokenAddress = _token;
+        // _authorizeCaller(_timelock);
+    }
+
+    // Function to authorize an external contract (like CompaniesHouseV1)
+    function _authorizeCaller(address _caller) external onlyTimelock {
+        authorizedCallers[_caller] = true;
+    }
+
+    // Function to deauthorize an external contract
+    function _deauthorizeCaller(address _caller) external onlyTimelock {
+        authorizedCallers[_caller] = false;
+    }
+
+    // Proxy function that calls payEmployee on WerewolfTokenV1
+    function payEmployee(address to, uint256 amount) external {
+        require(authorizedCallers[msg.sender], "Not an authorized caller");
+        WerewolfTokenV1(werewolfTokenAddress).payEmployee(to, amount);
     }
 
     // Function to create a proposal
@@ -125,13 +159,31 @@ contract DAO {
     function queueProposal(uint proposalId) public {
         Proposal storage proposal = proposals[proposalId];
         uint eta = add256(block.timestamp, timelock.delay());
+
         for (uint i = 0; i < proposal.targets.length; i++) {
-            _queueOrRevert(
+            bytes32 txHash = keccak256(
+                abi.encode(
+                    proposal.targets[i],
+                    proposal.signatures[i],
+                    proposal.datas[i]
+                    //eta
+                )
+            );
+            queuedTransactions[txHash] = true;
+
+            emit QueueTransaction(
+                txHash,
                 proposal.targets[i],
                 proposal.signatures[i],
                 proposal.datas[i],
                 eta
             );
+            // _queueOrRevert(
+            //     proposal.targets[i],
+            //     proposal.signatures[i],
+            //     proposal.datas[i],
+            //     eta
+            // );
         }
     }
 
@@ -155,11 +207,6 @@ contract DAO {
         Proposal storage proposal = proposals[proposalId];
         require(!proposal.executed, "Proposal already executed");
 
-        require(
-            treasury.owner() == address(this),
-            "DAO is not the owner of the Treasury"
-        );
-
         // Ensure the proposal has enough "For" votes (must be more than 50% of total votes)
         uint256 totalVotes = proposal.votesFor + proposal.votesAgainst;
         require(
@@ -171,6 +218,30 @@ contract DAO {
         proposal.executed = true;
 
         for (uint i = 0; i < proposal.targets.length; i++) {
+            // Ensure the target contract is valid
+            require(
+                proposal.targets[i] != address(0),
+                "Invalid target contract"
+            );
+
+            bytes32 txHash = keccak256(
+                abi.encode(
+                    proposal.targets[i],
+                    proposal.signatures[i],
+                    proposal.datas[i]
+                    //proposal.eta
+                )
+            );
+            require(
+                queuedTransactions[txHash],
+                "DAO::executeTransaction: Transaction hasn't been queued."
+            );
+            require(
+                getBlockTimestamp() >= proposal.eta,
+                "DAO::executeTransaction: Transaction hasn't surpassed time lock."
+            );
+
+            queuedTransactions[txHash] = false;
             // timelock.executeTransaction(
             //     proposal.targets[i],
             //     proposal.signatures[i],
@@ -229,5 +300,10 @@ contract DAO {
         uint c = a + b;
         require(c >= a, "addition overflow");
         return c;
+    }
+
+    function getBlockTimestamp() internal view returns (uint) {
+        // solium-disable-next-line security/no-block-members
+        return block.timestamp;
     }
 }

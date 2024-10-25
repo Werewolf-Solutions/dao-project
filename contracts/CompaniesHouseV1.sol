@@ -7,9 +7,11 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 
 import "./Treasury.sol";
 import "./WerewolfTokenV1.sol";
+import "./DAO.sol";
 
 contract CompaniesHouseV1 is AccessControl {
     WerewolfTokenV1 private werewolfToken;
+    DAO public dao;
     // CompanyV1 creator;
     // address owner;
     // string name;
@@ -32,6 +34,7 @@ contract CompaniesHouseV1 is AccessControl {
         address[] employees;
         string domain;
         string[] roles;
+        string[] powerRoles;
     }
 
     CompanyStruct public company;
@@ -77,43 +80,56 @@ contract CompaniesHouseV1 is AccessControl {
     event EmployeeFired(address indexed employee);
     event EmployeePaid(address indexed employee, uint256 amount);
 
-    constructor(address _token, address treasuryAddress) {
+    modifier onlyRoleWithPower(uint256 _companyId) {
+        // Ensure the caller is a member of the company
+        Employee storage employee = _employees[msg.sender];
+        require(
+            employee.companyId == _companyId,
+            "Not an employee of this company"
+        );
+
+        bool hasPower = false;
+
+        // Check if the employee's role is in the powerRoles list
+        for (uint256 i = 0; i < companies[_companyId].powerRoles.length; i++) {
+            if (
+                keccak256(
+                    abi.encodePacked(companies[_companyId].powerRoles[i])
+                ) == keccak256(abi.encodePacked(employee.role))
+            ) {
+                hasPower = true;
+                break;
+            }
+        }
+
+        require(hasPower, "You do not have a power role in this company.");
+        _;
+    }
+
+    constructor(address _token, address treasuryAddress, address _daoAddress) {
         werewolfToken = WerewolfTokenV1(_token);
+        dao = DAO(_daoAddress);
         _treasuryAddress = treasuryAddress;
         // _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
         // _setupRole(STAFF_ROLE, msg.sender);
-    }
-
-    function pay() public payable {
-        require(msg.value == 0, "This function only accepts ERC20 tokens.");
-        require(
-            werewolfToken.transferFrom(msg.sender, address(this), amountToPay),
-            "Transfer failed."
-        );
     }
 
     function createCompany(
         string memory _name,
         string memory _industry,
         string memory domain,
-        string[] memory roles
+        string[] memory roles,
+        string[] memory powerRoles,
+        string memory ownerName,
+        string memory ownerRole,
+        uint256 ownerSalary,
+        string memory ownerCurrency
     ) public payable {
         require(
             werewolfToken.balanceOf(msg.sender) >= amountToPay + fee,
             "Token balance must be more than amount to pay."
         );
-        // uint256 amountToSend = msg.value - fee;
-        // _to.transfer(amountToSend);
-        // owner.transfer(fee);
-        // owner = msg.sender;
 
-        // // We perform an explicit type conversion from `address`
-        // // to `TokenCreator` and assume that the type of
-        // // the calling contract is `TokenCreator`, there is
-        // // no real way to verify that.
-        // // This does not create a new contract.
-        // creator = CompanyV1(msg.sender);
-        // name = _name;
         address[] memory employees;
         CompanyStruct memory newCompany = CompanyStruct({
             companyId: index,
@@ -124,11 +140,32 @@ contract CompaniesHouseV1 is AccessControl {
             active: true,
             employees: employees,
             domain: domain,
-            roles: roles
+            roles: roles,
+            powerRoles: powerRoles
         });
+
         companies.push(newCompany);
         emit CompanyCreated(newCompany); // Triggering event
+
+        // Now hire the owner as the first employee
+        Employee storage employee = _employees[msg.sender];
+        employee.salary = ownerSalary;
+        employee.lastPayDate = block.timestamp;
+        employee.employeeId = employeesIndex;
+        employee.payableAddress = msg.sender;
+        employee.name = ownerName;
+        employee.companyId = index;
+        employee.role = ownerRole;
+        employee.hiredAt = block.timestamp;
+        employee.active = true;
+        employee.currency = ownerCurrency;
+
+        emit EmployeeHired(msg.sender, ownerSalary);
+        companies[index].employees.push(msg.sender);
+        employeesIndex += 1;
+
         index += 1;
+
         require(
             werewolfToken.transferFrom(msg.sender, address(this), amountToPay),
             "Transfer failed."
@@ -174,11 +211,24 @@ contract CompaniesHouseV1 is AccessControl {
         uint256 _companyId,
         uint256 salary,
         string memory _currency
-    ) public {
+    ) public onlyRoleWithPower(_companyId) {
         require(
             msg.sender == companies[_companyId].owner,
             "Only owner of the company can hire employee"
         );
+        bool roleExists = false; // Flag to check if role exists
+        for (uint256 i = 0; i < companies[_companyId].roles.length; i++) {
+            if (
+                keccak256(abi.encodePacked(companies[_companyId].roles[i])) ==
+                keccak256(abi.encodePacked(_role))
+            ) {
+                roleExists = true;
+                break;
+            }
+        }
+
+        require(roleExists, "Role is not present in company's roles.");
+
         Employee storage employee = _employees[employeeAddress];
         employee.salary = salary;
         employee.lastPayDate = block.timestamp;
@@ -200,7 +250,7 @@ contract CompaniesHouseV1 is AccessControl {
         address employeeAddress,
         // uint256 _employeeId,
         uint256 _companyId
-    ) public onlyRole(STAFF_ROLE) {
+    ) public {
         delete _employees[employeeAddress];
 
         emit EmployeeFired(employeeAddress);
@@ -244,6 +294,7 @@ contract CompaniesHouseV1 is AccessControl {
             Employee storage employee = _employees[employeeAddress];
 
             require(employee.salary > 0, "Employee not found");
+            require(employee.active, "Employee not active");
 
             uint256 payPeriod = block.timestamp - employee.lastPayDate;
             uint256 payAmount = payPeriod * employee.salary;
@@ -253,12 +304,12 @@ contract CompaniesHouseV1 is AccessControl {
                 "Treasury has insufficient liquidity to pay employees."
             );
             require(
-                payAmount > 0,
+                payPeriod > 0,
                 "Not enough time has passed to pay employee"
             );
 
-            // Transfer funds from treasury to employee
-            werewolfToken.payEmployee(employeeAddress, payAmount);
+            // Call the payEmployee function through the DAO contract
+            dao.payEmployee(employeeAddress, payAmount);
             // Update the employee's last pay date
             employee.lastPayDate = block.timestamp;
 
@@ -267,52 +318,33 @@ contract CompaniesHouseV1 is AccessControl {
         }
     }
 
-    function hireContractor(
-        address contractorAddress,
-        string memory _name,
-        uint256 _companyId,
-        uint256 payment,
-        string memory _currency
-    ) public onlyRole(STAFF_ROLE) {
-        // Hiring contractor (similar to hiring an employee)
-        require(
-            companies[_companyId].owner == msg.sender,
-            "Only owner can hire"
-        );
-
-        Employee storage contractor = _employees[contractorAddress];
-        contractor.salary = payment; // Payment per task or project
-        contractor.employeeId = employeesIndex;
-        contractor.payableAddress = contractorAddress;
-        contractor.name = _name;
-        contractor.companyId = _companyId;
-        contractor.role = "Contractor";
-        contractor.hiredAt = block.timestamp;
-        contractor.active = true;
-        contractor.currency = _currency;
-
-        emit EmployeeHired(contractorAddress, payment);
-        companies[_companyId].employees.push(contractorAddress);
-        employeesIndex += 1;
-    }
-
     function setCompanyRole(
         address employeeAddress,
-        string memory newRole
-    ) public onlyRole(STAFF_ROLE) {
+        string memory newRole,
+        uint256 _companyId
+    ) public {
         Employee storage employee = _employees[employeeAddress];
         require(employee.active, "Employee must be active");
+        bool roleExists = false; // Flag to check if role exists
+        for (uint256 i = 0; i < companies[_companyId].roles.length; i++) {
+            if (
+                keccak256(abi.encodePacked(companies[_companyId].roles[i])) ==
+                keccak256(abi.encodePacked(newRole))
+            ) {
+                roleExists = true;
+                break;
+            }
+        }
+
+        require(roleExists, "Role is not present in company's roles.");
+
         employee.role = newRole;
     }
 
     function addCompanyRole(
         uint256 _companyId,
         string memory _newRole
-    ) public onlyRole(STAFF_ROLE) {
-        require(
-            companies[_companyId].owner == msg.sender,
-            "Only the owner can add roles"
-        );
+    ) public onlyRoleWithPower(_companyId) {
         companies[_companyId].roles.push(_newRole);
     }
 }

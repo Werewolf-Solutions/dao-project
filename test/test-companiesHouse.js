@@ -42,13 +42,6 @@ describe("Companies House Contract", function () {
     );
     await werewolfToken.deployed();
 
-    // Deploy the CompaniesHouse contract with the Treasury and WerewolfToken addresses
-    companiesHouse = await CompaniesHouse.deploy(
-      werewolfToken.address,
-      treasury.address
-    );
-    await companiesHouse.deployed();
-
     timelock = await Timelock.deploy(founder.address, votingPeriod);
     await timelock.deployed();
 
@@ -59,6 +52,63 @@ describe("Companies House Contract", function () {
       timelock.address
     );
     await dao.deployed();
+
+    // Deploy the CompaniesHouse contract with the Treasury and WerewolfToken addresses
+    companiesHouse = await CompaniesHouse.deploy(
+      werewolfToken.address,
+      treasury.address,
+      dao.address
+    );
+    await companiesHouse.deployed();
+
+    // Create and execute _authorizeCaller for CompaniesHouse contract
+    // Cost for the proposal
+    const proposalCost = hre.ethers.utils.parseUnits("10", 18);
+
+    // Create a proposal to airdrop tokens from Treasury to addr1
+    const functionParams = hre.ethers.utils.defaultAbiCoder.encode(
+      ["address"],
+      [companiesHouse.address]
+    );
+
+    // Approve DAO to spend proposalCost tokens on behalf of founder
+    await werewolfToken.connect(founder).approve(dao.address, proposalCost);
+
+    await dao
+      .connect(founder)
+      .createProposal(
+        [dao.address],
+        ["_authorizeCaller(address)"],
+        [functionParams]
+      );
+
+    // Simulate delay for voting period
+    await simulateBlocks(votingPeriod);
+
+    // WerewolfTokenV1 holders (founder, addr1) vote on the proposal
+    await dao.connect(addr1).vote(0, true);
+    await dao.connect(founder).vote(0, true);
+
+    await simulateBlocks(votingPeriod * 2);
+
+    // let proposalCount = await dao.proposalCount();
+
+    // for (let i = 0; i < proposalCount; i++) {
+    //   const proposal = await dao.proposals(i);
+    //   const totalVotes =
+    //     Number(proposal.votesFor) + Number(proposal.votesAgainst);
+    //   console.log(`Proposal ${i}:`);
+    //   console.log(`  Votes for: ${proposal.votesFor}`);
+    //   console.log(`  Votes against: ${proposal.votesAgainst}`);
+    //   console.log(`  Total votes: ${totalVotes}`);
+    //   console.log(`  % votes for: ${(proposal.votesFor / totalVotes) * 100} %`);
+    // }
+
+    // Queue the proposal
+    await dao.connect(founder).queueProposal(0);
+
+    // Execute the proposals after voting
+    await dao.connect(founder).executeProposal(0);
 
     // Deploy the werewolfToken sale contract with price 0.5 ETH per werewolfToken
     tokenSale = await TokenSale.deploy(
@@ -86,13 +136,18 @@ describe("Companies House Contract", function () {
         "Werewolf Solutions",
         "Software development",
         "https://werewolf.solutions",
-        ["CEO", "CTO", "Founder", "CHR"]
+        ["CEO", "CTO", "Founder", "CHR", "Developer"],
+        ["CEO", "CTO", "Founder", "CHR"],
+        "Lorenzo",
+        "CEO",
+        hre.ethers.utils.parseUnits("1", 18),
+        "WLF"
       );
 
-    const companies = await companiesHouse.retrieveCompany(0);
+    const company = await companiesHouse.retrieveCompany(0);
 
-    expect(companies.name).to.equal("Werewolf Solutions");
-    expect(companies.industry).to.equal("Software development");
+    expect(company.name).to.equal("Werewolf Solutions");
+    expect(company.industry).to.equal("Software development");
   });
 
   it("should hire an employee", async function () {
@@ -108,25 +163,9 @@ describe("Companies House Contract", function () {
     );
 
     const employee = await companiesHouse.retrieveEmployee(0, addr1.address);
-    console.log(employee);
+
     expect(employee.name).to.equal("Alice");
     expect(employee.role).to.equal("Developer");
-  });
-
-  it("should hire a contractor", async function () {
-    await createCompany();
-
-    await companiesHouse.connect(founder).hireContractor(
-      addr1.address, // Contractor address
-      "Bob", // Contractor name
-      0, // Company ID
-      hre.ethers.utils.parseUnits("2", 18), // Payment per task
-      "ETH" // Currency
-    );
-
-    const contractor = await companiesHouse.retrieveEmployee(addr1.address);
-    expect(contractor.name).to.equal("Bob");
-    expect(contractor.role).to.equal("Contractor");
   });
 
   it("should set company role", async function () {
@@ -143,10 +182,10 @@ describe("Companies House Contract", function () {
 
     await companiesHouse
       .connect(founder)
-      .setCompanyRole(addr1.address, "Manager");
+      .setCompanyRole(addr1.address, "CHR", 0);
 
-    const employee = await companiesHouse.retrieveEmployee(addr1.address);
-    expect(employee.role).to.equal("Manager");
+    const employee = await companiesHouse.retrieveEmployee(0, addr1.address);
+    expect(employee.role).to.equal("CHR");
   });
 
   it("should add company role", async function () {
@@ -159,6 +198,7 @@ describe("Companies House Contract", function () {
   });
 
   it("should pay employees", async function () {
+    const employeeSalary = hre.ethers.utils.parseUnits("1", 18);
     await createCompany();
 
     // Hire addr1 as an employee with a salary of 1 token per second
@@ -175,20 +215,38 @@ describe("Companies House Contract", function () {
     await companiesHouse.connect(founder).hireEmployee(
       addr2.address, // Employee wallet
       "Bob", // Name
-      "Designer", // Role
+      "SMM", // Role
       0, // Company ID
       employeeSalary, // Salary (1 token per second)
       "USD" // Currency
     );
 
-    // Treasury needs to have enough tokens to pay employees
-    const treasuryBalance = hre.ethers.utils.parseUnits("10000", 18);
-    await werewolfToken
-      .connect(founder)
-      .mint(treasury.address, treasuryBalance);
+    const employeeBefore = await companiesHouse.retrieveEmployee(
+      0,
+      addr1.address
+    );
+    console.log(employeeBefore);
+    console.log(await getBlockTimestamp());
+    console.log(employeeBefore.lastPayDate);
+    let payPeriod = (await getBlockTimestamp()) - employeeBefore.lastPayDate;
+    let payAmount = payPeriod * employeeBefore.salary;
+    console.log(payPeriod);
+    console.log(hre.ethers.utils.formatUnits(payAmount, 18));
 
     // Simulate 10 seconds passing
     await simulateBlocks(10);
+
+    const employeeAfter = await companiesHouse.retrieveEmployee(
+      0,
+      addr1.address
+    );
+    console.log(employeeAfter);
+    console.log(await getBlockTimestamp());
+    console.log(employeeAfter.lastPayDate);
+    payPeriod = (await getBlockTimestamp()) - employeeAfter.lastPayDate;
+    payAmount = payPeriod * employeeAfter.salary;
+    console.log(payPeriod);
+    console.log(hre.ethers.utils.formatUnits(payAmount, 18));
 
     // Pay employees after 10 seconds of work
     await companiesHouse.connect(founder).payEmployees(0); // Pay all employees in company 0
@@ -214,7 +272,12 @@ describe("Companies House Contract", function () {
         "Werewolf Solutions",
         "Software development",
         "https://werewolf.solutions",
-        ["CEO", "CTO", "Founder", "CHR"]
+        ["CEO", "CTO", "Founder", "CHR", "SMM", "Developer"],
+        ["CEO", "CTO", "Founder", "CHR"],
+        "Lorenzo",
+        "CEO",
+        hre.ethers.utils.parseUnits("1", 18),
+        "WLF"
       );
   }
 
@@ -222,5 +285,17 @@ describe("Companies House Contract", function () {
   async function simulateBlocks(delay) {
     await hre.network.provider.send("evm_increaseTime", [delay]);
     await hre.network.provider.send("evm_mine");
+  }
+
+  async function getBlockTimestamp() {
+    // Get the latest block number
+    const blockNumber = await hre.ethers.provider.getBlockNumber();
+
+    // Get the block data using the block number
+    const block = await hre.ethers.provider.getBlock(blockNumber);
+
+    // Access the timestamp
+    const timestamp = block.timestamp;
+    return timestamp;
   }
 });
