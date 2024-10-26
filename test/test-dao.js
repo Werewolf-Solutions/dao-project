@@ -54,22 +54,50 @@ describe("DAO Contract", function () {
     tokenSale = await TokenSale.deploy(
       werewolfToken.address,
       treasury.address,
-      dao.address
+      timelock.address
     );
     await tokenSale.deployed();
 
     // Set the DAO as the owner of the WerewolfTokenV1 and Treasury
-    await werewolfToken.transferOwnership(dao.address);
-    await treasury.transferOwnership(dao.address);
-    // await timelock.transferOwnership(dao.address);
+    await werewolfToken.transferOwnership(timelock.address);
+    await treasury.transferOwnership(timelock.address);
 
-    // await timelock.setPendingAdmin(dao.address); // Set the DAO as the pending admin
-    // await timelock.acceptAdmin(); // DAO becomes the admin of the Timelock
+    // Encode the function parameters for `setpendingAdmin()`
+    const functionParams = hre.ethers.utils.defaultAbiCoder.encode(
+      ["address"],
+      [dao.address]
+    );
+
+    // Approve the DAO to spend tokens for proposal cost, if required
+    const proposalCost = hre.ethers.utils.parseUnits("10", 18);
+    await werewolfToken.connect(founder).approve(dao.address, proposalCost);
+
+    // Create the proposal through the DAO
+    await timelock.connect(founder).queueTransaction(
+      timelock.address, // Target contract
+      "setPendingAdmin(address)", // Function signature
+      functionParams // Function arguments encoded
+    );
+
+    // Simulate delay for voting period
+    await simulateBlocks(votingPeriod);
+
+    await timelock.connect(founder).executeTransaction(
+      timelock.address, // Target contract
+      "setPendingAdmin(address)", // Function signature
+      functionParams // Function arguments encoded
+    );
+
+    await simulateBlocks(votingPeriod * 2);
+
+    // Execute the proposals after voting
+    await dao.connect(founder).__acceptAdmin();
 
     // console.log(`DAO address: ${dao.address}`);
     // console.log(`werewolfToken owner: ${await werewolfToken.owner()}`);
     // console.log(`werewolfToken sale owner: ${await tokenSale.owner()}`);
     // console.log(`treasury owner: ${await treasury.owner()}`);
+    // console.log(`Timelock admin: ${await timelock.admin()}`);
   });
 
   it("should allow only the DAO to call airdrop through proposals", async function () {
@@ -104,19 +132,6 @@ describe("DAO Contract", function () {
     await dao.connect(founder).vote(0, true);
 
     await simulateBlocks(votingPeriod * 2);
-
-    let proposalCount = await dao.proposalCount();
-
-    // for (let i = 0; i < proposalCount; i++) {
-    //   const proposal = await dao.proposals(i);
-    //   const totalVotes =
-    //     Number(proposal.votesFor) + Number(proposal.votesAgainst);
-    //   console.log(`Proposal ${i}:`);
-    //   console.log(`  Votes for: ${proposal.votesFor}`);
-    //   console.log(`  Votes against: ${proposal.votesAgainst}`);
-    //   console.log(`  Total votes: ${totalVotes}`);
-    //   console.log(`  % votes for: ${(proposal.votesFor / totalVotes) * 100} %`);
-    // }
 
     // Queue the proposal
     await dao.connect(founder).queueProposal(0);

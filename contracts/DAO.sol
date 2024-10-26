@@ -12,6 +12,8 @@ contract DAO {
     Timelock public timelock;
     address public werewolfTokenAddress;
 
+    address public guardian;
+
     mapping(address => bool) public authorizedCallers;
 
     struct Proposal {
@@ -96,23 +98,33 @@ contract DAO {
         timelock = Timelock(_timelock);
         treasuryAddress = _treasury;
         werewolfTokenAddress = _token;
+        guardian = msg.sender;
         // _authorizeCaller(_timelock);
     }
 
     // Function to authorize an external contract (like CompaniesHouseV1)
-    function _authorizeCaller(address _caller) external onlyTimelock {
+    function _authorizeCaller(address _caller) external {
+        require(
+            msg.sender == address(timelock),
+            "Only Timelock can call this function."
+        );
         authorizedCallers[_caller] = true;
     }
 
     // Function to deauthorize an external contract
-    function _deauthorizeCaller(address _caller) external onlyTimelock {
+    function _deauthorizeCaller(address _caller) external {
+        require(
+            msg.sender == address(timelock),
+            "Only Timelock can call this function."
+        );
         authorizedCallers[_caller] = false;
     }
 
     // Proxy function that calls payEmployee on WerewolfTokenV1
     function payEmployee(address to, uint256 amount) external {
         require(authorizedCallers[msg.sender], "Not an authorized caller");
-        WerewolfTokenV1(werewolfTokenAddress).payEmployee(to, amount);
+        // WerewolfTokenV1(werewolfTokenAddress).payEmployee(to, amount);
+        werewolfToken.payEmployee(to, amount);
     }
 
     // Function to create a proposal
@@ -161,37 +173,36 @@ contract DAO {
         uint eta = add256(block.timestamp, timelock.delay());
 
         for (uint i = 0; i < proposal.targets.length; i++) {
-            bytes32 txHash = keccak256(
-                abi.encode(
-                    proposal.targets[i],
-                    proposal.signatures[i],
-                    proposal.datas[i]
-                    //eta
-                )
-            );
-            queuedTransactions[txHash] = true;
+            // bytes32 txHash = keccak256(
+            //     abi.encode(
+            //         proposal.targets[i],
+            //         proposal.signatures[i],
+            //         proposal.datas[i]
+            //         //eta
+            //     )
+            // );
+            // queuedTransactions[txHash] = true;
 
-            emit QueueTransaction(
-                txHash,
-                proposal.targets[i],
-                proposal.signatures[i],
-                proposal.datas[i],
-                eta
-            );
-            // _queueOrRevert(
+            // emit QueueTransaction(
+            //     txHash,
             //     proposal.targets[i],
             //     proposal.signatures[i],
-            //     proposal.datas[i],
-            //     eta
+            //     proposal.datas[i]
+            //     //eta
             // );
+            _queueOrRevert(
+                proposal.targets[i],
+                proposal.signatures[i],
+                proposal.datas[i]
+                // eta
+            );
         }
     }
 
     function _queueOrRevert(
         address target,
         string memory signature,
-        bytes memory data,
-        uint eta
+        bytes memory data //uint eta
     ) internal {
         require(
             !timelock.queuedTransactions(
@@ -199,7 +210,12 @@ contract DAO {
             ),
             "DAO::_queueOrRevert: proposal action already queued at eta"
         );
-        timelock.queueTransaction(target, signature, data, eta);
+        timelock.queueTransaction(
+            target,
+            signature,
+            data
+            //eta
+        );
     }
 
     // Function to execute a proposal
@@ -219,42 +235,42 @@ contract DAO {
 
         for (uint i = 0; i < proposal.targets.length; i++) {
             // Ensure the target contract is valid
-            require(
-                proposal.targets[i] != address(0),
-                "Invalid target contract"
-            );
-
-            bytes32 txHash = keccak256(
-                abi.encode(
-                    proposal.targets[i],
-                    proposal.signatures[i],
-                    proposal.datas[i]
-                    //proposal.eta
-                )
-            );
-            require(
-                queuedTransactions[txHash],
-                "DAO::executeTransaction: Transaction hasn't been queued."
-            );
-            require(
-                getBlockTimestamp() >= proposal.eta,
-                "DAO::executeTransaction: Transaction hasn't surpassed time lock."
-            );
-
-            queuedTransactions[txHash] = false;
-            // timelock.executeTransaction(
-            //     proposal.targets[i],
-            //     proposal.signatures[i],
-            //     proposal.datas[i],
-            //     proposal.eta
+            // require(
+            //     proposal.targets[i] != address(0),
+            //     "Invalid target contract"
             // );
-            bytes memory callData = abi.encodePacked(
-                bytes4(keccak256(bytes(proposal.signatures[i]))),
+
+            // bytes32 txHash = keccak256(
+            //     abi.encode(
+            //         proposal.targets[i],
+            //         proposal.signatures[i],
+            //         proposal.datas[i]
+            //         //proposal.eta
+            //     )
+            // );
+            // require(
+            //     queuedTransactions[txHash],
+            //     "DAO::executeTransaction: Transaction hasn't been queued."
+            // );
+            // require(
+            //     getBlockTimestamp() >= proposal.eta,
+            //     "DAO::executeTransaction: Transaction hasn't surpassed time lock."
+            // );
+
+            // queuedTransactions[txHash] = false;
+            timelock.executeTransaction(
+                proposal.targets[i],
+                proposal.signatures[i],
                 proposal.datas[i]
+                //proposal.eta
             );
-            // Execute the function call using low-level call
-            (bool success, ) = proposal.targets[i].call(callData);
-            require(success, "Function call failed");
+            // bytes memory callData = abi.encodePacked(
+            //     bytes4(keccak256(bytes(proposal.signatures[i]))),
+            //     proposal.datas[i]
+            // );
+            // // Execute the function call using low-level call
+            // (bool success, ) = proposal.targets[i].call(callData);
+            // require(success, "Function call failed");
             emit ProposalExecuted(proposalId);
         }
     }
@@ -305,5 +321,13 @@ contract DAO {
     function getBlockTimestamp() internal view returns (uint) {
         // solium-disable-next-line security/no-block-members
         return block.timestamp;
+    }
+
+    function __acceptAdmin() public {
+        require(
+            msg.sender == guardian,
+            "GovernorAlpha::__acceptAdmin: sender must be gov guardian"
+        );
+        timelock.acceptAdmin();
     }
 }

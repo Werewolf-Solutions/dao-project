@@ -36,7 +36,11 @@ contract TokenSale is Ownable {
         uint256 saleId
     );
 
-    constructor(address _token, address _treasury, address _dao) Ownable(_dao) {
+    constructor(
+        address _token,
+        address _treasury,
+        address _timelock
+    ) Ownable(_timelock) {
         //werewolfToken = ERC20(_token);
         werewolfToken = WerewolfTokenV1(_token);
         treasury = _treasury;
