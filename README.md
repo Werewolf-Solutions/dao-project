@@ -41,47 +41,61 @@ npx hardhat --network localhost test
 > Governor https://etherscan.io/address/0xc0dA01a04C3f3E0be433606045bB7017A7323E38#code
 >
 > https://github.com/compound-finance/compound-protocol/releases/tag/v2.5-rc2
+>
+> timelock https://etherscan.io/address/0x6d903f6003cca6255D85CcA4D3B5E5146dC33925#code
 
 # v0.0.1 - init
 
-- [>] create&execute proposals
+- [>] payment amount is calculated on last token sale price, add it in DAO.sol like latestPrice as public variable and then write a function where onlyDAO can setLatestPrice
 
-  - [>] DAO.sol:: in this function should be timelock to call `werewolfToken.payEmployee(to, amount);` because of `await werewolfToken.transferOwnership(timelock.address);`
+- [>] DAO.sol:: check the total pay amount not only for single employee => basically check if treasury has enough tokens to pay them all & add a threshold for like 10 years of payments
 
-  & payment amount should be calculated on last token sale price
+```solidity
+  require(
+      werewolfToken.balanceOf(_treasuryAddress) > payAmount,
+      "Treasury has insufficient liquidity to pay employees."
+  );
+```
+
+- [>] put back eta
+
+- [>] add quorumVotes, proposalThreshold, votingDelay, votingPeriod
+
+- [>] write delegate and undelegate functions in DAO? and test them
+
+- [>] Stake.sol
+
+- [>] finish sim `npm run sim` for tokenomics
 
   ex:
 
-  token price = 0.0001$
-  monthly payment = 2,000$
-  token monthly payment = 20,000,000
-  of total supply = 2%
+  total supply = 1,000,000,000 WLF
 
-  ```solidity
-    // Proxy function that calls payEmployee on WerewolfTokenV1
-    function payEmployee(address to, uint256 amount) external {
-        require(authorizedCallers[msg.sender], "Not an authorized caller");
-        // WerewolfTokenV1(werewolfTokenAddress).payEmployee(to, amount);
-        werewolfToken.payEmployee(to, amount);
-    }
-  ```
+  initial airdrop for tests = 20,000????
 
-  - [>] DAO.sol:: check the total pay amount not only for single employee => basically check if treasury has enough tokens to pay them all & add a threshold for like 10 years of payments
+  #### token sale #0
 
-  ```solidity
-    require(
-        werewolfToken.balanceOf(_treasuryAddress) > payAmount,
-        "Treasury has insufficient liquidity to pay employees."
-    );
-  ```
+  - goal = 500,000$ => TVL
+  - my 5,000$ = 1% of shares = 500,000
+  - price = 0.01$
+  - tokens = 50,000,000 staked for 10 years
+  - of total supply = 5%
 
-  - [>] eta is wrong, if commented out it works but I need to put it back
+  #### token sale #1
 
-  - [>] add quorumVotes, proposalThreshold, votingDelay, votingPeriod
+  #### employees payment
 
-  - [>] Timelock error:: Timelock::queueTransaction: Call must come from admin.
+  - token price = 0.01$
+  - monthly payment = 2,000$
+  - of TVL
+  - token monthly payment = 2,000,000
+  - of total supply = 0.2%
 
-  > https://etherscan.io/address/0x6d903f6003cca6255D85CcA4D3B5E5146dC33925#code
+- [>] TokenSale.sol
+
+  - [>] Stake 2 years (or how much it will take for me to get paid the same - ex tokensale = 50M tokens, me 2M tokens per month, if save all 25 months)
+
+  - [>] after token sale #0 delegate voting power to me or multiSig with team?
 
 - [>] Companies House
 
@@ -92,6 +106,8 @@ npx hardhat --network localhost test
   - [] payEmployees
 
   - [] give/revoke roles
+
+  - [] payEmployees: payment amount should be calculated on uniswap price or oracle like chainlink price
 
 - [>>] test al vulnerabilities
 

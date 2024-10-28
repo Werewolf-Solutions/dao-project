@@ -36,16 +36,17 @@ describe("Companies House Contract", function () {
     treasury = await Treasury.deploy(founder.address); // Deployer will be owner
     await treasury.deployed();
 
+    timelock = await Timelock.deploy(founder.address, votingPeriod);
+    await timelock.deployed();
+
     // Deploy the werewolfToken contract with the Treasury address
     werewolfToken = await WerewolfTokenV1.deploy(
       treasury.address,
+      timelock.address,
       founder.address,
       addr1.address
     );
     await werewolfToken.deployed();
-
-    timelock = await Timelock.deploy(founder.address, votingPeriod);
-    await timelock.deployed();
 
     // Deploy the DAO contract with WerewolfTokenV1 and Treasury addresses
     dao = await DAO.deploy(
@@ -100,7 +101,7 @@ describe("Companies House Contract", function () {
     // Execute the proposals after voting
     await dao.connect(founder).__acceptAdmin();
 
-    // Create and execute _authorizeCaller for CompaniesHouse contract
+    // Create and execute _authorizeCaller for CompaniesHouse in DAO and WerewolfToken contracts
     const functionParams = hre.ethers.utils.defaultAbiCoder.encode(
       ["address"],
       [companiesHouse.address]
@@ -112,9 +113,9 @@ describe("Companies House Contract", function () {
     await dao
       .connect(founder)
       .createProposal(
-        [dao.address],
-        ["_authorizeCaller(address)"],
-        [functionParams]
+        [dao.address, werewolfToken.address],
+        ["_authorizeCaller(address)", "_authorizeCaller(address)"],
+        [functionParams, functionParams]
       );
 
     // Simulate delay for voting period
@@ -278,9 +279,7 @@ describe("Companies House Contract", function () {
     // console.log(payPeriod);
     // console.log(payAmount);
     // Pay employees after 10 seconds of work
-    console.log("Before pay employees");
     await companiesHouse.connect(founder).payEmployees(0); // Pay all employees in company 0
-    console.log("After pay employees");
 
     // Verify employee balances
     const employee1Balance = await werewolfToken.balanceOf(addr3.address);

@@ -309,7 +309,7 @@ contract CompaniesHouseV1 is AccessControl {
             );
 
             // Call the payEmployee function through the DAO contract
-            dao.payEmployee(employeeAddress, payAmount);
+            werewolfToken.payEmployee(employeeAddress, payAmount);
             // Update the employee's last pay date
             employee.lastPayDate = block.timestamp;
 

@@ -31,16 +31,17 @@ describe("DAO Contract", function () {
     treasury = await Treasury.deploy(founder.address); // Deployer will be owner
     await treasury.deployed();
 
+    timelock = await Timelock.deploy(founder.address, votingPeriod);
+    await timelock.deployed();
+
     // Deploy the werewolfToken contract with the Treasury address
     werewolfToken = await WerewolfTokenV1.deploy(
       treasury.address,
+      timelock.address,
       founder.address,
       addr1.address
     );
     await werewolfToken.deployed();
-
-    timelock = await Timelock.deploy(founder.address, votingPeriod);
-    await timelock.deployed();
 
     // Deploy the DAO contract with WerewolfTokenV1 and Treasury addresses
     dao = await DAO.deploy(

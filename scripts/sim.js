@@ -1,89 +1,70 @@
-// Define initial parameters
-const totalSupply = 1_000_000_000; // 1 billion tokens
-const tokenSaleTokens = 10_000_000; // 10 million tokens for sale
-const saleAmountUSDC = 500_000; // 500k USDC
-const tokenPrice = saleAmountUSDC / tokenSaleTokens;
-const employeeMonthlyUSDC = 5000; // Employee payment in USDC
-const minTreasuryReserve = totalSupply * 0.2; // 20% of total supply
+// Initial parameters
+const totalSupply = 1_000_000_000; // 1 billion WLF tokens
+const initialAirdrop = 20_000; // Initial airdrop
+const tokenSaleGoalUSD = 500_000; // Goal for token sale #0 in USD
+const myContributionUSD = 5_000; // Personal contribution to sale
+const tokenSalePriceUSD = 0.01; // Price per token in USD for sale
+const tokenSaleTokens = 50_000_000; // Total tokens in initial sale, staked for 10 years
+const employeeMonthlyUSDC = 2_000; // Monthly employee payment in USDC
+var employeeTokenPayment = employeeMonthlyUSDC / tokenSalePriceUSD; // Employee payment in WLF tokens
+const minTreasuryReserve = totalSupply * 0.2; // Minimum treasury reserve at 20% of total supply
 
-// Treasury starts with all tokens minus those sold
-let treasuryTokens = totalSupply - tokenSaleTokens;
-let TVL = tokenSaleTokens; // Start TVL with all tokens sold in token sale
+// Initial treasury and TVL (Total Value Locked) setup
+let treasuryTokens = totalSupply - tokenSaleTokens * 2 - initialAirdrop;
+let tokensInPool = tokenSaleTokens; // Tokens in pool after sale
+let TVL = tokenSaleGoalUSD; // Initial TVL after token sale
+let marketCap = TVL; // Market cap initially equal to TVL
 
-// Parameters for APY function
-const APYFloor = 0.06; // 6% APY floor
-const APYMax = 1.0; // Maximum APY 100%
-const TVLMin = 1_000_000; // Minimum TVL to define APY scaling
-const TVLMax = 1_000_000_000; // Maximum TVL
+// Simulation parameters
+const employeeSellPercentage = 0.5; // Employees sell 50% of token payment each month
 
 console.log(`
-Total supply =      ${totalSupply}
-Token sale amount = ${tokenSaleTokens}
-Price =             ${tokenPrice}
-Employees =         ${employeeMonthlyUSDC}
-                    ${employeeMonthlyUSDC / tokenPrice}
-Treasury =          ${treasuryTokens}                    
-TVL =               ${TVL}
+Total supply =      ${totalSupply} WLF
+Initial Airdrop =   ${initialAirdrop} WLF
+Token sale amount = ${tokenSaleTokens} WLF
+Token price =       ${tokenSalePriceUSD} USD
+Employee monthly payment = ${employeeMonthlyUSDC} USD (${employeeTokenPayment} WLF)
 `);
+var tokenPrice = marketCap / tokensInPool;
 
 for (let month = 1; month <= 12; month++) {
-  let monthlyDistributedTokens = 0; // Track monthly distribution
+  // Employee token sale and reinvestment
+  const employeeTokensToSell =
+    (employeeMonthlyUSDC / tokenPrice) * employeeSellPercentage;
 
-  // Calculate APY based on current TVL
-  let APY =
-    APYFloor +
-    (APYMax - APYFloor) *
-      (Math.log(TVLMax / (TVL || 1)) / Math.log(TVLMax / TVLMin));
+  // Update treasury and pool
+  if (treasuryTokens >= employeeTokenPayment) {
+    treasuryTokens -= employeeTokenPayment; // Deduct full payment from treasury
+    tokensInPool += employeeTokensToSell; // Reinvest unsold portion back into the pool
+    marketCap -= employeeMonthlyUSDC * employeeSellPercentage; // Decrease market cap by sale proceeds
 
-  // Calculate daily rewards for 30 days in the month
-  for (let day = 1; day <= 30; day++) {
-    let dailyReward = (APY / 365) * TVL;
+    // Recalculate token price after the employee sale and reinvestment
+    tokenPrice = marketCap / tokensInPool;
 
-    if (treasuryTokens >= dailyReward) {
-      treasuryTokens -= dailyReward; // Deduct from Treasury
-      TVL += dailyReward; // Assume reward gets staked back into TVL
-      monthlyDistributedTokens += dailyReward; // Track distribution
-    } else {
-      console.log(
-        "Treasury can't afford daily reward on day " +
-          day +
-          " of month " +
-          month
-      );
-      break;
-    }
-  }
-
-  // Calculate and distribute employee payment
-  let employeeTokens = employeeMonthlyUSDC / tokenPrice;
-
-  if (treasuryTokens >= employeeTokens) {
-    treasuryTokens -= employeeTokens; // Deduct from Treasury
-    monthlyDistributedTokens += employeeTokens; // Track distribution
+    // Recalculate employee token payment
+    employeeTokenPayment = employeeMonthlyUSDC / tokenPrice;
   } else {
-    console.log("Treasury can't afford employee payment in month " + month);
+    console.log(`Treasury can't afford employee payment in month ${month}`);
     break;
   }
 
-  // Reinvest 10% of the monthly distributed tokens back into staking (TVL)
-  let reinvestment = 0.1 * monthlyDistributedTokens;
-  TVL += reinvestment; // Add to TVL
+  // Display monthly stats
+  console.log(`\nMonth ${month}:`);
+  console.log(`  Token Price:        ${tokenPrice.toFixed(4)} USD`);
+  console.log(
+    `  Employees Tokens to Sell:     ${employeeTokensToSell.toFixed(0)} WLF`
+  );
+  console.log(`  Market Cap:         ${marketCap.toFixed(2)} USD`);
+  console.log(`  Treasury Tokens:    ${treasuryTokens.toFixed(0)} WLF`);
+  console.log(`  Tokens in Pool:     ${tokensInPool.toFixed(0)} WLF`);
 
-  // Display the status at the end of each month
-  console.log(`Month ${month}:`);
-  console.log(`  APY ${(APY * 100).toFixed(0)}%`);
-  console.log(`  Rewards ${monthlyDistributedTokens.toFixed(0)}`);
-  console.log(`  Treasury Tokens: ${treasuryTokens.toFixed(0)}`);
-  console.log(`  TVL: ${TVL.toFixed(0)}`);
-  console.log(`  Reinvested into TVL: ${reinvestment.toFixed(0)}`);
-
-  // Check if Treasury meets minimum reserve
+  // Check if treasury meets minimum reserve
   if (treasuryTokens < minTreasuryReserve) {
     console.log(
-      "Treasury has fallen below minimum reserve after month " + month
+      `\nTreasury has fallen below the minimum reserve after month ${month}.`
     );
     break;
   }
 }
 
-console.log("Simulation ended.");
+console.log("\nSimulation ended.");

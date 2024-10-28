@@ -103,28 +103,13 @@ contract DAO {
     }
 
     // Function to authorize an external contract (like CompaniesHouseV1)
-    function _authorizeCaller(address _caller) external {
-        require(
-            msg.sender == address(timelock),
-            "Only Timelock can call this function."
-        );
+    function _authorizeCaller(address _caller) external onlyTimelock {
         authorizedCallers[_caller] = true;
     }
 
     // Function to deauthorize an external contract
-    function _deauthorizeCaller(address _caller) external {
-        require(
-            msg.sender == address(timelock),
-            "Only Timelock can call this function."
-        );
+    function _deauthorizeCaller(address _caller) external onlyTimelock {
         authorizedCallers[_caller] = false;
-    }
-
-    // Proxy function that calls payEmployee on WerewolfTokenV1
-    function payEmployee(address to, uint256 amount) external {
-        require(authorizedCallers[msg.sender], "Not an authorized caller");
-        // WerewolfTokenV1(werewolfTokenAddress).payEmployee(to, amount);
-        werewolfToken.payEmployee(to, amount);
     }
 
     // Function to create a proposal

@@ -4,24 +4,43 @@ pragma solidity ^0.8.27;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
+import "./Timelock.sol";
+
 contract WerewolfTokenV1 is ERC20, Ownable {
     address public treasury;
+    Timelock public timelock;
 
     struct Checkpoint {
         uint32 fromBlock;
         uint96 votes;
     }
 
+    mapping(address => bool) public authorizedCallers;
+
     mapping(address => uint32) public numCheckpoints;
     mapping(address => mapping(uint32 => Checkpoint)) public checkpoints;
 
+    // Modifier to ensure that only the Timelock can execute specific functions
+    modifier onlyTimelock() {
+        require(msg.sender == address(timelock), "Only Timelock can execute");
+        _;
+    }
+
+    // Modifier to ensure that only authorizedCallers can execute specific functions
+    modifier onlyAuthorizedCaller() {
+        require(authorizedCallers[msg.sender], "Not an authorized caller");
+        _;
+    }
+
     constructor(
         address _treasury,
+        address _timelock,
         address addr1,
         address addr2
     ) ERC20("Werewolf Token", "WLF") Ownable(msg.sender) {
         require(_treasury != address(0), "Treasury address cannot be zero");
         treasury = _treasury; // Set the Treasury address
+        timelock = Timelock(_timelock);
         // Mint initial 1M tokens directly to the DAO's Treasury
         _mint(_treasury, 1_000_000 * 10 ** decimals());
 
@@ -32,12 +51,25 @@ contract WerewolfTokenV1 is ERC20, Ownable {
         _transfer(treasury, addr2, transferAmount);
     }
 
+    // Function to authorize an external contract (like CompaniesHouseV1)
+    function _authorizeCaller(address _caller) external onlyTimelock {
+        authorizedCallers[_caller] = true;
+    }
+
+    // Function to deauthorize an external contract
+    function _deauthorizeCaller(address _caller) external onlyTimelock {
+        authorizedCallers[_caller] = false;
+    }
+
     function airdrop(address to, uint256 amount) external onlyOwner {
         require(balanceOf(treasury) >= amount, "Insufficient balance");
         _transfer(treasury, to, amount);
     }
 
-    function payEmployee(address to, uint256 amount) external onlyOwner {
+    function payEmployee(
+        address to,
+        uint256 amount
+    ) external onlyAuthorizedCaller {
         require(balanceOf(treasury) >= amount, "Insufficient balance");
         _transfer(treasury, to, amount);
     }
