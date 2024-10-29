@@ -46,9 +46,7 @@ npx hardhat --network localhost test
 
 # v0.0.1 - init
 
-- [>] payment amount is calculated on last token sale price, add it in DAO.sol like latestPrice as public variable and then write a function where onlyDAO can setLatestPrice
-
-- [>] DAO.sol:: check the total pay amount not only for single employee => basically check if treasury has enough tokens to pay them all & add a threshold for like 10 years of payments
+- [>] CompaniesHouseV1.sol@**payEmployees**:: check the total pay amount not only for single employee => basically check if treasury has enough tokens to pay them all & add a threshold for like 10 years of payments
 
 ```solidity
   require(

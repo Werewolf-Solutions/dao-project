@@ -8,9 +8,11 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "./Treasury.sol";
 import "./WerewolfTokenV1.sol";
 import "./DAO.sol";
+import "./TokenSale.sol";
 
 contract CompaniesHouseV1 is AccessControl {
     WerewolfTokenV1 private werewolfToken;
+    TokenSale public tokenSale;
     DAO public dao;
     // CompanyV1 creator;
     // address owner;
@@ -106,9 +108,15 @@ contract CompaniesHouseV1 is AccessControl {
         _;
     }
 
-    constructor(address _token, address treasuryAddress, address _daoAddress) {
+    constructor(
+        address _token,
+        address treasuryAddress,
+        address _daoAddress,
+        address tokenSaleAddress
+    ) {
         werewolfToken = WerewolfTokenV1(_token);
         dao = DAO(_daoAddress);
+        tokenSale = TokenSale(tokenSaleAddress);
         _treasuryAddress = treasuryAddress;
         // _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
         // _setupRole(STAFF_ROLE, msg.sender);
@@ -289,6 +297,28 @@ contract CompaniesHouseV1 is AccessControl {
         CompanyStruct storage _company = companies[_companyId];
         // Treasury treasury = Treasury(_treasuryAddress);
 
+        // Check if treasury has enough balance to pay all employees
+        uint256 totalPayAmount = 0
+        for (uint256 i = 0; i < _company.employees.length; i++) {
+            Employee storage employee = _employees[employeeAddress];
+
+            require(employee.salary > 0, "Employee not found");
+            require(employee.active, "Employee not active");
+
+            uint256 payPeriod = block.timestamp - employee.lastPayDate;
+
+            uint256 price = tokenSale.price();
+            require(price > 0, "Price cannot be zero");
+
+            // Scale up the result by 1e18 for precision, assuming price and salary are compatible with this scale
+            uint256 payAmount = (payPeriod * employee.salary * 1e18) / price;
+            totalPayAmount +=payAmount;
+        };
+        require(
+                werewolfToken.balanceOf(_treasuryAddress) > totalPayAmount,
+                "Treasury has insufficient liquidity to pay employees."
+            );
+
         for (uint256 i = 0; i < _company.employees.length; i++) {
             address employeeAddress = _company.employees[i];
             Employee storage employee = _employees[employeeAddress];
@@ -297,12 +327,16 @@ contract CompaniesHouseV1 is AccessControl {
             require(employee.active, "Employee not active");
 
             uint256 payPeriod = block.timestamp - employee.lastPayDate;
-            uint256 payAmount = payPeriod * employee.salary;
 
-            require(
-                werewolfToken.balanceOf(_treasuryAddress) > payAmount,
-                "Treasury has insufficient liquidity to pay employees."
-            );
+            uint256 price = tokenSale.price();
+            require(price > 0, "Price cannot be zero");
+
+            // Scale up the result by 1e18 for precision, assuming price and salary are compatible with this scale
+            uint256 payAmount = (payPeriod * employee.salary * 1e18) / price;
+
+            require(payAmount > 0, "Pay amount must be more then 0.");
+
+            
             require(
                 payPeriod > 0,
                 "Not enough time has passed to pay employee"

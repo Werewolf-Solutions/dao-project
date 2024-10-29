@@ -44,6 +44,8 @@ contract TokenSale is Ownable {
         //werewolfToken = ERC20(_token);
         werewolfToken = WerewolfTokenV1(_token);
         treasury = _treasury;
+        // Hard code first price
+        price = 0.05 * 10 ** 18;
     }
 
     function startSale(uint256 _amount, uint256 _price) external onlyOwner {
