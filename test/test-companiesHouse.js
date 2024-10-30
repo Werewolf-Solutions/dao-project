@@ -313,6 +313,79 @@ describe("Companies House Contract", function () {
     expect(employee2Balance.toString()).to.equal(expectedPayment.toString());
   });
 
+  it("should not pay employees if not enough tokens in treasury", async function () {
+    // console.log(hre.ethers.utils.formatUnits(await tokenSale.price(), 18));
+
+    const employeeSalary = hre.ethers.utils.parseUnits("9999999", 18);
+    await createCompany();
+
+    // Hire addr3 as an employee with a salary of 1 token per second
+    await companiesHouse.connect(founder).hireEmployee(
+      addr3.address, // Employee wallet
+      "Alice", // Name
+      "Developer", // Role
+      0, // Company ID
+      employeeSalary, // Salary
+      "USD" // Currency
+    );
+
+    // Hire addr2 as another employee with the same salary
+    await companiesHouse.connect(founder).hireEmployee(
+      addr2.address, // Employee wallet
+      "Bob", // Name
+      "SMM", // Role
+      0, // Company ID
+      employeeSalary, // Salary
+      "USD" // Currency
+    );
+
+    const employeeBefore = await companiesHouse.retrieveEmployee(
+      0,
+      addr3.address
+    );
+    // console.log(employeeBefore);
+    // console.log(await getBlockTimestamp());
+    // console.log(employeeBefore.lastPayDate);
+    // let payPeriod = (await getBlockTimestamp()) - employeeBefore.lastPayDate;
+    // console.log(payPeriod);
+    // let payAmount = payPeriod * employeeBefore.salary;
+    // console.log(payAmount);
+
+    // Simulate 10 seconds passing
+    const testPeriod = 10;
+    await simulateBlocks(testPeriod);
+
+    const employeeAfter = await companiesHouse.retrieveEmployee(
+      0,
+      addr3.address
+    );
+    // console.log(employeeAfter);
+    // console.log(await getBlockTimestamp());
+    // console.log(employeeAfter.lastPayDate);
+    // console.log(employeeAfter.salary);
+    // let payPeriod = (await getBlockTimestamp()) - employeeAfter.lastPayDate;
+    // console.log("Pay period: " + payPeriod);
+    // let payAmount =
+    //   (payPeriod * employeeAfter.salary) /
+    //   hre.ethers.utils.formatUnits(await tokenSale.price(), 18);
+    // console.log("Pay amount: " + payAmount);
+
+    const employee1BalanceBefore = await werewolfToken.balanceOf(addr3.address);
+    const employee2BalanceBefore = await werewolfToken.balanceOf(addr2.address);
+    // console.log(employee1BalanceBefore);
+    // console.log(employee2BalanceBefore);
+
+    try {
+      // Pay employees after 10 seconds of work
+      await companiesHouse.connect(founder).payEmployees(0); // Pay all employees in company 0
+    } catch (error) {
+      // Assert that the error message contains the revert reason
+      expect(error.message).to.include(
+        "Treasury has insufficient liquidity to pay employees."
+      );
+    }
+  });
+
   async function createCompany() {
     const companyCost = hre.ethers.utils.parseUnits("10", 18);
     await werewolfToken

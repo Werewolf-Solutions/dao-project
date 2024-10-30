@@ -10,6 +10,9 @@ contract Treasury is Ownable {
     // address public werewolfToken;
     WerewolfTokenV1 private werewolfToken;
 
+    // Percentage threshold, e.g., 20 for 20%
+    uint256 public thresholdPercentage = 20;
+
     // Mapping to track allowed tokens (werewolfToken address => allowed)
     mapping(address => bool) public allowedTokens;
 
@@ -29,5 +32,18 @@ contract Treasury is Ownable {
     // Function to check if a werewolfToken is allowed by the DAO
     function isTokenAllowed(address _token) external view returns (bool) {
         return allowedTokens[_token];
+    }
+
+    // Set the percentage threshold (only by owner)
+    function setThresholdPercentage(uint256 _percentage) public onlyOwner {
+        require(_percentage <= 100, "Percentage cannot exceed 100");
+        thresholdPercentage = _percentage;
+    }
+
+    // Check if the treasury balance is above the threshold
+    function isAboveThreshold() public view returns (bool) {
+        uint256 treasuryBalance = werewolfToken.balanceOf(address(this));
+        uint256 threshold = (treasuryBalance * thresholdPercentage) / 100;
+        return treasuryBalance > threshold;
     }
 }

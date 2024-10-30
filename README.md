@@ -46,15 +46,6 @@ npx hardhat --network localhost test
 
 # v0.0.1 - init
 
-- [>] CompaniesHouseV1.sol@**payEmployees**:: check the total pay amount not only for single employee => basically check if treasury has enough tokens to pay them all & add a threshold for like 10 years of payments
-
-```solidity
-  require(
-      werewolfToken.balanceOf(_treasuryAddress) > payAmount,
-      "Treasury has insufficient liquidity to pay employees."
-  );
-```
-
 - [>] put back eta
 
 - [>] add quorumVotes, proposalThreshold, votingDelay, votingPeriod

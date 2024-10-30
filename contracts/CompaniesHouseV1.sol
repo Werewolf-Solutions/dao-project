@@ -14,6 +14,7 @@ contract CompaniesHouseV1 is AccessControl {
     WerewolfTokenV1 private werewolfToken;
     TokenSale public tokenSale;
     DAO public dao;
+    Treasury public treasury;
     // CompanyV1 creator;
     // address owner;
     // string name;
@@ -117,6 +118,7 @@ contract CompaniesHouseV1 is AccessControl {
         werewolfToken = WerewolfTokenV1(_token);
         dao = DAO(_daoAddress);
         tokenSale = TokenSale(tokenSaleAddress);
+        treasury = Treasury(treasuryAddress);
         _treasuryAddress = treasuryAddress;
         // _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
         // _setupRole(STAFF_ROLE, msg.sender);
@@ -298,8 +300,9 @@ contract CompaniesHouseV1 is AccessControl {
         // Treasury treasury = Treasury(_treasuryAddress);
 
         // Check if treasury has enough balance to pay all employees
-        uint256 totalPayAmount = 0
+        uint256 totalPayAmount = 0;
         for (uint256 i = 0; i < _company.employees.length; i++) {
+            address employeeAddress = _company.employees[i];
             Employee storage employee = _employees[employeeAddress];
 
             require(employee.salary > 0, "Employee not found");
@@ -312,12 +315,28 @@ contract CompaniesHouseV1 is AccessControl {
 
             // Scale up the result by 1e18 for precision, assuming price and salary are compatible with this scale
             uint256 payAmount = (payPeriod * employee.salary * 1e18) / price;
-            totalPayAmount +=payAmount;
-        };
+            totalPayAmount += payAmount;
+        }
+
+        uint256 threshold = ((werewolfToken.balanceOf(_treasuryAddress) *
+            treasury.thresholdPercentage()) / 100);
+
+        uint256 treasuryBalance = werewolfToken.balanceOf(_treasuryAddress);
+
         require(
-                werewolfToken.balanceOf(_treasuryAddress) > totalPayAmount,
-                "Treasury has insufficient liquidity to pay employees."
-            );
+            totalPayAmount < threshold,
+            "Treasury has insufficient liquidity to pay employees."
+        );
+
+        require(
+            treasuryBalance > threshold,
+            "Treasury has insufficient liquidity to pay employees."
+        );
+
+        // require(
+        //     treasury.isAboveThreshold(),
+        //     "Treasury has insufficient liquidity to pay employees."
+        // );
 
         for (uint256 i = 0; i < _company.employees.length; i++) {
             address employeeAddress = _company.employees[i];
@@ -336,7 +355,6 @@ contract CompaniesHouseV1 is AccessControl {
 
             require(payAmount > 0, "Pay amount must be more then 0.");
 
-            
             require(
                 payPeriod > 0,
                 "Not enough time has passed to pay employee"
