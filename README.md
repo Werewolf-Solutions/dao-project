@@ -46,8 +46,6 @@ npx hardhat --network localhost test
 
 # v0.0.1 - init
 
-- [>] put back eta
-
 - [>] add quorumVotes, proposalThreshold, votingDelay, votingPeriod
 
 - [>] write delegate and undelegate functions in DAO? and test them

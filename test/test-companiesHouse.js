@@ -90,22 +90,45 @@ describe("Companies House Contract", function () {
     await werewolfToken.connect(founder).approve(dao.address, proposalCost);
 
     // Create the proposal through the DAO
-    await timelock.connect(founder).queueTransaction(
-      timelock.address, // Target contract
-      "setPendingAdmin(address)", // Function signature
-      functionParamsAdmin // Function arguments encoded
+    await dao.connect(founder).createProposal(
+      [timelock.address], // Target contract
+      ["setPendingAdmin(address)"], // Function signature
+      [functionParamsAdmin] // Function arguments encoded
     );
 
     // Simulate delay for voting period
     await simulateBlocks(votingPeriod);
 
-    await timelock.connect(founder).executeTransaction(
+    await dao.connect(addr1).vote(0, true);
+    await dao.connect(founder).vote(0, true);
+
+    await simulateBlocks(votingPeriod * 2);
+
+    const delay = await timelock.delay();
+
+    const blockNumber = await hre.ethers.provider.getBlockNumber();
+    const block = await hre.ethers.provider.getBlock(blockNumber);
+
+    // Access the timestamp
+    const timestamp = block.timestamp;
+
+    const eta = Number(timestamp) + Number(delay);
+
+    await timelock.connect(founder).queueTransaction(
       timelock.address, // Target contract
       "setPendingAdmin(address)", // Function signature
-      functionParamsAdmin // Function arguments encoded
+      functionParamsAdmin, // Function arguments encoded
+      eta
     );
 
     await simulateBlocks(votingPeriod * 2);
+
+    await timelock.connect(founder).executeTransaction(
+      timelock.address, // Target contract
+      "setPendingAdmin(address)", // Function signature
+      functionParamsAdmin, // Function arguments encoded
+      eta
+    );
 
     // Execute the proposals after voting
     await dao.connect(founder).__acceptAdmin();
@@ -131,8 +154,8 @@ describe("Companies House Contract", function () {
     await simulateBlocks(votingPeriod);
 
     // WerewolfTokenV1 holders (founder, addr1) vote on the proposal
-    await dao.connect(addr1).vote(0, true);
-    await dao.connect(founder).vote(0, true);
+    await dao.connect(addr1).vote(1, true);
+    await dao.connect(founder).vote(1, true);
 
     await simulateBlocks(votingPeriod * 2);
 
@@ -150,10 +173,12 @@ describe("Companies House Contract", function () {
     // }
 
     // Queue the proposal
-    await dao.connect(founder).queueProposal(0);
+    await dao.connect(founder).queueProposal(1);
+
+    await simulateBlocks(votingPeriod * 2);
 
     // Execute the proposals after voting
-    await dao.connect(founder).executeProposal(0);
+    await dao.connect(founder).executeProposal(1);
   });
 
   it("should create a company", async function () {

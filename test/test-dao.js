@@ -74,22 +74,63 @@ describe("DAO Contract", function () {
     await werewolfToken.connect(founder).approve(dao.address, proposalCost);
 
     // Create the proposal through the DAO
-    await timelock.connect(founder).queueTransaction(
-      timelock.address, // Target contract
-      "setPendingAdmin(address)", // Function signature
-      functionParams // Function arguments encoded
+    await dao.connect(founder).createProposal(
+      [timelock.address], // Target contract
+      ["setPendingAdmin(address)"], // Function signature
+      [functionParams] // Function arguments encoded
     );
 
     // Simulate delay for voting period
     await simulateBlocks(votingPeriod);
 
-    await timelock.connect(founder).executeTransaction(
+    await dao.connect(addr1).vote(0, true);
+    await dao.connect(founder).vote(0, true);
+
+    await simulateBlocks(votingPeriod * 2);
+
+    // console.log("Timelock admin: " + (await timelock.admin()));
+    // console.log("Msg.sender: " + founder.address);
+
+    const delay = await timelock.delay();
+    // console.log(delay);
+
+    const blockNumber = await hre.ethers.provider.getBlockNumber();
+    // console.log(blockNumber);
+    const block = await hre.ethers.provider.getBlock(blockNumber);
+    // console.log(block);
+
+    // Access the timestamp
+    const timestamp = block.timestamp;
+    // console.log(timestamp);
+
+    const eta = Number(timestamp) + Number(delay);
+
+    // console.log(eta);
+
+    await timelock.connect(founder).queueTransaction(
       timelock.address, // Target contract
       "setPendingAdmin(address)", // Function signature
-      functionParams // Function arguments encoded
+      functionParams, // Function arguments encoded
+      eta
     );
 
     await simulateBlocks(votingPeriod * 2);
+
+    await timelock.connect(founder).executeTransaction(
+      timelock.address, // Target contract
+      "setPendingAdmin(address)", // Function signature
+      functionParams, // Function arguments encoded
+      eta
+    );
+
+    // // Queue the proposal
+    // await dao.connect(founder).queueProposal(0);
+
+    // // Execute the proposals after voting
+    // await dao.connect(founder).executeProposal(0);
+
+    // console.log(`DAO address: ${dao.address}`);
+    // console.log(await timelock.pendingAdmin());
 
     // Execute the proposals after voting
     await dao.connect(founder).__acceptAdmin();
@@ -129,16 +170,18 @@ describe("DAO Contract", function () {
     await simulateBlocks(votingPeriod);
 
     // WerewolfTokenV1 holders (founder, addr1) vote on the proposal
-    await dao.connect(addr1).vote(0, true);
-    await dao.connect(founder).vote(0, true);
+    await dao.connect(addr1).vote(1, true);
+    await dao.connect(founder).vote(1, true);
 
     await simulateBlocks(votingPeriod * 2);
 
     // Queue the proposal
-    await dao.connect(founder).queueProposal(0);
+    await dao.connect(founder).queueProposal(1);
+
+    await simulateBlocks(votingPeriod);
 
     // Execute the proposals after voting
-    await dao.connect(founder).executeProposal(0);
+    await dao.connect(founder).executeProposal(1);
 
     const addr2Balance = await werewolfToken.balanceOf(addr2.address);
 
@@ -174,8 +217,8 @@ describe("DAO Contract", function () {
     await simulateBlocks(votingPeriod);
 
     // Cast votes from all participants
-    await dao.connect(founder).vote(0, true);
-    await dao.connect(addr1).vote(0, true);
+    await dao.connect(founder).vote(1, true);
+    await dao.connect(addr1).vote(1, true);
 
     // Simulate the end of the voting period
     await simulateBlocks(votingPeriod);
@@ -190,10 +233,12 @@ describe("DAO Contract", function () {
     // );
 
     // Queue the proposal
-    await dao.connect(founder).queueProposal(0);
+    await dao.connect(founder).queueProposal(1);
+
+    await simulateBlocks(votingPeriod);
 
     // Execute the proposals after voting
-    await dao.connect(founder).executeProposal(0);
+    await dao.connect(founder).executeProposal(1);
 
     // console.log(`Mint amount: ${hre.ethers.utils.formatUnits(mintAmount, 18)}`);
     // console.log(
@@ -291,8 +336,8 @@ describe("DAO Contract", function () {
     await simulateBlocks(votingPeriod);
 
     // Cast votes to approve the werewolfToken airdrop proposal
-    await dao.connect(founder).vote(0, true);
-    await dao.connect(addr1).vote(0, true);
+    await dao.connect(founder).vote(1, true);
+    await dao.connect(addr1).vote(1, true);
 
     let proposalCount = await dao.proposalCount();
 
@@ -311,10 +356,12 @@ describe("DAO Contract", function () {
     await simulateBlocks(votingPeriod);
 
     // Queue the proposal
-    await dao.connect(founder).queueProposal(0);
+    await dao.connect(founder).queueProposal(1);
+
+    await simulateBlocks(votingPeriod);
 
     // Execute the proposals after voting
-    await dao.connect(founder).executeProposal(0);
+    await dao.connect(founder).executeProposal(1);
 
     // Log balances
     // console.log(
@@ -384,16 +431,20 @@ describe("DAO Contract", function () {
         [mintProposalCallData]
       );
 
+    await simulateBlocks(votingPeriod);
+
     // Addr1 votes against
-    await dao.connect(addr1).vote(0, false);
+    await dao.connect(addr1).vote(1, false);
 
     // Try to execute the proposal without majority and catch the revert
     try {
       // Queue the proposal
-      await dao.connect(founder).queueProposal(0);
+      await dao.connect(founder).queueProposal(1);
+
+      await simulateBlocks(votingPeriod);
 
       // Execute the proposals after voting
-      await dao.connect(founder).executeProposal(0);
+      await dao.connect(founder).executeProposal(1);
       // If the above line doesn't throw, this will fail the test
       expect.fail("Execution should have reverted, but it didn't");
     } catch (error) {

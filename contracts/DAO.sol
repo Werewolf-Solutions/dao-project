@@ -76,14 +76,8 @@ contract DAO {
     }
 
     event ProposalCreated(uint256 proposalId, address proposer);
+    event ProposalQueued(uint id, uint eta);
     event ProposalExecuted(uint256 proposalId);
-    event QueueTransaction(
-        bytes32 indexed txHash,
-        address indexed target,
-        string signature,
-        bytes data,
-        uint eta
-    );
     event Voted(uint256 proposalId, address voter, bool support, uint256 votes);
 
     // Modifier to ensure that only the Timelock can execute specific functions
@@ -158,36 +152,22 @@ contract DAO {
         uint eta = add256(block.timestamp, timelock.delay());
 
         for (uint i = 0; i < proposal.targets.length; i++) {
-            // bytes32 txHash = keccak256(
-            //     abi.encode(
-            //         proposal.targets[i],
-            //         proposal.signatures[i],
-            //         proposal.datas[i]
-            //         //eta
-            //     )
-            // );
-            // queuedTransactions[txHash] = true;
-
-            // emit QueueTransaction(
-            //     txHash,
-            //     proposal.targets[i],
-            //     proposal.signatures[i],
-            //     proposal.datas[i]
-            //     //eta
-            // );
             _queueOrRevert(
                 proposal.targets[i],
                 proposal.signatures[i],
-                proposal.datas[i]
-                // eta
+                proposal.datas[i],
+                eta
             );
         }
+        proposal.eta = eta;
+        emit ProposalQueued(proposalId, eta);
     }
 
     function _queueOrRevert(
         address target,
         string memory signature,
-        bytes memory data //uint eta
+        bytes memory data,
+        uint eta
     ) internal {
         require(
             !timelock.queuedTransactions(
@@ -195,12 +175,7 @@ contract DAO {
             ),
             "DAO::_queueOrRevert: proposal action already queued at eta"
         );
-        timelock.queueTransaction(
-            target,
-            signature,
-            data
-            //eta
-        );
+        timelock.queueTransaction(target, signature, data, eta);
     }
 
     // Function to execute a proposal
@@ -219,43 +194,12 @@ contract DAO {
         proposal.executed = true;
 
         for (uint i = 0; i < proposal.targets.length; i++) {
-            // Ensure the target contract is valid
-            // require(
-            //     proposal.targets[i] != address(0),
-            //     "Invalid target contract"
-            // );
-
-            // bytes32 txHash = keccak256(
-            //     abi.encode(
-            //         proposal.targets[i],
-            //         proposal.signatures[i],
-            //         proposal.datas[i]
-            //         //proposal.eta
-            //     )
-            // );
-            // require(
-            //     queuedTransactions[txHash],
-            //     "DAO::executeTransaction: Transaction hasn't been queued."
-            // );
-            // require(
-            //     getBlockTimestamp() >= proposal.eta,
-            //     "DAO::executeTransaction: Transaction hasn't surpassed time lock."
-            // );
-
-            // queuedTransactions[txHash] = false;
             timelock.executeTransaction(
                 proposal.targets[i],
                 proposal.signatures[i],
-                proposal.datas[i]
-                //proposal.eta
+                proposal.datas[i],
+                proposal.eta
             );
-            // bytes memory callData = abi.encodePacked(
-            //     bytes4(keccak256(bytes(proposal.signatures[i]))),
-            //     proposal.datas[i]
-            // );
-            // // Execute the function call using low-level call
-            // (bool success, ) = proposal.targets[i].call(callData);
-            // require(success, "Function call failed");
             emit ProposalExecuted(proposalId);
         }
     }

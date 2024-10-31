@@ -167,23 +167,23 @@ contract Timelock {
         bytes32 indexed txHash,
         address indexed target,
         string signature,
-        bytes data
+        bytes data,
+        uint eta
     );
-    // uint eta
     event ExecuteTransaction(
         bytes32 indexed txHash,
         address indexed target,
         string signature,
-        bytes data
+        bytes data,
+        uint eta
     );
-    //uint eta
     event QueueTransaction(
         bytes32 indexed txHash,
         address indexed target,
         string signature,
-        bytes data
+        bytes data,
+        uint eta
     );
-    //uint eta
 
     uint public constant GRACE_PERIOD = 14 days;
     uint public constant MINIMUM_DELAY = 2 days;
@@ -251,40 +251,22 @@ contract Timelock {
     function queueTransaction(
         address target,
         string memory signature,
-        bytes memory data
-    )
-        public
-        returns (
-            //uint eta
-            bytes32
-        )
-    {
+        bytes memory data,
+        uint eta
+    ) public returns (bytes32) {
         require(
             msg.sender == admin,
             "Timelock::queueTransaction: Call must come from admin."
         );
-        // require(
-        //     eta >= getBlockTimestamp().add(delay),
-        //     "Timelock::queueTransaction: Estimated execution block must satisfy delay."
-        // );
-
-        bytes32 txHash = keccak256(
-            abi.encode(
-                target,
-                signature,
-                data
-                //eta
-            )
+        require(
+            eta >= getBlockTimestamp().add(delay),
+            "Timelock::queueTransaction: Estimated execution block must satisfy delay."
         );
+
+        bytes32 txHash = keccak256(abi.encode(target, signature, data, eta));
         queuedTransactions[txHash] = true;
 
-        emit QueueTransaction(
-            txHash,
-            target,
-            signature,
-            data
-            //eta
-        );
+        emit QueueTransaction(txHash, target, signature, data, eta);
         return txHash;
     }
 
@@ -299,35 +281,18 @@ contract Timelock {
             "Timelock::cancelTransaction: Call must come from admin."
         );
 
-        bytes32 txHash = keccak256(
-            abi.encode(
-                target,
-                signature,
-                data //eta
-            )
-        );
+        bytes32 txHash = keccak256(abi.encode(target, signature, data, eta));
         queuedTransactions[txHash] = false;
 
-        emit CancelTransaction(
-            txHash,
-            target,
-            signature,
-            data // eta
-        );
+        emit CancelTransaction(txHash, target, signature, data, eta);
     }
 
     function executeTransaction(
         address target,
         string memory signature,
-        bytes memory data
-    )
-        public
-        payable
-        returns (
-            //uint eta
-            bytes memory
-        )
-    {
+        bytes memory data,
+        uint eta
+    ) public payable returns (bytes memory) {
         require(
             msg.sender == admin,
             "Timelock::executeTransaction: Call must come from admin."
@@ -335,25 +300,19 @@ contract Timelock {
         // Ensure the target contract is valid
         require(target != address(0), "Invalid target contract");
 
-        bytes32 txHash = keccak256(
-            abi.encode(
-                target,
-                signature,
-                data //eta
-            )
-        );
+        bytes32 txHash = keccak256(abi.encode(target, signature, data, eta));
         require(
             queuedTransactions[txHash],
             "Timelock::executeTransaction: Transaction hasn't been queued."
         );
-        // require(
-        //     getBlockTimestamp() >= eta,
-        //     "Timelock::executeTransaction: Transaction hasn't surpassed time lock."
-        // );
-        // require(
-        //     getBlockTimestamp() <= eta.add(GRACE_PERIOD),
-        //     "Timelock::executeTransaction: Transaction is stale."
-        // );
+        require(
+            getBlockTimestamp() >= eta,
+            "Timelock::executeTransaction: Transaction hasn't surpassed time lock."
+        );
+        require(
+            getBlockTimestamp() <= eta.add(GRACE_PERIOD),
+            "Timelock::executeTransaction: Transaction is stale."
+        );
 
         queuedTransactions[txHash] = false;
 
@@ -374,13 +333,7 @@ contract Timelock {
             "Timelock::executeTransaction: Transaction execution reverted."
         );
 
-        emit ExecuteTransaction(
-            txHash,
-            target,
-            signature,
-            data
-            //eta
-        );
+        emit ExecuteTransaction(txHash, target, signature, data, eta);
 
         return returnData;
     }
