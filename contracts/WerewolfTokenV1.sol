@@ -41,11 +41,10 @@ contract WerewolfTokenV1 is ERC20, Ownable {
         require(_treasury != address(0), "Treasury address cannot be zero");
         treasury = _treasury; // Set the Treasury address
         timelock = Timelock(_timelock);
-        // Mint initial 1M tokens directly to the DAO's Treasury
-        _mint(_treasury, 1_000_000 * 10 ** decimals());
+        // Mint initial 1B tokens directly to the DAO's Treasury
+        _mint(_treasury, 1_000_000_000 * 10 ** decimals());
 
         // Transfer tokens from the treasury to specified addresses
-        // You can adjust the amount as per your requirement
         uint256 transferAmount = 1000 * 10 ** decimals();
         _transfer(treasury, addr1, transferAmount);
         _transfer(treasury, addr2, transferAmount);
@@ -92,7 +91,7 @@ contract WerewolfTokenV1 is ERC20, Ownable {
     ) public view returns (uint96) {
         require(
             blockNumber < block.number,
-            "Token::getPriorVotes: not yet determined"
+            "WerewolfTokenV1::getPriorVotes: not yet determined"
         );
 
         uint32 nCheckpoints = numCheckpoints[account];
