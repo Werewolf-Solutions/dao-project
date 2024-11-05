@@ -45,9 +45,7 @@ contract DAO {
     address public treasuryAddress;
     uint256 public proposalCost = 10 * (10 ** 18); // cost to create a proposal in tokens
     mapping(bytes32 => bool) public queuedTransactions;
-    function proposalThreshold() public pure returns (uint) {
-        return 100000e18;
-    } // 100,000 = 1% of WerewolfTokenV1
+
     function proposalMaxOperations() public pure returns (uint) {
         return 10;
     } // 10 actions
@@ -57,9 +55,14 @@ contract DAO {
     function votingPeriod() public pure returns (uint) {
         return 17280;
     } // ~3 days in blocks (assuming 15s blocks)
-    function quorumVotes() public pure returns (uint) {
-        return 400000e18;
-    } // 400,000 = 4% of WerewolfTokenV1
+
+    function quorumVotes() public pure returns (uint256) {
+        return (50 * 10 ** 18) / 100; // 50% represented with a factor of 10**18 for precision
+    }
+
+    function proposalThreshold() public pure returns (uint256) {
+        return (5 * 10 ** 18) / 1000; // 0.5% represented with a factor of 10**18
+    }
 
     mapping(address => uint) public latestProposalIds;
 
@@ -114,7 +117,7 @@ contract DAO {
     ) public {
         require(
             werewolfToken.balanceOf(msg.sender) >= proposalCost,
-            "Insufficient balance to create proposal"
+            "DAO::createProposal: Insufficient balance to create proposal"
         );
 
         // Transfer the proposal cost to the treasury address
@@ -124,7 +127,37 @@ contract DAO {
                 treasuryAddress,
                 proposalCost
             ),
-            "WerewolfTokenV1 transfer for proposal cost failed"
+            "DAO::createProposal: WerewolfTokenV1 transfer for proposal cost failed"
+        );
+
+        // require(
+        //     werewolfToken.getPriorVotes(msg.sender, sub256(block.number, 1)) >
+        //         ((werewolfToken.getPriorVotes(
+        //             msg.sender,
+        //             sub256(block.number, 1)
+        //         ) * proposalThreshold()) / 100),
+        //     "DAO::createProposal: proposer votes below proposal threshold"
+        // );
+
+        require(
+            werewolfToken.balanceOf(msg.sender) >
+                (werewolfToken.balanceOf(address(treasury)) *
+                    proposalThreshold()),
+            "DAO::createProposal: proposer votes below proposal threshold"
+        );
+
+        require(
+            _targets.length == _signatures.length &&
+                _targets.length == _datas.length,
+            "DAO::createProposal: proposal function information arity mismatch"
+        );
+        require(
+            _targets.length != 0,
+            "DAO::createProposal: must provide actions"
+        );
+        require(
+            _targets.length <= proposalMaxOperations(),
+            "DAO::createProposal: too many actions"
         );
 
         uint startBlock = add256(block.number, votingDelay());
@@ -181,13 +214,16 @@ contract DAO {
     // Function to execute a proposal
     function executeProposal(uint256 proposalId) external {
         Proposal storage proposal = proposals[proposalId];
-        require(!proposal.executed, "Proposal already executed");
+        require(
+            !proposal.executed,
+            "DAO::executeProposal: Proposal already executed"
+        );
 
         // Ensure the proposal has enough "For" votes (must be more than 50% of total votes)
         uint256 totalVotes = proposal.votesFor + proposal.votesAgainst;
         require(
-            proposal.votesFor > totalVotes / 2,
-            "Proposal must have majority votes to pass"
+            proposal.votesFor > totalVotes * quorumVotes(),
+            "DAO::executeProposal: Proposal must reach minimum quorum votes to pass."
         );
 
         // Mark the proposal as executed
@@ -209,23 +245,42 @@ contract DAO {
         Proposal storage proposal = proposals[proposalId];
         Receipt storage receipt = proposalReceipts[proposalId][msg.sender];
 
-        require(!receipt.hasVoted, "Already voted");
+        require(!receipt.hasVoted, "Already voted.");
 
         uint256 voterBalance = werewolfToken.balanceOf(msg.sender);
-        require(voterBalance > 0, "No tokens to vote");
+        require(voterBalance > 0, "No tokens to vote.");
 
+        uint256 votingPower = _calculateVotingPower(msg.sender);
+        require(votingPower > 0, "Voter doesn't have enough tokens.");
         receipt.hasVoted = true;
         receipt.support = support;
 
-        // uint96 votes = werewolfToken.getPriorVotes(msg.sender, proposal.startBlock);
-
         if (support) {
-            proposal.votesFor += 1;
+            proposal.votesFor += votingPower;
         } else {
-            proposal.votesAgainst += 1;
+            proposal.votesAgainst += votingPower;
         }
 
         emit Voted(proposalId, msg.sender, support, voterBalance);
+    }
+
+    function _calculateVotingPower(address _voter) internal returns (uint256) {
+        uint256 totalSupply = werewolfToken.balanceOf(address(treasury));
+        uint256 balance = werewolfToken.balanceOf(_voter);
+        uint256 holdingPercentage = (balance * 100) / totalSupply;
+
+        // Apply voting weight formula based on holding percentage
+        if (holdingPercentage <= 10) {
+            return (balance * 19) / 10; // 1.9x weight for bottom 10%
+        } else if (holdingPercentage <= 20) {
+            return (balance * 18) / 10; // 1.8x weight for bottom 20%
+        } else if (holdingPercentage <= 70) {
+            return (balance * 7) / 10; // 0.7x weight for top 70%
+        } else if (holdingPercentage <= 80) {
+            return (balance * 6) / 10; // 0.6x weight for top 80%
+        } else {
+            return balance; // Normal voting power for others
+        }
     }
 
     function delegate(address delegatee) external {

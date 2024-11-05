@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import hre from "hardhat";
+import hre, { network } from "hardhat";
 
 describe("DAO Contract", function () {
   let WerewolfTokenV1,
@@ -7,11 +7,13 @@ describe("DAO Contract", function () {
     TokenSale,
     Timelock,
     DAO,
+    Staking,
     werewolfToken,
     tokenSale,
     treasury,
     timelock,
     dao,
+    staking,
     founder,
     addr1,
     addr2;
@@ -25,7 +27,25 @@ describe("DAO Contract", function () {
     DAO = await hre.ethers.getContractFactory("DAO");
     TokenSale = await hre.ethers.getContractFactory("TokenSale");
     Timelock = await hre.ethers.getContractFactory("Timelock");
+    Staking = await hre.ethers.getContractFactory("Staking");
     [founder, addr1, addr2] = await hre.ethers.getSigners();
+
+    const uniswapRouterAddress = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D";
+    let usdtAddress;
+    console.log(network);
+
+    if (network.name === "mainnet") {
+      usdtAddress = "0xdAC17F958D2ee523a2206206994597C13D831ec7"; // Mainnet USDT address
+    } else if (network.name === "rinkeby") {
+      usdtAddress = "0xMockUSDTAddressForTestnet"; // Replace with testnet address or deployed mock
+    } else {
+      const MockUSDT = await ethers.getContractFactory("MockUSDT");
+      const mockUsdt = await MockUSDT.deploy(
+        hre.ethers.utils.parseUnits("1000000", 18)
+      );
+      await mockUsdt.deployed();
+      usdtAddress = mockUsdt.address; // Address of locally deployed mock token
+    }
 
     // Deploy the treasury contract first
     treasury = await Treasury.deploy(founder.address); // Deployer will be owner
@@ -43,6 +63,10 @@ describe("DAO Contract", function () {
     );
     await werewolfToken.deployed();
 
+    // Deploy the staking contract first
+    staking = await Staking.deploy(werewolfToken.address, timelock.address);
+    await staking.deployed();
+
     // Deploy the DAO contract with WerewolfTokenV1 and Treasury addresses
     dao = await DAO.deploy(
       werewolfToken.address,
@@ -51,17 +75,38 @@ describe("DAO Contract", function () {
     );
     await dao.deployed();
 
-    // Deploy the werewolfToken sale contract with price 0.5 ETH per werewolfToken
+    // Deploy the Token sale contract with price 0.001 USD per werewolfToken
     tokenSale = await TokenSale.deploy(
       werewolfToken.address,
       treasury.address,
-      timelock.address
+      timelock.address,
+      usdtAddress,
+      uniswapRouterAddress
     );
     await tokenSale.deployed();
+
+    const tokensToBuy = hre.ethers.utils.parseUnits("5000000", 18);
+    const tokenPrice = hre.ethers.utils.parseUnits("0.001", 18);
+
+    await werewolfToken.airdrop(tokenSale.address, tokensToBuy);
+
+    await tokenSale.startSale(tokensToBuy, tokenPrice);
 
     // Set the DAO as the owner of the WerewolfTokenV1 and Treasury
     await werewolfToken.transferOwnership(timelock.address);
     await treasury.transferOwnership(timelock.address);
+    await tokenSale.transferOwnership(timelock.address);
+
+    // Founder buys 5000$ worth of tokens
+    const balanceBeforeBuy = await werewolfToken.balanceOf(founder.address);
+    console.log("Founder balance: ", balanceBeforeBuy);
+    const saleTokenPrice = await tokenSale.price();
+
+    const ethAmount = saleTokenPrice
+      .mul(tokensToBuy)
+      .div(hre.ethers.utils.parseUnits("1", 18));
+
+    tokenSale.connect(founder).buyTokens(tokensToBuy, { value: ethAmount });
 
     // Encode the function parameters for `setpendingAdmin()`
     const functionParams = hre.ethers.utils.defaultAbiCoder.encode(
@@ -405,6 +450,96 @@ describe("DAO Contract", function () {
       saleTokenAmount.toString()
     );
     expect(sale.pricePerToken.toString()).to.equal(saleTokenPrice.toString());
+  });
+
+  it("should allow an user to buy tokens from token sale.", async function () {
+    const saleTokenAmount = hre.ethers.utils.parseUnits("10000", 18);
+    const saleTokenPrice = hre.ethers.utils.parseUnits("0.05", 18);
+
+    // Cost for the proposal
+    const proposalCost = hre.ethers.utils.parseUnits("10", 18);
+
+    // Step 1: Encode and propose the transfer from Treasury to TokenSale
+    const transferProposalCallData = hre.ethers.utils.defaultAbiCoder.encode(
+      ["address", "uint256"],
+      [tokenSale.address, saleTokenAmount]
+    );
+
+    // Step 2: Encode and propose starting the werewolfToken sale
+    const saleProposalCallData = hre.ethers.utils.defaultAbiCoder.encode(
+      ["uint256", "uint256"],
+      [saleTokenAmount, saleTokenPrice]
+    );
+
+    // Approve DAO to spend proposalCost tokens on behalf of founder
+    await werewolfToken.connect(founder).approve(dao.address, proposalCost);
+
+    // Create a proposal for transferring tokens from Treasury to TokenSale
+    await dao
+      .connect(founder)
+      .createProposal(
+        [werewolfToken.address, tokenSale.address],
+        ["airdrop(address,uint256)", "startSale(uint256,uint256)"],
+        [transferProposalCallData, saleProposalCallData]
+      );
+
+    // Simulate 1 day delay for voting period
+    await simulateBlocks(votingPeriod);
+
+    // Cast votes to approve the werewolfToken airdrop proposal
+    await dao.connect(founder).vote(1, true);
+    await dao.connect(addr1).vote(1, true);
+
+    // Simulate the end of the voting period
+    await simulateBlocks(votingPeriod);
+
+    // Queue the proposal
+    await dao.connect(founder).queueProposal(1);
+
+    await simulateBlocks(votingPeriod);
+
+    // Execute the proposals after voting
+    await dao.connect(founder).executeProposal(1);
+
+    // Check that the TokenSale contract received the tokens
+    const tokenSaleBalanceAfterTransfer = await werewolfToken.balanceOf(
+      tokenSale.address
+    );
+
+    // Check the sale status and details
+    const sale = await tokenSale.sales(1);
+
+    const balanceBeforeBuy = await werewolfToken.balanceOf(founder.address);
+    console.log("Founder balance: ", balanceBeforeBuy);
+
+    const tokensToBuy = hre.ethers.utils.parseUnits("5000000", 18);
+    const ethAmount = saleTokenPrice
+      .mul(tokensToBuy)
+      .div(hre.ethers.utils.parseUnits("1", 18));
+
+    tokenSale.connect(founder).buyTokens(tokensToBuy, { value: ethAmount });
+    // Check if token balance updated for buyer
+    const userBalanceAfter = await werewolfToken.balanceOf(founder.address);
+    expect(userBalanceAfter.sub(userBalanceBefore)).to.equal(tokensToBuy);
+
+    // Check if the treasury received the ETH
+    const treasuryBalanceAfter = await ethers.provider.getBalance(
+      treasury.address
+    );
+    expect(treasuryBalanceAfter.sub(treasuryBalanceBefore)).to.equal(ethAmount);
+
+    // Check if tokens were deducted from the sale
+    const saleAfterPurchase = await tokenSale.sales(1);
+    expect(saleAfterPurchase.tokensAvailable.toString()).to.equal(
+      saleTokenAmount.sub(tokensToBuy).toString()
+    );
+
+    // Verify TokensPurchased event
+    await expect(
+      tokenSale.connect(founder).buyTokens(tokensToBuy, { value: ethAmount })
+    )
+      .to.emit(tokenSale, "TokensPurchased")
+      .withArgs(founder.address, tokensToBuy, saleIdCounter);
   });
 
   it("should not allow executing failed proposals", async function () {

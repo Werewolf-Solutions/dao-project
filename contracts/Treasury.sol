@@ -5,10 +5,12 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import "./WerewolfTokenV1.sol";
+import "./Staking.sol";
 
 contract Treasury is Ownable {
     // address public werewolfToken;
     WerewolfTokenV1 private werewolfToken;
+    Staking public stakingContract;
 
     // Percentage threshold, e.g., 20 for 20%
     uint256 public thresholdPercentage = 20;
@@ -16,7 +18,9 @@ contract Treasury is Ownable {
     // Mapping to track allowed tokens (werewolfToken address => allowed)
     mapping(address => bool) public allowedTokens;
 
-    constructor(address _token) Ownable(msg.sender) {
+    event RewardsDistributed(address indexed caller, uint256 amount);
+
+    constructor(address _token, address _stakingAddress) Ownable(msg.sender) {
         require(_token != address(0), "WerewolfTokenV1 address cannot be zero");
         // werewolfToken = _token;
         werewolfToken = WerewolfTokenV1(_token);
@@ -45,5 +49,25 @@ contract Treasury is Ownable {
         uint256 treasuryBalance = werewolfToken.balanceOf(address(this));
         uint256 threshold = (treasuryBalance * thresholdPercentage) / 100;
         return treasuryBalance > threshold;
+    }
+
+    // Distributes rewards to the staking contract from the treasury
+    function distributeRewards() external {
+        require(
+            werewolfToken.balanceOf(address(this)) >=
+                stakingContract.rewardAmount,
+            "Insufficient reward balance in Treasury"
+        );
+
+        // Transfer rewards to the staking contract
+        require(
+            werewolfToken.transfer(
+                stakingContract,
+                stakingContract.rewardAmount
+            ),
+            "Reward transfer failed"
+        );
+
+        emit RewardsDistributed(msg.sender, stakingContract.rewardAmount);
     }
 }

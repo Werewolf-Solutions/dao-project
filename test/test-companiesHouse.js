@@ -89,6 +89,15 @@ describe("Companies House Contract", function () {
     // Approve the DAO to spend tokens for proposal cost, if required
     await werewolfToken.connect(founder).approve(dao.address, proposalCost);
 
+    let blockNumber = await hre.ethers.provider.getBlockNumber();
+    console.log(blockNumber);
+
+    console.log(
+      await werewolfToken.getPriorVotes(founder.address, blockNumber - 1)
+    );
+
+    console.log(await dao.proposalThreshold());
+
     // Create the proposal through the DAO
     await dao.connect(founder).createProposal(
       [timelock.address], // Target contract
@@ -106,7 +115,7 @@ describe("Companies House Contract", function () {
 
     const delay = await timelock.delay();
 
-    const blockNumber = await hre.ethers.provider.getBlockNumber();
+    blockNumber = await hre.ethers.provider.getBlockNumber();
     const block = await hre.ethers.provider.getBlock(blockNumber);
 
     // Access the timestamp

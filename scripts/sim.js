@@ -13,7 +13,7 @@ const minTreasuryReserve = totalSupply * 0.2; // Minimum treasury reserve at 20%
 let treasuryTokens = totalSupply - tokenSaleTokens * 2 - initialAirdrop;
 let tokensInPool = tokenSaleTokens; // Tokens in pool after sale
 let TVL = tokenSaleGoalUSD; // Initial TVL after token sale
-let marketCap = TVL; // Market cap initially equal to TVL
+let marketCap = 5_000; // Market cap initially equal to TVL
 
 // Simulation parameters
 const employeeSellPercentage = 0.5; // Employees sell 50% of token payment each month
@@ -50,7 +50,7 @@ for (let month = 1; month <= 12; month++) {
 
   // Display monthly stats
   console.log(`\nMonth ${month}:`);
-  console.log(`  Token Price:        ${tokenPrice.toFixed(4)} USD`);
+  console.log(`  Token Price:        ${tokenPrice} USD`);
   console.log(
     `  Employees Tokens to Sell:     ${employeeTokensToSell.toFixed(0)} WLF`
   );
