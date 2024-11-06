@@ -24,6 +24,7 @@ contract Treasury is Ownable {
         require(_token != address(0), "WerewolfTokenV1 address cannot be zero");
         // werewolfToken = _token;
         werewolfToken = WerewolfTokenV1(_token);
+        stakingContract = Staking(_stakingAddress);
         allowedTokens[_token] = true; // Set initial werewolfToken as allowed
     }
 
@@ -55,19 +56,19 @@ contract Treasury is Ownable {
     function distributeRewards() external {
         require(
             werewolfToken.balanceOf(address(this)) >=
-                stakingContract.rewardAmount,
+                stakingContract.stakingRewards(),
             "Insufficient reward balance in Treasury"
         );
 
         // Transfer rewards to the staking contract
         require(
             werewolfToken.transfer(
-                stakingContract,
-                stakingContract.rewardAmount
+                address(stakingContract),
+                stakingContract.stakingRewards()
             ),
             "Reward transfer failed"
         );
 
-        emit RewardsDistributed(msg.sender, stakingContract.rewardAmount);
+        emit RewardsDistributed(msg.sender, stakingContract.stakingRewards());
     }
 }

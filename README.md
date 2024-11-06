@@ -50,6 +50,8 @@ npx hardhat --network localhost test
 
   - [>] add logic of after token sale lock tokens in staking and send USD+other tokens from treasury to uniswap as LP and lock or stake WLF_USDT_LP
 
+  > watch this https://www.youtube.com/watch?v=rCMuRfsqJnk
+
 - [>] write founder buys tokens in token sale for 5000$ in beforeEach
 
   - [>] what's the flow? I can't start token sale without proposal but I can't start proposal if I don't have enough tokens for proposalThreshold

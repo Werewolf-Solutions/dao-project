@@ -34,20 +34,29 @@ contract Staking is Ownable {
     }
 
     // Stake tokens with a fixed duration, which sets a lock period
-    function stakeFixedDuration(uint256 _amount, uint256 _duration) external {
-        _stake(_amount, _duration, true);
+    function stakeFixedDuration(
+        address _owner,
+        uint256 _amount,
+        uint256 _duration
+    ) external {
+        _stake(_owner, _amount, _duration, true);
     }
 
     // Stake tokens with a flexible duration, allowing withdrawals anytime
-    function stakeFlexibleDuration(uint256 _amount) external {
-        _stake(_amount, 0, false);
+    function stakeFlexibleDuration(address _owner, uint256 _amount) external {
+        _stake(_owner, _amount, 0, false);
     }
 
     // Internal function for staking logic
-    function _stake(uint256 _amount, uint256 _duration, bool isFixed) internal {
+    function _stake(
+        address _owner,
+        uint256 _amount,
+        uint256 _duration,
+        bool isFixed
+    ) internal {
         require(_amount > 0, "Staking amount must be greater than zero");
         require(
-            stakingToken.allowance(msg.sender, address(this)) >= _amount,
+            stakingToken.allowance(_owner, address(this)) >= _amount,
             "Insufficient token allowance"
         );
 
