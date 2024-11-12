@@ -1,14 +1,34 @@
 require("@nomiclabs/hardhat-waffle");
+const path = require("path");
+
+const DEFAULT_COMPILER_SETTINGS = {
+  version: "0.7.6",
+  settings: {
+    evmVersion: "istanbul",
+    optimizer: {
+      enabled: true,
+      runs: 1_000_000,
+    },
+    metadata: {
+      bytecodeHash: "none",
+    },
+  },
+};
 
 module.exports = {
   solidity: {
-    version: "0.8.27",
-    settings: {
-      optimizer: {
-        enabled: true,
-        runs: 200,
+    compilers: [
+      {
+        version: "0.8.27",
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 200,
+          },
+        },
       },
-    },
+      DEFAULT_COMPILER_SETTINGS,
+    ],
   },
   networks: {
     ganache: {

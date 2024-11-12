@@ -187,16 +187,7 @@ contract TokenSale is Ownable {
             "Approval of tokens for liquidity failed"
         );
 
-        _addLiquidity(
-            address(usdtToken),
-            address(werewolfToken),
-            usdtRequired,
-            tokenAmount,
-            0, // Minimum amount of USDT for slippage tolerance
-            0, // Minimum amount of tokens for slippage tolerance
-            treasury, // Send liquidity tokens to the treasury
-            block.timestamp + 300 // Transaction deadline of 5 minutes
-        );
+        _addLiquidity();
 
         emit TokensPurchased(msg.sender, _amount, saleIdCounter);
 
@@ -217,4 +208,50 @@ contract TokenSale is Ownable {
     function endSale() external onlyOwner {
         _endSale();
     }
+
+    function _addLiquidity(
+        uint256 amount0Desired,
+        uint256 amount1Desired,
+        int24 tickLower,
+        int24 tickUpper
+    )
+        internal
+        returns (
+            uint256 tokenId,
+            uint128 liquidity,
+            uint256 amount0,
+            uint256 amount1
+        )
+    {
+        // Transfer tokens for liquidity provision
+        IERC20(werewolfToken).transferFrom(
+            msg.sender,
+            address(this),
+            amount0Desired
+        );
+        IERC20(usdtToken).transferFrom(
+            msg.sender,
+            address(this),
+            amount1Desired
+        );
+
+        // Approve tokens for spending
+        IERC20(werewolfToken).approve(address(positionManager), amount0Desired);
+        IERC20(usdtToken).approve(address(positionManager), amount1Desired);
+
+        // Call the mintNewPosition function from the LiquidityExamples contract
+        (tokenId, liquidity, amount0, amount1) = liquidityExamplesContract
+            .mintNewPosition();
+    }
+}
+
+interface ILiquidityExamples {
+    function mintNewPosition()
+        external
+        returns (
+            uint256 tokenId,
+            uint128 liquidity,
+            uint256 amount0,
+            uint256 amount1
+        );
 }

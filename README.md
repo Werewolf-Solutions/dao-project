@@ -43,18 +43,30 @@ npx hardhat --network localhost test
 > https://github.com/compound-finance/compound-protocol/releases/tag/v2.5-rc2
 >
 > timelock https://etherscan.io/address/0x6d903f6003cca6255D85CcA4D3B5E5146dC33925#code
+>
+> comp DAO, blog https://www.comp.xyz/
 
-# v0.0.1 - init
+# v1.0.0 - init
+
+## v0.1.0 - main contracts
 
 - [>] TokenSale.sol
 
   - [>] add logic of after token sale lock tokens in staking and send USD+other tokens from treasury to uniswap as LP and lock or stake WLF_USDT_LP
 
   > watch this https://www.youtube.com/watch?v=rCMuRfsqJnk
+  > & try to code the same test `mintNewPosition`
+  > like this example https://docs.uniswap.org/contracts/v3/guides/providing-liquidity/mint-a-position
+
+  - [>] create interface for `uniswapV3pool`
 
 - [>] write founder buys tokens in token sale for 5000$ in beforeEach
 
   - [>] what's the flow? I can't start token sale without proposal but I can't start proposal if I don't have enough tokens for proposalThreshold
+
+    - [>] start token sale#0 on deployment after transferring enough tokens to token sale address
+
+      - [>] on deployment of WLF token send enough for testing and to transfer to token sale from founder account manually
 
 - [>] add quorumVotes, proposalThreshold
 
@@ -252,11 +264,25 @@ npx hardhat --network localhost test
 
   - [] payEmployees: payment amount should be calculated on uniswap price or oracle like chainlink price
 
+- [] try to deploy on Sepolia and start writing frontend in werewolf-dapp
+
+- [] once frontend is done ask Neo and other people I know to test it out and give me feedback
+
+- [] make a list for bugs, hotfixes, new features or open github issues
+
 - [>>] test al vulnerabilities
 
   - [] payEmployees:: payPeriod is not the same for everyone so find another way to `require(payPeriod > 0,"Not enough time has passed to pay employee");`
 
   - []
+
+- [] after some testing if there's no major issue in security deploy on mainnet
+
+- [] test with same people of Sepolia tests
+
+- [] if still no issues start to write on socials and promote a little bit to see how it goes
+
+# v2.0.0
 
 - [] Constitution.sol
 
