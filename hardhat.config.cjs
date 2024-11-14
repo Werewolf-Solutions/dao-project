@@ -1,13 +1,24 @@
 require("@nomiclabs/hardhat-waffle");
-const path = require("path");
+
+const LOW_OPTIMIZER_COMPILER_SETTINGS = {
+  version: "0.7.6",
+  settings: {
+    optimizer: {
+      enabled: true,
+      runs: 2_000,
+    },
+    metadata: {
+      bytecodeHash: "none",
+    },
+  },
+};
 
 const DEFAULT_COMPILER_SETTINGS = {
   version: "0.7.6",
   settings: {
-    evmVersion: "istanbul",
     optimizer: {
       enabled: true,
-      runs: 1_000_000,
+      runs: 200,
     },
     metadata: {
       bytecodeHash: "none",
@@ -29,6 +40,17 @@ module.exports = {
       },
       DEFAULT_COMPILER_SETTINGS,
     ],
+    overrides: {
+      "@uniswap/v3-periphery/contracts/interfaces/INonfungiblePositionManager.sol":
+        LOW_OPTIMIZER_COMPILER_SETTINGS,
+      "@uniswap/v3-periphery/contracts/interfaces/external/IWETH9.sol":
+        LOW_OPTIMIZER_COMPILER_SETTINGS,
+      "@uniswap/v3-periphery/contracts/base/LiquidityManagement.sol":
+        LOW_OPTIMIZER_COMPILER_SETTINGS,
+      "@uniswap/v3-periphery/contracts/base/PeripheryPayments.sol":
+        LOW_OPTIMIZER_COMPILER_SETTINGS,
+      "contracts/LiquidityExamples.sol": LOW_OPTIMIZER_COMPILER_SETTINGS,
+    },
   },
   networks: {
     ganache: {
