@@ -1,7 +1,7 @@
 require("@nomiclabs/hardhat-waffle");
 
 const LOW_OPTIMIZER_COMPILER_SETTINGS = {
-  version: "0.7.6",
+  version: "0.8.15",
   settings: {
     optimizer: {
       enabled: true,
@@ -39,17 +39,21 @@ module.exports = {
         },
       },
       DEFAULT_COMPILER_SETTINGS,
+      { version: "0.8.15" },
+      { version: "0.8.20" },
+      { version: "0.8.27" },
     ],
     overrides: {
-      "@uniswap/v3-periphery/contracts/interfaces/INonfungiblePositionManager.sol":
+      "v3-periphery/contracts/interfaces/INonfungiblePositionManager.sol":
         LOW_OPTIMIZER_COMPILER_SETTINGS,
-      "@uniswap/v3-periphery/contracts/interfaces/external/IWETH9.sol":
+      "v3-periphery/contracts/interfaces/external/IWETH9.sol":
         LOW_OPTIMIZER_COMPILER_SETTINGS,
-      "@uniswap/v3-periphery/contracts/base/LiquidityManagement.sol":
+      "v3-periphery/contracts/base/LiquidityManagement.sol":
         LOW_OPTIMIZER_COMPILER_SETTINGS,
-      "@uniswap/v3-periphery/contracts/base/PeripheryPayments.sol":
+      "v3-periphery/contracts/base/PeripheryPayments.sol":
         LOW_OPTIMIZER_COMPILER_SETTINGS,
-      "contracts/LiquidityExamples.sol": LOW_OPTIMIZER_COMPILER_SETTINGS,
+      // "contracts/LiquidityExamples.sol": LOW_OPTIMIZER_COMPILER_SETTINGS,
+      // "contracts/UniswapHelper.sol": LOW_OPTIMIZER_COMPILER_SETTINGS,
     },
   },
   networks: {

@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import hre, { network } from "hardhat";
+import hre from "hardhat";
 
 describe("DAO Contract", function () {
   let WerewolfTokenV1,
@@ -32,11 +32,11 @@ describe("DAO Contract", function () {
 
     const uniswapRouterAddress = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D";
     let usdtAddress;
-    console.log(network);
+    console.log(hre.network);
 
-    if (network.name === "mainnet") {
+    if (network && network.name === "mainnet") {
       usdtAddress = "0xdAC17F958D2ee523a2206206994597C13D831ec7"; // Mainnet USDT address
-    } else if (network.name === "rinkeby") {
+    } else if (network && network.name === "rinkeby") {
       usdtAddress = "0xMockUSDTAddressForTestnet"; // Replace with testnet address or deployed mock
     } else {
       const MockUSDT = await ethers.getContractFactory("MockUSDT");

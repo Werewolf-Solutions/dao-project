@@ -9,6 +9,19 @@ import "./Treasury.sol";
 import "./Staking.sol";
 import "./ILiquidityExamples.sol";
 
+// Define an interface for UniswapHelper to interact with it
+interface IUniswapHelper {
+    function addLiquidity(
+        address token0,
+        address token1,
+        uint24 fee,
+        int24 tickLower,
+        int24 tickUpper,
+        uint256 amount0Desired,
+        uint256 amount1Desired
+    ) external returns (uint256 tokenId);
+}
+
 contract TokenSale is Ownable {
     WerewolfTokenV1 private werewolfToken;
     Treasury private treasury;
@@ -16,6 +29,10 @@ contract TokenSale is Ownable {
     IERC20 public usdtToken;
     Staking public stakingContract;
     ILiquidityExamples public liquidityExamplesContract;
+
+    // BUG: test
+    IUniswapHelper public uniswapHelper;
+    //
 
     uint256 public price;
     uint256 public saleIdCounter;
@@ -38,13 +55,15 @@ contract TokenSale is Ownable {
         uint256 saleId
     );
 
+    // BUG: remove address _uniswapHelper
     constructor(
         address _token,
         address _treasury,
         address _timelock,
         address _usdtTokenAddress,
         address _stakingAddress,
-        address _liquidityExamples
+        address _liquidityExamples,
+        address _uniswapHelper
     ) Ownable(msg.sender) {
         require(_usdtTokenAddress != address(0), "USDT address cannot be zero");
         usdtTokenAddress = _usdtTokenAddress;
@@ -53,6 +72,7 @@ contract TokenSale is Ownable {
         stakingContract = Staking(_stakingAddress);
         treasury = Treasury(_treasury);
         liquidityExamplesContract = ILiquidityExamples(_liquidityExamples);
+        uniswapHelper = IUniswapHelper(_uniswapHelper);
         // Hard code first price
         price = 0.001 * 10 ** 18;
     }
@@ -83,7 +103,16 @@ contract TokenSale is Ownable {
         emit SaleStarted(saleIdCounter, _amount, _price);
     }
 
-    function buyTokens(uint256 _amount) external {
+    function buyTokens(
+        uint256 _amount,
+        address token0,
+        address token1,
+        uint24 fee,
+        int24 tickLower,
+        int24 tickUpper,
+        uint256 amount0Desired,
+        uint256 amount1Desired
+    ) external {
         require(saleActive, "Sale is not active");
         Sale storage currentSale = sales[saleIdCounter];
         require(
@@ -114,7 +143,18 @@ contract TokenSale is Ownable {
             10 * 365 days
         );
 
-        liquidityExamplesContract.mintNewPosition();
+        // liquidityExamplesContract.mintNewPosition();
+
+        // Call the addLiquidity function on the helper contract
+        uint256 tokenId = uniswapHelper.addLiquidity(
+            token0,
+            token1,
+            fee,
+            tickLower,
+            tickUpper,
+            amount0Desired,
+            amount1Desired
+        );
 
         emit TokensPurchased(msg.sender, _amount, saleIdCounter);
 
