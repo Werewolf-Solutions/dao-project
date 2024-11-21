@@ -7,9 +7,20 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "./WerewolfTokenV1.sol";
 import "./Treasury.sol";
 import "./Staking.sol";
-import "./ILiquidityExamples.sol";
 
 // Define an interface for UniswapHelper to interact with it
+interface ILiquidityExamples {
+    function addLiquidity(
+        address token0,
+        address token1,
+        uint24 fee,
+        int24 tickLower,
+        int24 tickUpper,
+        uint256 amount0Desired,
+        uint256 amount1Desired
+    ) external returns (uint256 tokenId);
+}
+
 interface IUniswapHelper {
     function addLiquidity(
         address token0,

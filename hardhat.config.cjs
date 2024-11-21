@@ -47,7 +47,7 @@ module.exports = {
       "v3-periphery/contracts/interfaces/INonfungiblePositionManager.sol":
         LOW_OPTIMIZER_COMPILER_SETTINGS,
       "v3-periphery/contracts/interfaces/external/IWETH9.sol":
-        LOW_OPTIMIZER_COMPILER_SETTINGS,
+        DEFAULT_COMPILER_SETTINGS,
       "v3-periphery/contracts/base/LiquidityManagement.sol":
         LOW_OPTIMIZER_COMPILER_SETTINGS,
       "v3-periphery/contracts/base/PeripheryPayments.sol":
