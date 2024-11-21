@@ -1,13 +1,59 @@
 require("@nomiclabs/hardhat-waffle");
 
+const LOW_OPTIMIZER_COMPILER_SETTINGS = {
+  version: "0.8.15",
+  settings: {
+    optimizer: {
+      enabled: true,
+      runs: 2_000,
+    },
+    metadata: {
+      bytecodeHash: "none",
+    },
+  },
+};
+
+const DEFAULT_COMPILER_SETTINGS = {
+  version: "0.7.6",
+  settings: {
+    optimizer: {
+      enabled: true,
+      runs: 200,
+    },
+    metadata: {
+      bytecodeHash: "none",
+    },
+  },
+};
+
 module.exports = {
   solidity: {
-    version: "0.8.27",
-    settings: {
-      optimizer: {
-        enabled: true,
-        runs: 200,
+    compilers: [
+      {
+        version: "0.8.27",
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 200,
+          },
+        },
       },
+      DEFAULT_COMPILER_SETTINGS,
+      { version: "0.8.15" },
+      { version: "0.8.20" },
+      { version: "0.8.27" },
+    ],
+    overrides: {
+      "v3-periphery/contracts/interfaces/INonfungiblePositionManager.sol":
+        LOW_OPTIMIZER_COMPILER_SETTINGS,
+      "v3-periphery/contracts/interfaces/external/IWETH9.sol":
+        DEFAULT_COMPILER_SETTINGS,
+      "v3-periphery/contracts/base/LiquidityManagement.sol":
+        LOW_OPTIMIZER_COMPILER_SETTINGS,
+      "v3-periphery/contracts/base/PeripheryPayments.sol":
+        LOW_OPTIMIZER_COMPILER_SETTINGS,
+      // "contracts/LiquidityExamples.sol": LOW_OPTIMIZER_COMPILER_SETTINGS,
+      // "contracts/UniswapHelper.sol": LOW_OPTIMIZER_COMPILER_SETTINGS,
     },
   },
   networks: {

@@ -4,7 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "deploy": "npx hardhat --network localhost run scripts/deploy.js",
+    "test": "npx hardhat --network localhost test",
+    "sim": "node scripts/sim.js"
   },
   "keywords": [],
   "author": "",
@@ -17,7 +19,12 @@
   },
   "dependencies": {
     "@openzeppelin/contracts": "^5.0.2",
-    "@uniswap/sdk": "^3.0.3"
+    "@uniswap/sdk": "^3.0.3",
+    "@uniswap/sdk-core": "^5.9.0",
+    "@uniswap/smart-order-router": "^4.7.8",
+    "@uniswap/v3-core": "^1.0.1",
+    "@uniswap/v3-periphery": "^1.4.4",
+    "@uniswap/v3-sdk": "^3.18.1"
   },
   "type": "module"
 }
