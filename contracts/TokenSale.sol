@@ -81,7 +81,6 @@ contract TokenSale is Ownable {
         werewolfToken = WerewolfTokenV1(_token);
         stakingContract = Staking(_stakingAddress);
         treasury = Treasury(_treasury);
-        liquidityExamplesContract = ILiquidityExamples(_liquidityExamples);
         uniswapHelper = IUniswapHelper(_uniswapHelper);
         // Hard code first price
         price = 0.001 * 10 ** 18;
