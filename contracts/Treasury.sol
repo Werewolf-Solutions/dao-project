@@ -20,12 +20,15 @@ contract Treasury is Ownable {
 
     event RewardsDistributed(address indexed caller, uint256 amount);
 
-    constructor(address _token, address _stakingAddress) Ownable(msg.sender) {
+    constructor(address _token) Ownable(msg.sender) {
         require(_token != address(0), "WerewolfTokenV1 address cannot be zero");
         // werewolfToken = _token;
         werewolfToken = WerewolfTokenV1(_token);
-        stakingContract = Staking(_stakingAddress);
         allowedTokens[_token] = true; // Set initial werewolfToken as allowed
+    }
+
+    function setStakingContract(address _stakingAddress) external onlyOwner {
+        stakingContract = Staking(_stakingAddress);
     }
 
     // Function to add allowed tokens, can only be called by the DAO
