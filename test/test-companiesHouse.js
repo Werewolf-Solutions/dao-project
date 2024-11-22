@@ -9,11 +9,15 @@ describe("Companies House Contract", function () {
     Timelock,
     DAO,
     CompaniesHouse,
+    Staking,
+    UniswapHelper,
     werewolfToken,
     tokenSale,
     treasury,
     timelock,
     dao,
+    staking,
+    uniswapHelper,
     companiesHouse,
     founder,
     addr1,
@@ -30,6 +34,7 @@ describe("Companies House Contract", function () {
     TokenSale = await hre.ethers.getContractFactory("TokenSale");
     Timelock = await hre.ethers.getContractFactory("Timelock");
     CompaniesHouse = await hre.ethers.getContractFactory("CompaniesHouseV1");
+    Staking = await hre.ethers.getContractFactory("Staking");
     [founder, addr1, addr2, addr3] = await hre.ethers.getSigners();
 
     // Deploy the treasury contract first
@@ -47,6 +52,12 @@ describe("Companies House Contract", function () {
       addr1.address
     );
     await werewolfToken.deployed();
+
+    staking = await Staking.deploy(werewolfToken.address, timelock.address);
+    await staking.deployed();
+
+    // Set staking contract in treasury
+    await treasury.setStakingContract(staking.address);
 
     // Deploy the DAO contract with WerewolfTokenV1 and Treasury addresses
     dao = await DAO.deploy(
