@@ -11,6 +11,7 @@ describe("Companies House Contract", function () {
     CompaniesHouse,
     Staking,
     UniswapHelper,
+    MockUSDT,
     werewolfToken,
     tokenSale,
     treasury,
@@ -19,6 +20,7 @@ describe("Companies House Contract", function () {
     staking,
     uniswapHelper,
     companiesHouse,
+    mockUSDT,
     founder,
     addr1,
     addr2,
@@ -35,7 +37,27 @@ describe("Companies House Contract", function () {
     Timelock = await hre.ethers.getContractFactory("Timelock");
     CompaniesHouse = await hre.ethers.getContractFactory("CompaniesHouseV1");
     Staking = await hre.ethers.getContractFactory("Staking");
+    UniswapHelper = await hre.ethers.getContractFactory("UniswapHelper");
     [founder, addr1, addr2, addr3] = await hre.ethers.getSigners();
+
+    let usdtAddress;
+
+    if (network && network.name === "mainnet") {
+      usdtAddress = "0xdAC17F958D2ee523a2206206994597C13D831ec7"; // Mainnet USDT address
+    } else if (network && network.name === "rinkeby") {
+      usdtAddress = "0xMockUSDTAddressForTestnet"; // Replace with testnet address or deployed mock
+    } else {
+      const MockUSDT = await ethers.getContractFactory("MockUSDT");
+      const mockUsdt = await MockUSDT.deploy(
+        hre.ethers.utils.parseUnits("1000000", 18)
+      );
+      await mockUsdt.deployed();
+      usdtAddress = mockUsdt.address; // Address of locally deployed mock token
+    }
+
+    // Deploy UniswapHelper
+    uniswapHelper = await UniswapHelper.deploy(founder.address);
+    await uniswapHelper.deployed();
 
     // Deploy the treasury contract first
     treasury = await Treasury.deploy(founder.address); // Deployer will be owner
@@ -71,7 +93,10 @@ describe("Companies House Contract", function () {
     tokenSale = await TokenSale.deploy(
       werewolfToken.address,
       treasury.address,
-      timelock.address
+      timelock.address,
+      usdtAddress,
+      staking.address,
+      uniswapHelper.address
     );
     await tokenSale.deployed();
 
