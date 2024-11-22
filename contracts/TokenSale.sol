@@ -73,7 +73,6 @@ contract TokenSale is Ownable {
         address _timelock,
         address _usdtTokenAddress,
         address _stakingAddress,
-        address _liquidityExamples,
         address _uniswapHelper
     ) Ownable(msg.sender) {
         require(_usdtTokenAddress != address(0), "USDT address cannot be zero");
