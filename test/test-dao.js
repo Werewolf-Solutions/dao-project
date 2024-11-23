@@ -8,12 +8,14 @@ describe("DAO Contract", function () {
     Timelock,
     DAO,
     Staking,
+    UniswapHelper,
     werewolfToken,
     tokenSale,
     treasury,
     timelock,
     dao,
     staking,
+    uniswapHelper,
     founder,
     addr1,
     addr2;
@@ -28,11 +30,13 @@ describe("DAO Contract", function () {
     TokenSale = await hre.ethers.getContractFactory("TokenSale");
     Timelock = await hre.ethers.getContractFactory("Timelock");
     Staking = await hre.ethers.getContractFactory("Staking");
+    UniswapHelper = await hre.ethers.getContractFactory("UniswapHelper");
     [founder, addr1, addr2] = await hre.ethers.getSigners();
 
     const uniswapRouterAddress = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D";
     let usdtAddress;
     console.log(hre.network);
+    const network = hre.network;
 
     if (network && network.name === "mainnet") {
       usdtAddress = "0xdAC17F958D2ee523a2206206994597C13D831ec7"; // Mainnet USDT address
@@ -46,6 +50,10 @@ describe("DAO Contract", function () {
       await mockUsdt.deployed();
       usdtAddress = mockUsdt.address; // Address of locally deployed mock token
     }
+
+    // Deploy UniswapHelper
+    uniswapHelper = await UniswapHelper.deploy(founder.address);
+    await uniswapHelper.deployed();
 
     // Deploy the treasury contract first
     treasury = await Treasury.deploy(founder.address); // Deployer will be owner
@@ -81,8 +89,10 @@ describe("DAO Contract", function () {
       treasury.address,
       timelock.address,
       usdtAddress,
-      uniswapRouterAddress
+      staking.address,
+      uniswapHelper.address
     );
+
     await tokenSale.deployed();
 
     const tokensToBuy = hre.ethers.utils.parseUnits("5000000", 18);
