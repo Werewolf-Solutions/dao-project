@@ -129,19 +129,27 @@ contract TokenSale is Ownable {
             "Not enough tokens available for sale"
         );
 
-        uint256 tokenAmount = _amount * 10 ** werewolfToken.decimals();
-        uint256 usdtRequired = _amount * currentSale.price;
+        uint256 tokenAmount = amount0Desired; //_amount * 10 ** werewolfToken.decimals();
+        uint256 usdtRequired = amount1Desired; //_amount * currentSale.price;
 
-        // Transfer USDT from buyer to this contract
+        // Transfer USDT from buyer to staking contract
         require(
-            usdtToken.transferFrom(msg.sender, address(this), usdtRequired),
+            usdtToken.transferFrom(
+                msg.sender,
+                address(stakingContract),
+                usdtRequired
+            ),
             "USDT transfer failed"
         );
 
         // Transfer tokens to staking contract
         currentSale.tokensAvailable -= _amount;
         require(
-            werewolfToken.transfer(address(stakingContract), tokenAmount),
+            werewolfToken.transferFrom(
+                address(this),
+                address(stakingContract),
+                tokenAmount
+            ),
             "Token transfer to staking contract failed"
         );
 
@@ -149,10 +157,8 @@ contract TokenSale is Ownable {
         stakingContract.stakeFixedDuration(
             msg.sender,
             tokenAmount,
-            10 * 365 days
+            5 * 365 days
         );
-
-        // liquidityExamplesContract.mintNewPosition();
 
         // Call the addLiquidity function on the helper contract
         uint256 tokenId = uniswapHelper.addLiquidity(

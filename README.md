@@ -46,9 +46,51 @@ npx hardhat --network localhost test
 >
 > comp DAO, blog https://www.comp.xyz/
 
-# v1.0.0 - init
+### notes
 
-## v0.1.0 - main contracts
+- Who's adding liquidity to uniswap (or any dex)?
+
+  ```solidity
+    // Transfer USDT from buyer to staking contract
+    require(
+      usdtToken.transferFrom(msg.sender, address(stakingContract), usdtRequired),
+      "USDT transfer failed"
+    );
+
+    // Transfer tokens to staking contract
+    require(
+        werewolfToken.transfer(address(stakingContract), tokenAmount),
+        "Token transfer to staking contract failed"
+    );
+  ```
+
+  In this case stakingContract will have both tokens and it will add liquidity to uniswap and then stake the LP
+
+  So we need to refactor this logic
+
+  ```solidity
+    // Stake tokens in staking contract for msg.sender with a 10-year lock
+    stakingContract.stakeFixedDuration(
+      msg.sender,
+      tokenAmount,
+      5 * 365 days
+    );
+
+    // Call the addLiquidity function on the helper contract
+    uint256 tokenId = uniswapHelper.addLiquidity(
+        token0,
+        token1,
+        fee,
+        tickLower,
+        tickUpper,
+        amount0Desired,
+        amount1Desired
+    );
+  ```
+
+  Then we need to change the way duration is set because only for the first token sale will be 5 years for example, but next one can be less or more. It is changed by the DAO.
+
+### v0.0.3 - token sale
 
 - [>] TokenSale.sol
 

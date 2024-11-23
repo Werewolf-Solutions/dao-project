@@ -9,6 +9,7 @@ describe("DAO Contract", function () {
     DAO,
     Staking,
     UniswapHelper,
+    MockUSDT,
     werewolfToken,
     tokenSale,
     treasury,
@@ -16,6 +17,7 @@ describe("DAO Contract", function () {
     dao,
     staking,
     uniswapHelper,
+    mockUSDT,
     founder,
     addr1,
     addr2;
@@ -35,7 +37,7 @@ describe("DAO Contract", function () {
 
     const uniswapRouterAddress = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D";
     let usdtAddress;
-    console.log(hre.network);
+    // console.log(hre.network);
     const network = hre.network;
 
     if (network && network.name === "mainnet") {
@@ -43,12 +45,12 @@ describe("DAO Contract", function () {
     } else if (network && network.name === "rinkeby") {
       usdtAddress = "0xMockUSDTAddressForTestnet"; // Replace with testnet address or deployed mock
     } else {
-      const MockUSDT = await ethers.getContractFactory("MockUSDT");
-      const mockUsdt = await MockUSDT.deploy(
+      MockUSDT = await ethers.getContractFactory("MockUSDT");
+      mockUSDT = await MockUSDT.deploy(
         hre.ethers.utils.parseUnits("1000000", 18)
       );
-      await mockUsdt.deployed();
-      usdtAddress = mockUsdt.address; // Address of locally deployed mock token
+      await mockUSDT.deployed();
+      usdtAddress = mockUSDT.address; // Address of locally deployed mock token
     }
 
     // Deploy UniswapHelper
@@ -95,6 +97,7 @@ describe("DAO Contract", function () {
 
     await tokenSale.deployed();
 
+    // Start token sale #0
     const tokensToBuy = hre.ethers.utils.parseUnits("5000000", 18);
     const tokenPrice = hre.ethers.utils.parseUnits("0.001", 18);
 
@@ -109,14 +112,63 @@ describe("DAO Contract", function () {
 
     // Founder buys 5000$ worth of tokens
     const balanceBeforeBuy = await werewolfToken.balanceOf(founder.address);
-    console.log("Founder balance: ", balanceBeforeBuy);
+    console.log(
+      "Founder token balance: ",
+      hre.ethers.utils.formatUnits(balanceBeforeBuy, 18)
+    );
+    console.log(
+      "Founder usdt balance: ",
+      hre.ethers.utils.formatUnits(
+        await mockUSDT.balanceOf(founder.address),
+        18
+      )
+    );
     const saleTokenPrice = await tokenSale.price();
+    console.log(hre.ethers.utils.formatUnits(saleTokenPrice, 18));
 
     const ethAmount = saleTokenPrice
       .mul(tokensToBuy)
       .div(hre.ethers.utils.parseUnits("1", 18));
 
-    tokenSale.connect(founder).buyTokens(tokensToBuy, { value: ethAmount });
+    const usdtAmount = hre.ethers.utils.parseUnits("5000", 18);
+
+    // Approve both spending
+    await werewolfToken
+      .connect(founder)
+      .approve(tokenSale.address, tokensToBuy);
+    await mockUSDT.connect(founder).approve(tokenSale.address, usdtAmount);
+
+    const args = {
+      amount: tokensToBuy,
+      token0: werewolfToken.address,
+      token1: usdtAddress,
+      fee: 100,
+      // Min from TickMath.MIN_TICK
+      // Max from TickMath.MAX_TICK
+      // BUG: not for production
+      tickLower: -887272,
+      tickUpper: 887272,
+      amount0Desired: tokensToBuy,
+      amount1Desired: usdtAmount,
+    };
+    console.log(args);
+
+    tokenSale.connect(founder).buyTokens(args, { value: ethAmount });
+
+    console.log(
+      "Founder token balance after token sale: ",
+      hre.ethers.utils.formatUnits(
+        await werewolfToken.balanceOf(founder.address),
+        18
+      )
+    );
+    console.log(
+      "Founder usdt balance after token sale: ",
+      hre.ethers.utils.formatUnits(
+        await mockUSDT.balanceOf(founder.address),
+        18
+      )
+    );
 
     // Encode the function parameters for `setpendingAdmin()`
     const functionParams = hre.ethers.utils.defaultAbiCoder.encode(
