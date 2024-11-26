@@ -23,14 +23,14 @@ contract MockUSDT is ERC20 {
         return success;
     }
 
-    // Optional: Overwrite transferFrom to test approval/allowance mechanisms
-    function transferFrom(
-        address sender,
-        address recipient,
-        uint256 amount
-    ) public override returns (bool) {
-        bool success = super.transferFrom(sender, recipient, amount);
-        require(success, "MockUSDT: transferFrom failed");
-        return success;
-    }
+    // // Optional: Overwrite transferFrom to test approval/allowance mechanisms
+    // function transferFrom(
+    //     address sender,
+    //     address recipient,
+    //     uint256 amount
+    // ) public override returns (bool) {
+    //     bool success = super.transferFrom(sender, recipient, amount);
+    //     require(success, "MockUSDT: transferFrom failed");
+    //     return success;
+    // }
 }
