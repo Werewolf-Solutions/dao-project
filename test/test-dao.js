@@ -123,6 +123,36 @@ describe("DAO Contract", function () {
         18
       )
     );
+
+    console.log(
+      "Staking contract token balance: ",
+      hre.ethers.utils.formatUnits(
+        await werewolfToken.balanceOf(staking.address),
+        18
+      )
+    );
+    console.log(
+      "Staking contract usdt balance: ",
+      hre.ethers.utils.formatUnits(
+        await mockUSDT.balanceOf(staking.address),
+        18
+      )
+    );
+
+    console.log(
+      "Token sale token balance: ",
+      hre.ethers.utils.formatUnits(
+        await werewolfToken.balanceOf(tokenSale.address),
+        18
+      )
+    );
+    console.log(
+      "Token sale usdt balance: ",
+      hre.ethers.utils.formatUnits(
+        await mockUSDT.balanceOf(tokenSale.address),
+        18
+      )
+    );
     const saleTokenPrice = await tokenSale.price();
     console.log(hre.ethers.utils.formatUnits(saleTokenPrice, 18));
 
@@ -137,6 +167,11 @@ describe("DAO Contract", function () {
       .connect(founder)
       .approve(tokenSale.address, tokensToBuy);
     await mockUSDT.connect(founder).approve(tokenSale.address, usdtAmount);
+
+    console.log(
+      await werewolfToken.allowance(founder.address, tokenSale.address)
+    );
+    console.log(await mockUSDT.allowance(founder.address, tokenSale.address));
 
     const args = {
       amount: tokensToBuy,
@@ -153,7 +188,7 @@ describe("DAO Contract", function () {
     };
     console.log(args);
 
-    tokenSale.connect(founder).buyTokens(args, { value: ethAmount });
+    tokenSale.connect(founder).buyTokens(args);
 
     console.log(
       "Founder token balance after token sale: ",
@@ -166,6 +201,36 @@ describe("DAO Contract", function () {
       "Founder usdt balance after token sale: ",
       hre.ethers.utils.formatUnits(
         await mockUSDT.balanceOf(founder.address),
+        18
+      )
+    );
+
+    console.log(
+      "Staking contract token balance: ",
+      hre.ethers.utils.formatUnits(
+        await werewolfToken.balanceOf(staking.address),
+        18
+      )
+    );
+    console.log(
+      "Staking contract usdt balance: ",
+      hre.ethers.utils.formatUnits(
+        await mockUSDT.balanceOf(staking.address),
+        18
+      )
+    );
+
+    console.log(
+      "Token sale token balance: ",
+      hre.ethers.utils.formatUnits(
+        await werewolfToken.balanceOf(tokenSale.address),
+        18
+      )
+    );
+    console.log(
+      "Token sale usdt balance: ",
+      hre.ethers.utils.formatUnits(
+        await mockUSDT.balanceOf(tokenSale.address),
         18
       )
     );
