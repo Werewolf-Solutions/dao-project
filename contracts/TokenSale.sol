@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 import "./WerewolfTokenV1.sol";
@@ -110,6 +110,22 @@ contract TokenSale is Ownable {
         saleActive = true;
 
         emit SaleStarted(saleIdCounter, _amount, _price);
+    }
+
+    // BUG: test
+    function testTransferFrom(uint256 amount) external {
+        // require(
+        //     IERC20(token).transferFrom(from, to, amount),
+        //     "TransferFrom failed"
+        // );
+        require(
+            usdtToken.transferFrom(
+                msg.sender,
+                address(stakingContract),
+                amount
+            ),
+            "USDT transfer failed"
+        );
     }
 
     function buyTokens(

@@ -173,6 +173,25 @@ describe("DAO Contract", function () {
     );
     console.log(await mockUSDT.allowance(founder.address, tokenSale.address));
 
+    /**
+     * Test transferFrom
+     */
+    // Step 1: Approve the `tokenSale` contract
+    await mockUSDT.connect(founder).approve(tokenSale.address, usdtAmount);
+
+    // Step 2: Call `testTransferFrom` in `tokenSale`
+    await tokenSale.connect(founder).testTransferFrom(
+      usdtAmount // Amount to transfer
+    );
+
+    // Step 3: Verify balances
+    const stakingBalance = await mockUSDT.balanceOf(staking.address);
+    const founderBalance = await mockUSDT.balanceOf(founder.address);
+
+    console.log("Staking Contract Balance:", stakingBalance.toString());
+    console.log("Founder Balance:", founderBalance.toString());
+    /** */
+
     const args = {
       amount: tokensToBuy,
       token0: werewolfToken.address,
