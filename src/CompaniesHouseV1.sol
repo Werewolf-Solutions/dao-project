@@ -54,7 +54,6 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         string currency;
     }
 
-    //New data structure
     struct CompanyStruct {
         //relative storage locations:
         uint96 companyId; //slot0
@@ -97,32 +96,6 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
     mapping(address ownerAddress => CompanyStruct[]) public ownerToCompanies;
     mapping(address employee => mapping(uint96 companyId => EmployeeBrief)) public employeeBrief;
 
-    /*   struct CompanyStruct {
-        uint256 companyId;
-        address owner;
-        string industry;
-        string name;
-        uint256 createdAt;
-        bool active;
-        address[] employees;
-        string domain;
-        string[] roles;
-        string[] powerRoles;
-    }
-
-    struct Employee {
-        uint256 salary;
-        uint256 lastPayDate;
-        uint256 employeeId;
-        address payableAddress;
-        string name;
-        uint256 companyId;
-        string role;
-        uint256 hiredAt;
-        bool active;
-        string currency;
-    } */
-
     //currently unused
     struct InventoryItem {
         uint256 salary;
@@ -154,13 +127,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
     //uint256 public employeesIndex; // Number of employees in company <--- note remove this
     uint256 public creationFee; // Fee to create a business
 
-    //old data structures
-    //CompanyStruct[] public companies;
-    // mapping(address => mapping(uint32 => CompanyStruct)) public companies;
-    //mapping(uint256 => CompanyStruct[]) public companiesByOwner;
-    //mapping(address => Employee) private _employees;
-    address private _treasuryAddress;
-    address private _owner;
+    address public treasuryAddress;
 
     ///////////////////////////////////////
     //           Events                  //
@@ -210,11 +177,11 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
      * @notice Initializes the proxy's storage
      * @dev
      * @param _token address of the Wereworlf token
-     * @param treasuryAddress address where all the funds and fees will be stored
+     * @param _treasuryAddress address where all the funds and fees will be stored
      * @param _daoAddress privileged address
      * @param tokenSaleAddress the address that will handle the token sale
      */
-    function initialize(address _token, address treasuryAddress, address _daoAddress, address tokenSaleAddress)
+    function initialize(address _token, address _treasuryAddress, address _daoAddress, address tokenSaleAddress)
         public
         initializer
     {
@@ -222,14 +189,16 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         dao = DAO(_daoAddress);
         tokenSale = TokenSale(tokenSaleAddress);
         treasury = Treasury(treasuryAddress);
-        _treasuryAddress = treasuryAddress;
+        treasuryAddress = _treasuryAddress;
 
-        //previously declared outside the constructor
         creationFee = 10e18;
         // the index and id for the next newly created company
         currentCompanyIndex = 1; //initalizing it to 1 to avoid bugs and exploits
-            // _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
-            // _setupRole(STAFF_ROLE, msg.sender);
+
+        //TODO
+        //setup roles logic
+        // _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        // _setupRole(STAFF_ROLE, msg.sender);
     }
 
     ///////////////////////////////////////
@@ -244,9 +213,32 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         require(werewolfToken.balanceOf(msg.sender) >= creationFee, "Token balance must be more than amount to pay.");
         require(werewolfToken.transferFrom(msg.sender, address(this), creationFee), "Transfer failed."); // question Should the fee be transfer to this address??
         //note probably need to add some checks on the params
-        uint96 ownerCurrentCompanyIndex = uint96(ownerToCompanies[msg.sender].length);
+        //uint96 ownerCurrentCompanyIndex = uint96(ownerToCompanies[msg.sender].length);
 
-        Employee[] memory employeesArray = new Employee[](1);
+        //trying to avoid compiling via-ir
+        uint256 ownedCompLength = ownerToCompanies[msg.sender].length; //this can be zero
+        uint256 nextCompIndex;
+        if (ownedCompLength == 0) {
+            //do nothing and leave nextCompIndex = 0
+        } else {
+            nextCompIndex = ownerToCompanies[msg.sender].length - 1;
+        }
+        CompanyStruct storage compPtr = ownerToCompanies[msg.sender][nextCompIndex];
+
+        {
+            compPtr.companyId = currentCompanyIndex;
+            compPtr.owner = msg.sender;
+            compPtr.industry = _creationParams.industry;
+            compPtr.name = _creationParams.name;
+            compPtr.createdAt = block.timestamp;
+            compPtr.active = true;
+            compPtr.domain = _creationParams.domain;
+            compPtr.roles = _creationParams.roles;
+            compPtr.powerRoles = _creationParams.powerRoles;
+        }
+
+        //The below logic requires compiling via-ir
+        /*   Employee[] memory employeesArray;
         ownerToCompanies[msg.sender].push(
             CompanyStruct(
                 currentCompanyIndex,
@@ -260,21 +252,19 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
                 _creationParams.roles,
                 _creationParams.powerRoles
             )
-        );
-        companyBrief[currentCompanyIndex] = CompanyBrief(msg.sender, ownerCurrentCompanyIndex);
+        ); */
 
-        // emit CompanyCreated(newCompany); // Triggering event
+        companyBrief[currentCompanyIndex] = CompanyBrief(msg.sender, uint96(nextCompIndex));
 
         //now add the owner as an employee of the company
         /*TODO
         Call the hire employee function to hire the owner as an employee 
         */
-        emit EmployeeHired(msg.sender, _creationParams.ownerSalary);
-        // companies[index].employees.push(msg.sender);
-        //employeesIndex += 1;
 
-        //increment the company
+        //increment the number of created companies
         currentCompanyIndex += 1;
+
+        //emit CompanyCreated(newCompany); // Triggering event
     }
 
     function deleteCompany(uint96 _number) public {
@@ -293,7 +283,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
             //update the companyBrief of the
             companyBrief[lastCompanyId].index = _number;
         }
-        //note might be usefull to have a running count of the companies deleted to easily see the current companyCount
+        //update the deleted companies to keep a count on the active companies
         deletedCompanies++;
         //emit CompanyDeleted(companies[_number]);
     }

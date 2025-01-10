@@ -4,7 +4,7 @@ out = "out"
 libs = ["lib"]
 
 # Added to copy MyStruct[] memory into storage
-via_ir = true
+via_ir = false
 
 # fix the compiler version to standardize testing
 solc_version = "0.8.28"
