@@ -6,16 +6,25 @@ import "./WerewolfTokenV1.sol";
 import "./Treasury.sol";
 import "./Timelock.sol";
 
+//For merkle proofs
+import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+
+/* Contract layout:
+ Data types: structs, enums, and type declarations
+ State Variables
+ Events
+ Function Modifiers
+ Constructor/Initialize
+ Fallback and Receive function
+ External functions
+ Public functions
+ Internal functions
+ Private Functions
+*/
 contract DAO is Initializable {
-    WerewolfTokenV1 public werewolfToken;
-    Treasury public treasury;
-    Timelock public timelock;
-    address public werewolfTokenAddress;
-
-    address public guardian;
-
-    mapping(address => bool) public authorizedCallers;
-
+    ///////////////////////////////////////
+    //           Data Types              //
+    ///////////////////////////////////////
     struct Proposal {
         bool executed; // Whether the proposal has been executed
         address proposer;
@@ -38,37 +47,6 @@ contract DAO is Initializable {
         uint96 votes;
     }
 
-    uint256 public proposalCount;
-    mapping(uint256 => Proposal) public proposals;
-    mapping(uint256 => mapping(address => Receipt)) public proposalReceipts;
-    mapping(address => mapping(uint256 => bool)) public voted; // Tracks votes by user for each proposal
-    address public treasuryAddress;
-    uint256 public proposalCost = 10 * (10 ** 18); // cost to create a proposal in tokens
-    mapping(bytes32 => bool) public queuedTransactions;
-
-    function proposalMaxOperations() public pure returns (uint256) {
-        return 10;
-    } // 10 actions
-
-    function votingDelay() public pure returns (uint256) {
-        return 1;
-    } // 1 block
-
-    function votingPeriod() public pure returns (uint256) {
-        return 17280;
-    } // ~3 days in blocks (assuming 15s blocks)
-
-    function quorumVotes() public pure returns (uint256) {
-        return (50 * 10 ** 18) / 100; // 50% represented with a factor of 10**18 for precision
-    }
-
-    function proposalThreshold() public pure returns (uint256) {
-        return (5 * 10 ** 18) / 1000; // 0.5% represented with a factor of 10**18
-    }
-
-    mapping(address => uint256) public latestProposalIds;
-
-    /// @notice Possible states that a proposal may be in
     enum ProposalState {
         Pending,
         Active,
@@ -80,17 +58,50 @@ contract DAO is Initializable {
         Executed
     }
 
+    ///////////////////////////////////////
+    //           State Variables         //
+    ///////////////////////////////////////
+
+    WerewolfTokenV1 public werewolfToken;
+    Treasury public treasury;
+    Timelock public timelock;
+    address public werewolfTokenAddress;
+    bytes32 merkleRoot;
+
+    address public guardian;
+
+    mapping(address => bool) public authorizedCallers;
+
+    uint256 public proposalCount;
+    mapping(uint256 => Proposal) public proposals;
+    mapping(uint256 => mapping(address => Receipt)) public proposalReceipts;
+    mapping(address => mapping(uint256 => bool)) public voted; // Tracks votes by user for each proposal
+    address public treasuryAddress;
+    uint256 public proposalCost = 10e18; // cost to create a proposal in tokens
+    mapping(bytes32 => bool) public queuedTransactions;
+    mapping(address => uint256) public latestProposalIds;
+
+    ///////////////////////////////////////
+    //           Events                  //
+    ///////////////////////////////////////
+
     event ProposalCreated(uint256 proposalId, address proposer);
     event ProposalQueued(uint256 id, uint256 eta);
     event ProposalExecuted(uint256 proposalId);
     event Voted(uint256 proposalId, address voter, bool support, uint256 votes);
-
+    ///////////////////////////////////////
+    //           Modifiers               //
+    ///////////////////////////////////////
     // Modifier to ensure that only the Timelock can execute specific functions
+
     modifier onlyTimelock() {
         require(msg.sender == address(timelock), "Only Timelock can execute");
         _;
     }
 
+    ///////////////////////////////////////
+    //      Constructor/Initializer      //
+    ///////////////////////////////////////
     constructor() {
         //disable the implementation contract's initializers
         _disableInitializers();
@@ -107,15 +118,86 @@ contract DAO is Initializable {
             // _authorizeCaller(_timelock);
     }
 
+    ///////////////////////////////////////
+    //           External Functions      //
+    ///////////////////////////////////////
+
     // Function to authorize an external contract (like CompaniesHouseV1)
-    function _authorizeCaller(address _caller) external onlyTimelock {
+    function authorizeCaller(address _caller) external onlyTimelock {
         authorizedCallers[_caller] = true;
     }
 
+    function updateMerkleRoot(bytes32 _root) external /* onlyAdmin */ {
+        merkleRoot = _root;
+    }
+
     // Function to deauthorize an external contract
-    function _deauthorizeCaller(address _caller) external onlyTimelock {
+    function deauthorizeCaller(address _caller) external onlyTimelock {
         authorizedCallers[_caller] = false;
     }
+
+    /**
+     * @dev currently taking a snapshot and submitting a merkle root
+     * @notice Allows token holders, stakers, and LP's to vote on proposals
+     * @param _proposalId this ID of the porposal they are voting on
+     * @param _voteAmount this is the weight of the voter which is also equal to the "balance" at the time of the snapshot
+     * @param _support boolean for if the voter is "for" or "against" the proposal
+     * @param _proof this is the proof for the merkle tree, which can be retrieved from the front-end
+     */
+    function vote(uint256 _proposalId, uint256 _voteAmount, bool _support, bytes32[] calldata _proof) external {
+        bytes32 leaf = keccak256(abi.encode(msg.sender, _voteAmount));
+        require(MerkleProof.verifyCalldata(_proof, merkleRoot, leaf), "DAO:vote merkle proof failed");
+
+        Proposal storage proposal = proposals[_proposalId];
+        //note it is possible for users to vote on multiple proposal which is desired
+        Receipt storage receipt = proposalReceipts[_proposalId][msg.sender];
+        //only allowed to vote once for the same proposal
+        require(!receipt.hasVoted, "Already voted.");
+
+        receipt.hasVoted = true;
+        receipt.support = _support;
+
+        if (_support) {
+            proposal.votesFor += _voteAmount;
+        } else {
+            proposal.votesAgainst += _voteAmount;
+        }
+
+        emit Voted(_proposalId, msg.sender, _support, _voteAmount);
+    }
+
+    // Function to execute a proposal
+    function executeProposal(uint256 proposalId) external {
+        Proposal storage proposal = proposals[proposalId];
+        require(!proposal.executed, "DAO::executeProposal: Proposal already executed");
+
+        // Ensure the proposal has enough "For" votes (must be more than 50% of total votes)
+        uint256 totalVotes = proposal.votesFor + proposal.votesAgainst;
+        require(
+            proposal.votesFor > totalVotes * quorumVotes(),
+            "DAO::executeProposal: Proposal must reach minimum quorum votes to pass."
+        );
+
+        // Mark the proposal as executed
+        proposal.executed = true;
+
+        for (uint256 i = 0; i < proposal.targets.length; i++) {
+            timelock.executeTransaction(proposal.targets[i], proposal.signatures[i], proposal.datas[i], proposal.eta);
+            emit ProposalExecuted(proposalId);
+        }
+    }
+
+    function delegate(address delegatee) external {
+        // Implement delegation logic efficiently
+    }
+
+    function undelegate() external {
+        // Implement undelegation logic efficiently
+    }
+
+    ///////////////////////////////////////
+    //           Public Functions        //
+    ///////////////////////////////////////
 
     // Function to create a proposal
     function createProposal(address[] memory _targets, string[] memory _signatures, bytes[] memory _datas) public {
@@ -181,60 +263,39 @@ contract DAO is Initializable {
         emit ProposalQueued(proposalId, eta);
     }
 
-    function _queueOrRevert(address target, string memory signature, bytes memory data, uint256 eta) internal {
-        require(
-            !timelock.queuedTransactions(keccak256(abi.encode(target, signature, data))),
-            "DAO::_queueOrRevert: proposal action already queued at eta"
-        );
-        timelock.queueTransaction(target, signature, data, eta);
+    function __acceptAdmin() public {
+        require(msg.sender == guardian, "GovernorAlpha::__acceptAdmin: sender must be gov guardian");
+        timelock.acceptAdmin();
+    }
+    ///////////////////////////////////////
+    //   Public View/Pure Functions      //
+    ///////////////////////////////////////
+
+    function proposalMaxOperations() public pure returns (uint256) {
+        return 10;
+    } // 10 actions
+
+    function votingDelay() public pure returns (uint256) {
+        return 1;
+    } // 1 block
+
+    function votingPeriod() public pure returns (uint256) {
+        return 17280;
+    } // ~3 days in blocks (assuming 15s blocks)
+
+    function quorumVotes() public pure returns (uint256) {
+        return (50 * 10 ** 18) / 100; // 50% represented with a factor of 10**18 for precision
     }
 
-    // Function to execute a proposal
-    function executeProposal(uint256 proposalId) external {
-        Proposal storage proposal = proposals[proposalId];
-        require(!proposal.executed, "DAO::executeProposal: Proposal already executed");
-
-        // Ensure the proposal has enough "For" votes (must be more than 50% of total votes)
-        uint256 totalVotes = proposal.votesFor + proposal.votesAgainst;
-        require(
-            proposal.votesFor > totalVotes * quorumVotes(),
-            "DAO::executeProposal: Proposal must reach minimum quorum votes to pass."
-        );
-
-        // Mark the proposal as executed
-        proposal.executed = true;
-
-        for (uint256 i = 0; i < proposal.targets.length; i++) {
-            timelock.executeTransaction(proposal.targets[i], proposal.signatures[i], proposal.datas[i], proposal.eta);
-            emit ProposalExecuted(proposalId);
-        }
+    function proposalThreshold() public pure returns (uint256) {
+        return (5 * 10 ** 18) / 1000; // 0.5% represented with a factor of 10**18
     }
 
-    // Voting function
-    function vote(uint256 proposalId, bool support) external {
-        Proposal storage proposal = proposals[proposalId];
-        Receipt storage receipt = proposalReceipts[proposalId][msg.sender];
+    ///////////////////////////////////////
+    //         Internal Functions        //
+    ///////////////////////////////////////
 
-        require(!receipt.hasVoted, "Already voted.");
-
-        uint256 voterBalance = werewolfToken.balanceOf(msg.sender);
-        require(voterBalance > 0, "No tokens to vote.");
-
-        uint256 votingPower = _calculateVotingPower(msg.sender);
-        require(votingPower > 0, "Voter doesn't have enough tokens.");
-        receipt.hasVoted = true;
-        receipt.support = support;
-
-        if (support) {
-            proposal.votesFor += votingPower;
-        } else {
-            proposal.votesAgainst += votingPower;
-        }
-
-        emit Voted(proposalId, msg.sender, support, voterBalance);
-    }
-
-    function _calculateVotingPower(address _voter) internal returns (uint256) {
+    /*     function _calculateVotingPower(address _voter) internal returns (uint256) {
         uint256 totalSupply = werewolfToken.balanceOf(address(treasury));
         uint256 balance = werewolfToken.balanceOf(_voter);
         uint256 holdingPercentage = (balance * 100) / totalSupply;
@@ -251,23 +312,18 @@ contract DAO is Initializable {
         } else {
             return balance; // Normal voting power for others
         }
-    }
+    } */
 
-    function delegate(address delegatee) external {
-        // Implement delegation logic efficiently
-    }
-
-    function undelegate() external {
-        // Implement undelegation logic efficiently
+    function _queueOrRevert(address target, string memory signature, bytes memory data, uint256 eta) internal {
+        require(
+            !timelock.queuedTransactions(keccak256(abi.encode(target, signature, data))),
+            "DAO::_queueOrRevert: proposal action already queued at eta"
+        );
+        timelock.queueTransaction(target, signature, data, eta);
     }
 
     function getBlockTimestamp() internal view returns (uint256) {
         // solium-disable-next-line security/no-block-members
         return block.timestamp;
-    }
-
-    function __acceptAdmin() public {
-        require(msg.sender == guardian, "GovernorAlpha::__acceptAdmin: sender must be gov guardian");
-        timelock.acceptAdmin();
     }
 }

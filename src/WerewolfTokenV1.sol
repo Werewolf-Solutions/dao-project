@@ -60,6 +60,7 @@ contract WerewolfTokenV1 is ERC20Upgradeable, OwnableUpgradeable {
     {
         require(_treasury != address(0), "Treasury address cannot be zero");
         __Ownable_init(_owner);
+        __ERC20_init("Werewolf Token", "WLF");
         treasury = _treasury; // Set the Treasury address
         timelock = Timelock(_timelock);
         // Mint initial 1B tokens directly to the DAO's Treasury

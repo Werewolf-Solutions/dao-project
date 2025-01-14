@@ -3,17 +3,16 @@ pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "./Treasury.sol";
+import "./WerewolfTokenV1.sol";
+import "./DAO.sol";
+import "./TokenSale.sol";
 
 //for future use
 import "./interfaces/ITreasury.sol";
 import "./interfaces/IWerewolfTokenV1.sol";
 import "./interfaces/IDAO.sol";
 import "./interfaces/ITokenSale.sol";
-
-import "./Treasury.sol";
-import "./WerewolfTokenV1.sol";
-import "./DAO.sol";
-import "./TokenSale.sol";
 
 //When adding anything please follow the contract layout
 /* Contract layout:
@@ -92,10 +91,6 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         uint96 employeeIndex;
     }
 
-    mapping(uint96 companyId => CompanyBrief) public companyBrief;
-    mapping(address ownerAddress => CompanyStruct[]) public ownerToCompanies;
-    mapping(address employee => mapping(uint96 companyId => EmployeeBrief)) public employeeBrief;
-
     //currently unused
     struct InventoryItem {
         uint256 salary;
@@ -112,6 +107,10 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
     ///////////////////////////////////////
     //           State Variables         //
     ///////////////////////////////////////
+
+    mapping(uint96 companyId => CompanyBrief) public companyBrief;
+    mapping(address ownerAddress => CompanyStruct[]) public ownerToCompanies;
+    mapping(address employee => mapping(uint96 companyId => EmployeeBrief)) public employeeBrief;
     // TODO check to see if switching to interfaces saves gas
 
     WerewolfTokenV1 private werewolfToken;
@@ -135,8 +134,8 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
     event EmployeeHired(address indexed employee, uint256 salary);
     event EmployeeFired(address indexed employee);
     event EmployeePaid(address indexed employee, uint256 amount);
-    event CompanyCreated(CompanyStruct company);
-    event CompanyDeleted(CompanyStruct company);
+    event CompanyCreated(address indexed owner, uint96 indexed companyIndex);
+    event CompanyDeleted(address indexed owner, uint96 indexed companyIndex);
 
     ///////////////////////////////////////
     //           Modifiers               //
@@ -260,11 +259,9 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         /*TODO
         Call the hire employee function to hire the owner as an employee 
         */
-
+        emit CompanyCreated(msg.sender, currentCompanyIndex);
         //increment the number of created companies
         currentCompanyIndex += 1;
-
-        //emit CompanyCreated(newCompany); // Triggering event
     }
 
     function deleteCompany(uint96 _number) public {
@@ -285,7 +282,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         }
         //update the deleted companies to keep a count on the active companies
         deletedCompanies++;
-        //emit CompanyDeleted(companies[_number]);
+        emit CompanyDeleted(msg.sender, companyIndex);
     }
 
     function hireEmployee(HireEmployee memory _hireParams) public /* onlyRoleWithPower(_companyId) */ {
