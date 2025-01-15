@@ -22,8 +22,6 @@ contract Staking is OwnableUpgradeable {
     event RewardsAdded(uint256 amount);
 
     constructor( /* address _stakingToken, address timelock */ ) /* Ownable(timelock) */ {
-        /* stakingToken = IERC20(_stakingToken); */
-        //disabling the initializer function for the implementation contract
         _disableInitializers();
     }
 
