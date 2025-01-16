@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.4;
 
-library DAO {
+library DAOLib {
     type ProposalState is uint8;
 }
 
@@ -35,7 +35,7 @@ interface IDAO {
         external
         view
         returns (
-            DAO.ProposalState proposalState,
+            DAOLib.ProposalState proposalState,
             address proposer,
             uint256 votesFor,
             uint256 votesAgainst,

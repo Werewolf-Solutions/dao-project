@@ -24,6 +24,7 @@ contract Staking is OwnableUpgradeable {
         uint256 amount;
         uint256 lastStakeTime;
         uint256 endStakeTime;
+        uint256 rewardsWhenStaked;
     }
 
     ///////////////////////////////////////
@@ -72,7 +73,6 @@ contract Staking is OwnableUpgradeable {
     function _stake(address _owner, uint256 _amount, uint256 _duration, bool isFixed) internal {
         require(_amount > 0, "Staking amount must be greater than zero");
         require(stakingToken.allowance(_owner, address(this)) >= _amount, "Insufficient token allowance");
-
         require(stakingToken.transferFrom(msg.sender, address(this), _amount), "Token transfer failed");
 
         StakeInfo storage stake = stakes[msg.sender];
@@ -87,7 +87,8 @@ contract Staking is OwnableUpgradeable {
         if (isFixed) {
             stake.endStakeTime = block.timestamp + _duration;
         } else {
-            stake.endStakeTime = 0; // No lock period for flexible staking
+            //stake.endStakeTime = 0; // No lock period for flexible staking
+            //do nothing waste of gas to assign 0 value
         }
 
         emit TokensStaked(msg.sender, _amount, _duration);
@@ -102,10 +103,10 @@ contract Staking is OwnableUpgradeable {
 
         // If a fixed duration is set, ensure the lock period has passed
         if (stake.endStakeTime > 0) {
-            require(block.timestamp >= stake.endStakeTime, "Tokens are still locked");
+            require(block.timestamp >= stake.endStakeTime, "Staking:withdrawTokens Tokens are still locked");
         }
 
-        uint256 reward = _collectRewards(msg.sender);
+        uint256 reward = _collectRewards(stake);
         stake.amount = 0;
         stake.endStakeTime = 0;
         stakedBalance -= stakedAmount;
@@ -116,13 +117,21 @@ contract Staking is OwnableUpgradeable {
     }
 
     // Internal reward collection, called only within withdrawal functions
-    function _collectRewards(address _staker) internal returns (uint256) {
-        StakeInfo storage stake = stakes[_staker];
-        uint256 reward = calculateReward(_staker);
-
+    function _collectRewards(StakeInfo storage s_stakerPtr) internal returns (uint256) {
+        uint256 reward = _calculateReward(s_stakerPtr);
+        //decrease global rewards
         stakingRewards -= reward;
-        stake.lastStakeTime = block.timestamp; // Reset to the current timestamp
+        s_stakerPtr.lastStakeTime = block.timestamp; // Reset to the current timestamp
 
+        return reward;
+    }
+
+    function _calculateReward(StakeInfo storage s_stakePtr) internal returns (uint256) {
+        //rewards can be zero
+        uint256 totalStakingTime = block.timestamp - s_stakePtr.lastStakeTime;
+        // uint256 reward = (s_stakePtr.amount * totalStakingTime * rewardRate) / 1 days; // Reward is proportional to time
+        uint256 reward = (s_stakePtr.amount * stakingRewards) / stakedBalance;
+        reward = reward - s_stakePtr.rewardsWhenStaked;
         return reward;
     }
 
