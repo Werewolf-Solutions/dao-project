@@ -74,23 +74,22 @@ contract DAO is Initializable {
 
     WerewolfTokenV1 public werewolfToken;
     Treasury public treasury;
+    address public treasuryAddress;
     Timelock public timelock;
     address public werewolfTokenAddress;
-    bytes32 merkleRoot;
-
     address public guardian;
+    bytes32 merkleRoot;
+    uint256 minVotesRequired;
+    uint256 public proposalCount;
+    uint256 public proposalCost = 10e18; // cost to create a proposal in WWF tokens
 
     mapping(address => bool) public authorizedCallers;
-
-    uint256 public proposalCount;
     mapping(uint256 => Proposal) public proposals;
     mapping(uint256 => mapping(address => Receipt)) public proposalReceipts;
     mapping(address => mapping(uint256 => bool)) public voted; // Tracks votes by user for each proposal
-    address public treasuryAddress;
-    uint256 public proposalCost = 10e18; // cost to create a proposal in tokens
+
     mapping(bytes32 => bool) public queuedTransactions;
     mapping(address => uint256) public latestProposalIds;
-    uint256 minVotesRequired;
 
     ///////////////////////////////////////
     //           Events                  //
@@ -161,11 +160,14 @@ contract DAO is Initializable {
      * @param _proof this is the proof for the merkle tree, which can be retrieved from the front-end
      */
     function vote(uint256 _proposalId, uint256 _voteAmount, bool _support, bytes32[] calldata _proof) external {
+        Proposal storage proposal = proposals[_proposalId];
+        _checkAndUpdateProposal(proposal);
+        require(proposal.proposalState == ProposalState.Active, "DAO:vote proposal is not active");
+
         bytes32 leaf = keccak256(abi.encode(msg.sender, _voteAmount));
         require(MerkleProof.verifyCalldata(_proof, merkleRoot, leaf), "DAO:vote merkle proof failed");
 
-        Proposal storage proposal = proposals[_proposalId];
-        //note it is possible for users to vote on multiple proposal which is desired
+        //note it is possible for users to vote on multiple proposal
         Receipt storage receipt = proposalReceipts[_proposalId][msg.sender];
         //only allowed to vote once for the same proposal
         require(!receipt.hasVoted, "DAO:vote Already voted.");
@@ -259,7 +261,7 @@ contract DAO is Initializable {
         require(_targets.length != 0, "DAO:createProposal must provide actions");
         require(_targets.length <= proposalMaxOperations(), "DAO:createProposal too many actions");
 
-        uint256 startTime = bock.timestamp;
+        uint256 startTime = block.timestamp;
         uint256 endTime = (block.timestamp + votingPeriod());
 
         proposals[proposalCount] = Proposal({
