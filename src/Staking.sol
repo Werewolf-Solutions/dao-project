@@ -4,22 +4,47 @@ pragma solidity ^0.8.27;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
+/* Contract layout:
+ Data types: structs, enums, and type declarations
+ State Variables
+ Events
+ Function Modifiers
+ Constructor/Initialize
+ Fallback and Receive function
+ External functions
+ Public functions
+ Internal functions
+ Private Functions
+*/
 contract Staking is OwnableUpgradeable {
-    IERC20 public stakingToken;
-    uint256 public stakedBalance;
-    uint256 public stakingRewards;
-
+    ///////////////////////////////////////
+    //           Data Types              //
+    ///////////////////////////////////////
     struct StakeInfo {
         uint256 amount;
         uint256 lastStakeTime;
         uint256 endStakeTime;
     }
 
+    ///////////////////////////////////////
+    //           State Variables         //
+    ///////////////////////////////////////
+    IERC20 public stakingToken;
+    uint256 public stakedBalance;
+    uint256 public stakingRewards;
+
     mapping(address => StakeInfo) public stakes;
 
+    ///////////////////////////////////////
+    //           Events                  //
+    ///////////////////////////////////////
     event TokensStaked(address indexed staker, uint256 amount, uint256 duration);
     event TokensWithdrawn(address indexed staker, uint256 amount, uint256 reward);
     event RewardsAdded(uint256 amount);
+
+    ///////////////////////////////////////
+    //      Constructor/Initializer      //
+    ///////////////////////////////////////
 
     constructor( /* address _stakingToken, address timelock */ ) /* Ownable(timelock) */ {
         _disableInitializers();
@@ -30,6 +55,9 @@ contract Staking is OwnableUpgradeable {
         __Ownable_init(_timelock);
     }
 
+    ///////////////////////////////////////
+    //           External Functions      //
+    ///////////////////////////////////////
     // Stake tokens with a fixed duration, which sets a lock period
     function stakeFixedDuration(address _owner, uint256 _amount, uint256 _duration) external {
         _stake(_owner, _amount, _duration, true);
