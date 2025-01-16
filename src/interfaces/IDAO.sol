@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.4;
 
+library DAO {
+    type ProposalState is uint8;
+}
+
 interface IDAO {
     error InvalidInitialization();
     error NotInitializing();
@@ -12,12 +16,13 @@ interface IDAO {
     event Voted(uint256 proposalId, address voter, bool support, uint256 votes);
 
     function __acceptAdmin() external;
-    function _authorizeCaller(address _caller) external;
-    function _deauthorizeCaller(address _caller) external;
+    function approveProposal(uint256 _proposalId) external;
+    function authorizeCaller(address _caller) external;
     function authorizedCallers(address) external view returns (bool);
     function createProposal(address[] memory _targets, string[] memory _signatures, bytes[] memory _datas) external;
+    function deauthorizeCaller(address _caller) external;
     function delegate(address delegatee) external;
-    function executeProposal(uint256 proposalId) external;
+    function executeProposal(uint256 _proposalId) external;
     function guardian() external view returns (address);
     function initialize(address _token, address _treasury, address _timelock, address _gaurdian) external;
     function latestProposalIds(address) external view returns (uint256);
@@ -30,12 +35,12 @@ interface IDAO {
         external
         view
         returns (
-            bool executed,
+            DAO.ProposalState proposalState,
             address proposer,
             uint256 votesFor,
             uint256 votesAgainst,
-            uint256 startBlock,
-            uint256 endBlock,
+            uint256 startTime,
+            uint256 endTime,
             uint256 eta
         );
     function queueProposal(uint256 proposalId) external;
@@ -45,9 +50,9 @@ interface IDAO {
     function treasury() external view returns (address);
     function treasuryAddress() external view returns (address);
     function undelegate() external;
-    function vote(uint256 proposalId, bool support) external;
+    function updateMerkleRoot(bytes32 _root) external;
+    function vote(uint256 _proposalId, uint256 _voteAmount, bool _support, bytes32[] memory _proof) external;
     function voted(address, uint256) external view returns (bool);
-    function votingDelay() external pure returns (uint256);
     function votingPeriod() external pure returns (uint256);
     function werewolfToken() external view returns (address);
     function werewolfTokenAddress() external view returns (address);

@@ -26,7 +26,7 @@ contract DAO is Initializable {
     //           Data Types              //
     ///////////////////////////////////////
     struct Proposal {
-        ProposalState proposalState; // Whether the proposal has been executed
+        ProposalState proposalState; //current state of the proposal
         address proposer;
         address[] targets; // Contract to call
         string[] signatures; // Contract to call
@@ -79,7 +79,7 @@ contract DAO is Initializable {
     address public werewolfTokenAddress;
     address public guardian;
     bytes32 merkleRoot;
-    uint256 minVotesRequired;
+    uint256 minVotesRequired; //minimum votes require to enforce participation
     uint256 public proposalCount;
     uint256 public proposalCost = 10e18; // cost to create a proposal in WWF tokens
 
@@ -142,7 +142,7 @@ contract DAO is Initializable {
         authorizedCallers[_caller] = true;
     }
 
-    function updateMerkleRoot(bytes32 _root) external /* onlyAdmin */ {
+    function updateMerkleRoot(bytes32 _root) external onlyGuardian {
         merkleRoot = _root;
     }
 
@@ -157,7 +157,7 @@ contract DAO is Initializable {
      * @param _proposalId this ID of the proposal they are voting on
      * @param _voteAmount this is the weight of the voter which is also equal to the "balance" at the time of the snapshot
      * @param _support boolean for if the voter is "for" or "against" the proposal
-     * @param _proof this is the proof for the merkle tree, which can be retrieved from the front-end
+     * @param _proof this is the proof for the merkle tree, which can be retrieved through the front-end
      */
     function vote(uint256 _proposalId, uint256 _voteAmount, bool _support, bytes32[] calldata _proof) external {
         Proposal storage proposal = proposals[_proposalId];
@@ -340,7 +340,7 @@ contract DAO is Initializable {
             s_proposalPtr.proposalState = ProposalState.Active;
         } else if (s_proposalPtr.startTime < block.timestamp) {
             revert("DAO:_checkAndUpdateProposal proposal not started");
-        } else if (s_proposalPtr.endTime > block.timestamp) {
+        } else if (s_proposalPtr.endTime < block.timestamp) {
             _calculateResult(s_proposalPtr);
         }
     }
@@ -355,23 +355,4 @@ contract DAO is Initializable {
             s_proposalPtr.proposalState = ProposalState.Succeeded;
         }
     }
-
-    /*     function _calculateVotingPower(address _voter) internal returns (uint256) {
-        uint256 totalSupply = werewolfToken.balanceOf(address(treasury));
-        uint256 balance = werewolfToken.balanceOf(_voter);
-        uint256 holdingPercentage = (balance * 100) / totalSupply;
-
-        // Apply voting weight formula based on holding percentage
-        if (holdingPercentage <= 10) {
-            return (balance * 19) / 10; // 1.9x weight for bottom 10%
-        } else if (holdingPercentage <= 20) {
-            return (balance * 18) / 10; // 1.8x weight for bottom 20%
-        } else if (holdingPercentage <= 70) {
-            return (balance * 7) / 10; // 0.7x weight for top 70%
-        } else if (holdingPercentage <= 80) {
-            return (balance * 6) / 10; // 0.6x weight for top 80%
-        } else {
-            return balance; // Normal voting power for others
-        }
-    } */
 }

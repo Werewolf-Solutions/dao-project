@@ -6,6 +6,9 @@ import {Script, console} from "forge-std/Script.sol";
 import {MockUSDT} from "test/mocks/MockUSDT.sol";
 import {Constants} from "./Constants.sol";
 
+/**
+ *
+ */
 contract HelperConfig is Script, Constants {
     struct NetworkConfig {
         uint256 deployerPrivateKey;
@@ -24,10 +27,7 @@ contract HelperConfig is Script, Constants {
     //           Functions         //
     ////////////////////////////////
 
-    constructor() {
-        /*  networkConfigs[LOCAL_CHAIN_ID] = getLocalChainConfig();
-        networkConfigs[SEPOLIA_CHAIN_ID] = getSepoliaChainConfig(); */
-    }
+    constructor() {}
 
     function getConfig() public returns (NetworkConfig memory netConfig) {
         if (deployed) {

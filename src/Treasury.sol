@@ -68,7 +68,7 @@ contract Treasury is OwnableUpgradeable {
     function isAboveThreshold() public view returns (bool) {
         uint256 treasuryBalance = werewolfToken.balanceOf(address(this));
         uint256 threshold = (treasuryBalance * thresholdPercentage) / 100;
-        return treasuryBalance > threshold;
+        return treasuryBalance > threshold; //note the threshold will never be false
     }
 
     // Distributes rewards to the staking contract from the treasury

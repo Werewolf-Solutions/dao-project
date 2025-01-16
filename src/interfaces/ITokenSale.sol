@@ -47,8 +47,6 @@ interface ITokenSale {
     function stakingContract() external view returns (address);
     function startSale(uint256 _amount, uint256 _price) external;
     function startSaleZero(uint256 _amount, uint256 _price) external;
-    function testTransfer(uint256 amount) external;
-    function testTransferFrom(uint256 amount) external;
     function transferOwnership(address newOwner) external;
     function uniswapHelper() external view returns (address);
     function usdtToken() external view returns (address);

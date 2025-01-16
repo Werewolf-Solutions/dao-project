@@ -46,7 +46,7 @@ contract Staking is OwnableUpgradeable {
     //      Constructor/Initializer      //
     ///////////////////////////////////////
 
-    constructor( /* address _stakingToken, address timelock */ ) /* Ownable(timelock) */ {
+    constructor() {
         _disableInitializers();
     }
 

@@ -14,13 +14,14 @@ interface ITreasury {
     function addAllowedToken(address _token) external;
     function allowedTokens(address) external view returns (bool);
     function distributeRewards() external;
-    function initialize(address _token, address _owner) external;
+    function initialize(address _owner) external;
     function isAboveThreshold() external view returns (bool);
     function isTokenAllowed(address _token) external view returns (bool);
     function owner() external view returns (address);
     function renounceOwnership() external;
     function setStakingContract(address _stakingAddress) external;
     function setThresholdPercentage(uint256 _percentage) external;
+    function setWerewolfToken(address _token) external;
     function stakingContract() external view returns (address);
     function thresholdPercentage() external view returns (uint256);
     function transferOwnership(address newOwner) external;
