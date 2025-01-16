@@ -244,7 +244,7 @@ contract DAO is Initializable {
         // );
 
         /*
-         * Requiring the proposal creator to hold a balance of werewolf tokens greater than 0.5% of the total balance within the
+         * Requiring the proposal creator to hold a balance of werewolf tokens greater than 0.5% of the total balance within
          * the treasury. For example, the treasury hold 1000 tokens, then the proposal creator 
          * must hold more than 5 tokens (ignoring decimals).
          */

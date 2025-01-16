@@ -87,6 +87,9 @@ contract Deploy is Script {
         tokenSale.transferOwnership(address(timelock));
 
         vm.stopBroadcast();
+
+        //Write the address to file
+        _writeDeploymentData();
     }
 
     function _deployTreasury() internal {
@@ -96,6 +99,7 @@ contract Deploy is Script {
         TransparentUpgradeableProxy treasuryProxy =
             new TransparentUpgradeableProxy(address(treasuryImpl), netConfig.multiSig, initDataTreasury);
         treasury = Treasury(address(treasuryProxy));
+        //vm.setEnv("TREASURY_ADDRESS", vm.toString(address(treasury)));
     }
 
     function _deployTimelock() internal {
@@ -155,5 +159,31 @@ contract Deploy is Script {
         TransparentUpgradeableProxy tokenSaleProxy =
             new TransparentUpgradeableProxy(address(tokenSaleImpl), netConfig.multiSig, initDataTokenSale);
         tokenSale = TokenSale(address(tokenSaleProxy));
+    }
+
+    function _writeDeploymentData() internal {
+        //Inside foundry.toml it must hav the following settings enabled
+        // fs_permissions = [{ access = "write", path = "./"}]
+
+        string memory path = "./script/output/deployed-addresses.txt";
+        vm.writeLine(path, string.concat("Chain ID: ", vm.toString(block.chainid)));
+
+        string memory treasuryStr = string.concat("Treasury: ", vm.toString(address(treasury)));
+        vm.writeLine(path, treasuryStr);
+
+        string memory timelockStr = string.concat("TimeLock: ", vm.toString(address(timelock)));
+        vm.writeLine(path, timelockStr);
+
+        string memory werewolfTokenStr = string.concat("WerewolfToken: ", vm.toString(address(werewolfToken)));
+        vm.writeLine(path, werewolfTokenStr);
+
+        string memory stakingStr = string.concat("Staking: ", vm.toString(address(staking)));
+        vm.writeLine(path, stakingStr);
+
+        string memory daoStr = string.concat("DAO: ", vm.toString(address(dao)));
+        vm.writeLine(path, daoStr);
+
+        string memory tokenSaleStr = string.concat("TokenSale: ", vm.toString(address(tokenSale)));
+        vm.writeLine(path, tokenSaleStr);
     }
 }

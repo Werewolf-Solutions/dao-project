@@ -3,7 +3,9 @@ src = "src"
 out = "out"
 libs = ["lib"]
 
-# Added to copy MyStruct[] memory into storage
+fs_permissions = [{ access = "write", path = "./"}]
+
+# As a last resort set this to true
 via_ir = false
 
 # fix the compiler version to standardize testing
