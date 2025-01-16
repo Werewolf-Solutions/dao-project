@@ -4,8 +4,6 @@ pragma solidity ^0.8.27;
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
 contract Timelock is Initializable {
-    using SafeMath for uint256;
-
     event NewAdmin(address indexed newAdmin);
     event NewPendingAdmin(address indexed newPendingAdmin);
     event NewDelay(uint256 indexed newDelay);
@@ -23,14 +21,7 @@ contract Timelock is Initializable {
 
     mapping(bytes32 => bool) public queuedTransactions;
 
-    constructor( /* address admin_, uint256 delay_ */ ) {
-        /*  require(delay_ >= MINIMUM_DELAY, "Timelock::constructor: Delay must exceed minimum delay.");
-        require(delay_ <= MAXIMUM_DELAY, "Timelock::setDelay: Delay must not exceed maximum delay.");
-
-        admin = admin_;
-        delay = delay_; */
-
-        //disable initializer
+    constructor() {
         _disableInitializers();
     }
 
@@ -72,7 +63,7 @@ contract Timelock is Initializable {
     {
         require(msg.sender == admin, "Timelock::queueTransaction: Call must come from admin.");
         require(
-            eta >= getBlockTimestamp().add(delay),
+            eta >= (getBlockTimestamp() + delay),
             "Timelock::queueTransaction: Estimated execution block must satisfy delay."
         );
 
@@ -104,7 +95,7 @@ contract Timelock is Initializable {
         bytes32 txHash = keccak256(abi.encode(target, signature, data, eta));
         require(queuedTransactions[txHash], "Timelock::executeTransaction: Transaction hasn't been queued.");
         require(getBlockTimestamp() >= eta, "Timelock::executeTransaction: Transaction hasn't surpassed time lock.");
-        require(getBlockTimestamp() <= eta.add(GRACE_PERIOD), "Timelock::executeTransaction: Transaction is stale.");
+        require(getBlockTimestamp() <= (eta + GRACE_PERIOD), "Timelock::executeTransaction: Transaction is stale.");
 
         queuedTransactions[txHash] = false;
 
