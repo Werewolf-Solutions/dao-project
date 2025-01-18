@@ -22,7 +22,7 @@ contract StakingTest is BaseTest {
 
         uint256[] memory stakingBalances = new uint256[](10);
         {
-            uint256 incrementAmount = 1_000_000e18;
+            uint256 incrementAmount = 750_000e18;
             stakingBalances[0] = (incrementAmount);
             stakingBalances[1] = (2 * incrementAmount);
             stakingBalances[2] = (3 * incrementAmount);

@@ -23,9 +23,9 @@ contract Staking is OwnableUpgradeable {
     ///////////////////////////////////////
     //           Constants              //
     ///////////////////////////////////////
-    uint256 public constant MIN_APY = 6;
-    uint256 public constant MAX_APY = 80;
-    uint256 public constant PERCENTAGE_SCALE = 1e2;
+    uint256 public constant MIN_APY = 6_000;
+    uint256 public constant MAX_APY = 80_000;
+    uint256 public constant PERCENTAGE_SCALE = 1e5;
     uint256 public constant SCALE = 1e18;
     uint256 public constant K_DECAY_CONST = 5;
     uint256 public constant EULER_NUMBER = 2;
@@ -150,7 +150,15 @@ contract Staking is OwnableUpgradeable {
     }
 
     function calculateApy() public view returns (uint256) {
-        return MAX_APY;
+        uint256 tokenTotalSupply = stakingToken.totalSupply();
+        uint256 stakingRatio = (stakedBalance * SCALE) / tokenTotalSupply;
+        //halflife exp
+        //@invariant wexponent < 100
+        uint256 exponent = stakingRatio / 1e17; //leaving 1 decimal precision
+
+        uint256 currentApy = SCALE * MIN_APY + ((MAX_APY - MIN_APY) * SCALE) / (2 ** exponent);
+
+        return currentApy / SCALE;
     }
 
     // Calculate staking rewards based on staking time
