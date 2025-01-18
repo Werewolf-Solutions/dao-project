@@ -166,6 +166,8 @@ contract Deploy is Script {
         // fs_permissions = [{ access = "write", path = "./"}]
 
         string memory path = "./script/output/deployed-addresses.txt";
+        vm.removeFile(path);
+
         vm.writeLine(path, string.concat("Chain ID: ", vm.toString(block.chainid)));
 
         string memory treasuryStr = string.concat("Treasury: ", vm.toString(address(treasury)));

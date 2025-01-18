@@ -1,9 +1,9 @@
 include .env
 
 deploy-local-dry:
-	forge script script/DEploy.s.sol:Deploy --fork-url http://localhost:8545
+	forge script script/Deploy.s.sol:Deploy --fork-url http://localhost:8545
 deploy-local:
-	forge script script/DEploy.s.sol:Deploy --fork-url http://localhost:8545 --broadcast
+	forge script script/Deploy.s.sol:Deploy --fork-url http://localhost:8545 --broadcast
 
 create-interfaces:
 	cast interface ./out/Counter.sol/Counter.json -n ICounter -o ./src/interfaces/ICounter.sol; \

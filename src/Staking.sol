@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
+//Debugging
+import {console} from "forge-std/Test.sol";
+
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
@@ -17,6 +20,18 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
  Private Functions
 */
 contract Staking is OwnableUpgradeable {
+    ///////////////////////////////////////
+    //           Constants              //
+    ///////////////////////////////////////
+    uint256 public constant MIN_APY = 6;
+    uint256 public constant MAX_APY = 80;
+    uint256 public constant PERCENTAGE_SCALE = 1e2;
+    uint256 public constant SCALE = 1e18;
+    uint256 public constant K_DECAY_CONST = 5;
+    uint256 public constant EULER_NUMBER = 2;
+    uint256 public constant EULER_NUMER_SCALE = 10;
+    uint256 public constant YEAR_IN_TIME = 365 days;
+
     ///////////////////////////////////////
     //           Data Types              //
     ///////////////////////////////////////
@@ -127,12 +142,15 @@ contract Staking is OwnableUpgradeable {
     }
 
     function _calculateReward(StakeInfo storage s_stakePtr) internal returns (uint256) {
-        //rewards can be zero
         uint256 totalStakingTime = block.timestamp - s_stakePtr.lastStakeTime;
-        // uint256 reward = (s_stakePtr.amount * totalStakingTime * rewardRate) / 1 days; // Reward is proportional to time
-        uint256 reward = (s_stakePtr.amount * stakingRewards) / stakedBalance;
+        uint256 calculatedApy = calculateApy();
+        uint256 reward = (s_stakePtr.amount * calculatedApy) / (YEAR_IN_TIME * PERCENTAGE_SCALE);
         reward = reward - s_stakePtr.rewardsWhenStaked;
         return reward;
+    }
+
+    function calculateApy() public view returns (uint256) {
+        return MAX_APY;
     }
 
     // Calculate staking rewards based on staking time

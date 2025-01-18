@@ -34,7 +34,7 @@ contract BaseTest is Test {
     uint256 constant tokenSaleAirdrop = 5_000_000 ether;
     uint256 constant tokenPrice = 0.001 ether;
 
-    function setUp() public {
+    function setUp() public virtual {
         // Set up signers
         multiSig = makeAddr("multiSig");
         founder = makeAddr("founder");
