@@ -7,6 +7,11 @@ import {console} from "forge-std/Test.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
+//TODO
+/* We need to switch the style the way compound accrues interest
+
+*/
+
 /* Contract layout:
  Data types: structs, enums, and type declarations
  State Variables
@@ -27,9 +32,6 @@ contract Staking is OwnableUpgradeable {
     uint256 public constant MAX_APY = 80_000;
     uint256 public constant PERCENTAGE_SCALE = 1e5;
     uint256 public constant SCALE = 1e18;
-    uint256 public constant K_DECAY_CONST = 5;
-    uint256 public constant EULER_NUMBER = 2;
-    uint256 public constant EULER_NUMER_SCALE = 10;
     uint256 public constant YEAR_IN_TIME = 365 days;
 
     ///////////////////////////////////////
@@ -150,10 +152,15 @@ contract Staking is OwnableUpgradeable {
     }
 
     function calculateApy() public view returns (uint256) {
+        /* APY calculation
+        * The apy calculation is following a halflife decay, meaning that the APY
+        * will be halfed at each life which is a 0.1 change in the ratio of staked tokens
+        * to the total supply. The APY will start at MAX_APY and decay to MIN_APY
+        */
         uint256 tokenTotalSupply = stakingToken.totalSupply();
         uint256 stakingRatio = (stakedBalance * SCALE) / tokenTotalSupply;
         //halflife exp
-        //@invariant wexponent < 100
+        //@invariant wexponent <= 10
         uint256 exponent = stakingRatio / 1e17; //leaving 1 decimal precision
 
         uint256 currentApy = SCALE * MIN_APY + ((MAX_APY - MIN_APY) * SCALE) / (2 ** exponent);

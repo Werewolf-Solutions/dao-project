@@ -187,5 +187,8 @@ contract Deploy is Script {
 
         string memory tokenSaleStr = string.concat("TokenSale: ", vm.toString(address(tokenSale)));
         vm.writeLine(path, tokenSaleStr);
+
+        string memory usdtStr = string.concat("USDT: ", vm.toString(address(netConfig.usdt)));
+        vm.writeLine(path, usdtStr);
     }
 }
