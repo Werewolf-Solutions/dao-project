@@ -33,6 +33,8 @@ contract HelperConfig is Script, Constants {
         if (deployed) {
             return netConfig = currentNetworkConfig;
         }
+        deployed = true;
+
         uint256 id = block.chainid;
         if (id == LOCAL_CHAIN_ID) {
             netConfig = getLocalChainConfig();
@@ -41,12 +43,11 @@ contract HelperConfig is Script, Constants {
         } else {
             revert("HelperConfig:getConfig chain not supported");
         }
-        deployed = true;
     }
 
     function getSepoliaChainConfig() public returns (NetworkConfig memory sepoliaNetworkConfig) {
         //first time we will deploy our own usdt then after that we need to hardcode the address in the Constants contract
-        address mockUsdt = address(new MockUSDT(1_000_000 ether));
+        address mockUsdt = address(new MockUSDT(1_000_000e6));
 
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address multiSig = vm.envAddress("MULTISIG_ADDRESS");
@@ -56,12 +57,14 @@ contract HelperConfig is Script, Constants {
     }
 
     function getLocalChainConfig() public returns (NetworkConfig memory localNetworkConfig) {
-        address mockUsdt = address(new MockUSDT(1_000_000 ether));
         //default foundry private key
         uint256 deployerPrivateKey = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
         address defaultFoundryAddress = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
-        MockUSDT(mockUsdt).mint(defaultFoundryAddress, 1_000_000 ether);
+        vm.startBroadcast(deployerPrivateKey);
+        address mockUsdt = address(new MockUSDT(1_000_000e6));
+        MockUSDT(mockUsdt).mint(defaultFoundryAddress, 1_000_000e6);
+        vm.stopBroadcast();
         address multiSig = makeAddr("multiSig");
-        localNetworkConfig = NetworkConfig({usdt: mockUsdt, deployerPrivateKey: deployerPrivateKey, multiSig: multiSig});
+        localNetworkConfig = NetworkConfig({deployerPrivateKey: deployerPrivateKey, multiSig: multiSig, usdt: mockUsdt});
     }
 }

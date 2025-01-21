@@ -21,7 +21,7 @@ contract MockUSDT is ERC20 {
     }
 
     ///Overriding the decimals function to return 6 decimals similar to USDT
-    function decimals() public pure override returns (uint8) {
+    function decimals() public view override returns (uint8) {
         // func sig : 313ce567
         return 6;
     }
