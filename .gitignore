@@ -15,3 +15,6 @@ docs/
 
 #ignore personal notes
 notes/
+
+# Ignore Visual Studio Code
+.vscode/

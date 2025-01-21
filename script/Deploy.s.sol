@@ -168,27 +168,27 @@ contract Deploy is Script {
         string memory path = "./script/output/deployed-addresses.txt";
         vm.removeFile(path);
 
-        vm.writeLine(path, string.concat("Chain ID: ", vm.toString(block.chainid)));
+        vm.writeLine(path, string.concat("Chain ID:", vm.toString(block.chainid)));
 
-        string memory treasuryStr = string.concat("Treasury: ", vm.toString(address(treasury)));
+        string memory treasuryStr = string.concat("Treasury:", vm.toString(address(treasury)));
         vm.writeLine(path, treasuryStr);
 
-        string memory timelockStr = string.concat("TimeLock: ", vm.toString(address(timelock)));
+        string memory timelockStr = string.concat("TimeLock:", vm.toString(address(timelock)));
         vm.writeLine(path, timelockStr);
 
-        string memory werewolfTokenStr = string.concat("WerewolfToken: ", vm.toString(address(werewolfToken)));
+        string memory werewolfTokenStr = string.concat("WerewolfToken:", vm.toString(address(werewolfToken)));
         vm.writeLine(path, werewolfTokenStr);
 
-        string memory stakingStr = string.concat("Staking: ", vm.toString(address(staking)));
+        string memory stakingStr = string.concat("Staking:", vm.toString(address(staking)));
         vm.writeLine(path, stakingStr);
 
-        string memory daoStr = string.concat("DAO: ", vm.toString(address(dao)));
+        string memory daoStr = string.concat("DAO:", vm.toString(address(dao)));
         vm.writeLine(path, daoStr);
 
-        string memory tokenSaleStr = string.concat("TokenSale: ", vm.toString(address(tokenSale)));
+        string memory tokenSaleStr = string.concat("TokenSale:", vm.toString(address(tokenSale)));
         vm.writeLine(path, tokenSaleStr);
 
-        string memory usdtStr = string.concat("USDT: ", vm.toString(address(netConfig.usdt)));
+        string memory usdtStr = string.concat("USDT:", vm.toString(address(netConfig.usdt)));
         vm.writeLine(path, usdtStr);
     }
 }
