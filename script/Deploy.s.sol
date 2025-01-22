@@ -162,7 +162,7 @@ contract Deploy is Script {
     }
 
     function _writeDeploymentData() internal {
-        //Inside foundry.toml it must hav the following settings enabled
+        //Inside foundry.toml it must have the following settings enabled
         // fs_permissions = [{ access = "write", path = "./"}]
 
         string memory path = "./script/output/deployed-addresses.txt";

@@ -8,6 +8,9 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC4626Upgradeable.sol";
 
+// @dev Might be better to use something like erc1155 for the shares and clearly
+// differenitate between locked and unlocked shares
+
 /* Contract layout:
  Data types: structs, enums, and type declarations
  State Variables
@@ -35,13 +38,6 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
     ///////////////////////////////////////
     //           Data Types              //
     ///////////////////////////////////////
-    struct StakeInfo {
-        uint256 amount;
-        uint256 lockedAmount;
-        uint256 lockedAtTime;
-        uint256 lastStakeTime;
-        uint256 endStakeTime;
-    }
 
     ///////////////////////////////////////
     //           State Variables         //
@@ -50,11 +46,11 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
     uint256 public stakedBalance;
     uint256 public stakingRewards;
     // shares per token
-    uint256 public sharesPerToken;
+    // uint256 public sharesPerToken;
     uint256 public lastUpdateTime;
     uint256 public currentEpoch;
 
-    mapping(address => StakeInfo) public stakes;
+    // mapping(address => StakeInfo) public stakes;
     //contract total locked amount
     mapping(uint256 epoch => uint256) public epochToLockedAmount;
     mapping(uint256 epoch => mapping(address => uint256)) public lockedStakes;
@@ -67,6 +63,7 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
     event TokensWithdrawn(address indexed staker, uint256 amountWithdrawn, uint256 sharesBurned);
     event RewardsAdded(uint256 amount);
     event LockedStakesUpdated(address indexed staker, uint256 amount);
+    event LockedTokenTransferred(address indexed from, address indexed to, uint256 amount);
 
     ///////////////////////////////////////
     //      Constructor/Initializer      //
@@ -76,6 +73,11 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
         _disableInitializers();
     }
 
+    /**
+     * @notice Initialize the staking contract
+     * @param _stakingToken The a token that will be staked and used for rewards
+     * @param _timelock contract which will handle the governance
+     */
     function initialize(address _stakingToken, address _timelock) public initializer {
         //staked token which will be WLF
         stakingToken = IERC20(_stakingToken);
@@ -96,8 +98,6 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
      * @param _amount The amount of tokens to stake
      */
     function stakeFixedDuration(address _owner, uint256 _amount) external {
-        // todo verify the duration time <--- maybe not needed
-        // Todo add a bonus apy for the lock period
         _stake(_owner, _amount, true);
     }
 
@@ -122,6 +122,39 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
         //Round up to increase the deposited amount
         uint256 assetAmount = _convertToAssets(_shares, Math.Rounding.Ceil);
         _stake(_receiver, assetAmount, false);
+        // returns assetDeposited;
+    }
+
+    function deposit(uint256 _asset, address _receiver) public override returns (uint256) {
+        _stake(_receiver, _asset, false);
+        //returns sharesMinted;
+    }
+
+    /**
+     * @dev returns the amount of shares that can be minted for the specified amount of tokens
+     */
+    function convertToShares(uint256 _asset) public view override returns (uint256) {
+        return super._convertToShares(_asset, Math.Rounding.Floor);
+    }
+
+    /**
+     * @dev returns the amount of tokens that can be minted for the specified amount of shares
+     */
+    function convertToAssets(uint256 _shares) public view override returns (uint256) {
+        return super._convertToAssets(_shares, Math.Rounding.Floor);
+    }
+
+    function maxWithdraw(address _owner) public view override returns (uint256) {
+        //Question should this inlude locked shares?
+        return _convertToAssets(balanceOf(_owner), Math.Rounding.Floor);
+    }
+
+    function maxRedeem(address _owner) public view override returns (uint256) {
+        return balanceOf(_owner);
+    }
+
+    function previewDeposit(uint256 _assets) public view override returns (uint256) {
+        return _convertToShares(_assets, Math.Rounding.Floor);
     }
 
     /**
@@ -139,32 +172,15 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
 
         uint256 sharesToMint = _convertToShares(_amount, Math.Rounding.Floor);
 
-        StakeInfo storage stake = stakes[_receiver];
-
-        stake.amount += _amount;
-
         // stakedBalance is use as the totalAssets amount
         stakedBalance += _amount;
 
         // Set the end stake time if it is a fixed-duration stake
         if (_isFixed) {
-            //check if the stake duration is greater than the previous stake duration
-            // user cannot decrease their stake time
-            if (stake.endStakeTime > (block.timestamp)) {
-                revert("Staking:_stake Stake duration is less than the previous stake duration");
-            }
-            // calculate bonus rewards as if the deposited amount was locked at the beginning
-            // of the staked period, note the debt is only for bonus rewards
-            //stake.rewardsDebt = _lockStakeBonusRewards(_amount, stake.lockedAtTime);
-            stake.endStakeTime = block.timestamp;
-
+            //using epochs for the lock period
             userToLockedEpochs[_receiver].push(currentEpoch);
-
             //epoch staked amount
             epochToLockedAmount[currentEpoch] += sharesToMint;
-        } else {
-            //stake.endStakeTime = 0; // No lock period for flexible staking
-            //do nothing, waste of gas to assign 0 value
         }
 
         // The will increase the totalSuppply of shares
@@ -173,11 +189,16 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
         emit TokensStaked(_receiver, _amount, currentEpoch, _isFixed);
     }
 
+    /**
+     * @dev Update the locked stakes for the specified user
+     * @param _user The address of the user to update
+     */
     function _updateLockedStakes(address _user) internal {
+        // bonus reward for for locking the tokens
         uint256 reward;
         //we will mint bonus shares for locking the tokens
         uint256 sharesToMint;
-        //bitmap to store the indeces to remove
+        //bitmap to store the indeces to remove from storage
         uint256 indecesToRemoveBitMap;
 
         //update the locked stakes
@@ -185,6 +206,7 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
             if (userToLockedEpochs[_user][i] >= (currentEpoch - 1)) {
                 continue;
             }
+            // using bitwise or to set the bit at the index
             indecesToRemoveBitMap = indecesToRemoveBitMap | (1 << i);
             uint256 epoch = userToLockedEpochs[_user][i];
             uint256 lockedAmount = lockedStakes[epoch][_user];
@@ -199,7 +221,7 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
 
         // determine the most significant bit
         // we will iterate through the bitmap to remove the epochs
-        uint256 mostSigbit = mostSignificantBit(indecesToRemoveBitMap);
+        uint256 mostSigbit = _mostSignificantBit(indecesToRemoveBitMap);
         for (uint256 i = 0; i < mostSigbit; i++) {
             // a bit will signify that the epoch is to be removed
             if (indecesToRemoveBitMap & (1 << i) == 1) {
@@ -209,10 +231,6 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
 
         emit LockedStakesUpdated(_user, reward);
         _stake(_user, reward, false);
-
-        /* stakedBalance += reward;
-        sharesToMint = _convertToShares(reward, Math.Rounding.Floor);
-        mint(sharesToMint, _user); */
     }
 
     function _removeEpochFromUser(address _user, uint256 _index) internal {
@@ -221,7 +239,7 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
         userToLockedEpochs[_user].pop();
     }
 
-    function mostSignificantBit(uint256 x) internal pure returns (uint256 msb) {
+    function _mostSignificantBit(uint256 x) internal pure returns (uint256 msb) {
         assembly {
             let f := shl(7, gt(x, 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF))
             x := shr(f, x)
@@ -270,10 +288,10 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
      * @param _receiver The address that will receive the locked staked tokens
      * @param _amount The amount of locked staked tokens to transfer
      */
-    function transferLockedStake(address _receiver, uint256 _amount) external {
+    function _transferLockedStake(address _receiver, uint256 _amount) internal {
         uint256 currentEpochBalance = lockedStakes[currentEpoch][msg.sender];
         uint256 prevEpochBalance = lockedStakes[currentEpoch - 1][msg.sender];
-        //TODO have a function to transfer locked staked tokens
+
         require(
             currentEpochBalance + prevEpochBalance >= _amount, "Staking:transferLockedStake Insufficient locked balance"
         );
@@ -289,8 +307,8 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
             lockedStakes[currentEpoch - 1][_receiver] += prevEpochBalance;
             lockedStakes[currentEpoch][_receiver] += _amount;
         }
-        lockedStakes[currentEpoch][msg.sender] -= _amount;
-        transfer(_receiver, _amount);
+        super._update(msg.sender, _receiver, _amount);
+        emit LockedTokenTransferred(msg.sender, _receiver, _amount);
     }
 
     //Todo overwrite the balance function to include the locked stakes
@@ -310,6 +328,46 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
     function totalAssets() public view override returns (uint256) {
         //prevent direct transfer of tokens to modify the staked balance
         stakedBalance;
+    }
+    /**
+     * @notice Transfer tokens from one address to another
+     * @dev Overwrite the transfer function to include the locked stakes
+     * @param _from The address to transfer from
+     * @param _to The address to transfer to
+     * @param _value The amount to transfer
+     */
+
+    function _update(address _from, address _to, uint256 _value) internal override {
+        if (_from == address(this)) {
+            //no need to check locked token balance
+            super._update(_from, _to, _value);
+            return;
+        } else if (_to == address(this)) {
+            //direct transfer to the staking contract
+            //trigger the withdraw function
+            _directTransferWithdraw(_from, _value);
+            return;
+        }
+        // If the transfer is not to the staking contract i.e. between users
+        // update the locked stakes and free up pending locked stakes
+        _updateLockedStakes(_from);
+        uint256 prevEpochBalance = lockedStakes[currentEpoch - 1][_from];
+        uint256 currentEpochBalance = lockedStakes[currentEpoch][_from];
+        //This should never underflow
+        uint256 liquidBalance = balanceOf(_from) - prevEpochBalance - currentEpochBalance;
+        if (liquidBalance >= _value) {
+            //if the liquid balance is enough to cover the transfer
+            super._transfer(_from, _to, _value);
+        } else if (liquidBalance > 0) {
+            //transfer the liquid balance
+            super._transfer(_from, _to, liquidBalance);
+            //transfer the remaining amount
+            uint256 lockedBalance = _value - liquidBalance;
+            _transferLockedStake(_to, lockedBalance);
+        } else {
+            //transfer the locked balance
+            _transferLockedStake(_to, _value);
+        }
     }
 
     /**
@@ -347,8 +405,49 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
         lastUpdateTime = block.timestamp;
     }
 
+    function _directTransferWithdraw(address _from, uint256 _sharesAmount) internal {
+        _updateRewardPerToken();
+        _updateLockedStakes(_from);
+        uint256 lockedBalance = lockedStakes[currentEpoch][_from] + lockedStakes[currentEpoch - 1][_from];
+        uint256 unlockedShares = balanceOf(_from) - lockedBalance;
+        require(unlockedShares >= _sharesAmount, "Staking:_directTransferWithdraw Insufficient unlocked balance");
+        uint256 withdrawAmount = _convertToAssets(_sharesAmount, Math.Rounding.Floor);
+        require(stakingToken.transfer(_from, withdrawAmount), "Staking:_directTransferWithdraw Token transfer failed");
+        _burn(_from, _sharesAmount);
+        emit TokensWithdrawn(_from, withdrawAmount, _sharesAmount);
+    }
+
+    /**
+     * @notice Withdraw staked tokens
+     * @dev Withdraw staked tokens and collect rewards
+     * @param _assetAmount The amount of tokens to withdraw
+     * @param _receiver The address that will receive the withdrawn tokens
+     * @param _owner The address that owns the staked tokens
+     */
+    function withdraw(uint256 _assetAmount, address _receiver, address _owner)
+        public
+        virtual
+        override
+        returns (uint256)
+    {
+        require(_assetAmount > 0, "Staking:withdraw Amount must be greater than zero");
+        require(_owner == msg.sender, "Staking:withdraw Only the owner can withdraw");
+        require(_receiver != address(0), "Staking:withdraw Receiver cannot be zero address");
+        _updateRewardPerToken();
+        _updateLockedStakes(_owner);
+        uint256 sharesToBurn = _convertToShares(_assetAmount, Math.Rounding.Floor);
+        uint256 lockedBalance = lockedStakes[currentEpoch][_owner] + lockedStakes[currentEpoch - 1][_owner];
+        uint256 unlockedShares = balanceOf(_owner) - lockedBalance;
+        require(unlockedShares >= sharesToBurn, "Staking:withdraw Insufficient unlocked balance");
+        _burn(_owner, sharesToBurn);
+        require(stakingToken.transfer(_receiver, _assetAmount), "Staking:withdraw Token transfer failed");
+
+        emit TokensWithdrawn(_owner, _assetAmount, sharesToBurn);
+        return sharesToBurn;
+    }
+
     // Withdraw staked tokens after the staking period and collect rewards
-    function withdrawTokens() external {
+    function withdrawAll() public {
         _updateRewardPerToken();
         _updateLockedStakes(msg.sender);
 
@@ -356,35 +455,18 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
 
         uint256 unlockedShares = balanceOf(msg.sender) - lockedBalance;
 
-        require(unlockedShares > 0, "Staking:withdrawTokens No unlocked shares to withdraw");
+        require(unlockedShares > 0, "Staking:withdrawAll No unlocked shares to withdraw");
 
         uint256 withdrawAmount = _convertToAssets(unlockedShares, Math.Rounding.Floor);
 
-        require(transferFrom(msg.sender, address(this), unlockedShares), "Staking:withdrawTokens Token transfer failed");
+        _burn(msg.sender, unlockedShares);
+
         stakedBalance -= withdrawAmount;
 
-        require(stakingToken.transfer(msg.sender, withdrawAmount), "Staking:withdrawTokens Token transfer failed");
+        require(stakingToken.transfer(msg.sender, withdrawAmount), "Staking:withdrawAll Token transfer failed");
 
         emit TokensWithdrawn(msg.sender, withdrawAmount, unlockedShares);
     }
-
-    /*  // Internal reward collection, called only within withdrawal functions
-    function _collectRewards(StakeInfo storage s_stakerPtr) internal returns (uint256) {
-        uint256 reward = _calculateReward(s_stakerPtr);
-        //decrease global rewards
-        stakingRewards -= reward;
-        s_stakerPtr.lastStakeTime = block.timestamp; // Reset to the current timestamp
-
-        return reward;
-    }
-
-    function _calculateReward(StakeInfo storage s_stakePtr) internal returns (uint256) {
-        uint256 totalStakingTime = block.timestamp - s_stakePtr.lastStakeTime;
-        uint256 calculatedApy = calculateApy();
-        uint256 reward = (s_stakePtr.amount * calculatedApy) / (YEAR_IN_TIME * PERCENTAGE_SCALE);
-        reward = reward * totalStakingTime;
-        return reward;
-    } */
 
     function calculateApy() public view returns (uint256) {
         /* APY calculation
@@ -403,22 +485,6 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
         return currentApy / SCALE;
     }
 
-    // Calculate staking rewards based on staking time
-    function calculateReward(address _staker) public view returns (uint256) {
-        StakeInfo storage stake = stakes[_staker];
-        uint256 stakedAmount = stake.amount;
-
-        if (stakedAmount == 0) {
-            return 0;
-        }
-
-        uint256 stakingTime = block.timestamp - stake.lastStakeTime;
-        uint256 rewardRate = 10; // Example reward rate, adjust as needed
-        uint256 reward = (stakedAmount * stakingTime * rewardRate) / 1 days; // Reward is proportional to time
-
-        return reward;
-    }
-
     // Add more tokens to the staking rewards pool
     function addStakingRewards(uint256 _amount) external onlyOwner {
         require(_amount > 0, "Reward amount must be greater than zero");
@@ -430,16 +496,21 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
 
     // Get the total staked tokens for a user
     function getStakedTokens(address _user) external view returns (uint256) {
-        return stakes[_user].amount;
+        //return stakes[_user].amount;
+        return 0;
     }
 
     // Get the last stake time for a user
     function getLastStakeTime(address _user) external view returns (uint256) {
-        return stakes[_user].lastStakeTime;
+        //todo might delete this
+        //return stakes[_user].lastStakeTime;
+        return 0;
     }
 
     // Get the end stake time for a user
     function getEndStakeTime(address _user) external view returns (uint256) {
-        return stakes[_user].endStakeTime;
+        //return stakes[_user].endStakeTime;
+        //Todo return lockedShares;
+        return 0;
     }
 }
