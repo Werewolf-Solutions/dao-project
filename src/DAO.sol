@@ -81,7 +81,7 @@ contract DAO is Initializable {
     bytes32 merkleRoot;
     uint256 minVotesRequired; //minimum votes require to enforce participation
     uint256 public proposalCount;
-    uint256 public proposalCost = 10e18; // cost to create a proposal in WWF tokens
+    uint256 public proposalCost; // cost to create a proposal in WWF tokens
 
     mapping(address => bool) public authorizedCallers;
     mapping(uint256 => Proposal) public proposals;
@@ -129,8 +129,9 @@ contract DAO is Initializable {
         treasuryAddress = _treasury;
         werewolfTokenAddress = _token;
         guardian = _gaurdian;
-        //guardian = msg.sender;
-        // _authorizeCaller(_timelock);
+        proposalCost = 10e18; // 10 WWF tokens
+            //guardian = msg.sender;
+            // _authorizeCaller(_timelock);
     }
 
     ///////////////////////////////////////
