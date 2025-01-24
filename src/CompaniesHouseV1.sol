@@ -39,9 +39,10 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         string domain;
         string[] roles;
         string[] powerRoles;
-        string ownerName;
+        address owner;
+        string currency;
         uint256 ownerSalary;
-        string ownerCurrency;
+        string ownerName;
     }
 
     struct HireEmployee {
@@ -65,6 +66,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         string domain; //slot6
         string[] roles; //slot7 TODO combine roles and powerRoles
         string[] powerRoles; //slot7
+        string currency;
     }
 
     struct Employee {
@@ -110,7 +112,8 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
 
     mapping(uint96 companyId => CompanyBrief) public companyBrief;
     mapping(address ownerAddress => CompanyStruct[]) public ownerToCompanies;
-    mapping(address employee => mapping(uint96 companyId => EmployeeBrief)) public employeeBrief;
+    mapping(address employee => mapping(uint96 companyId => EmployeeBrief))
+        public employeeBrief;
     // TODO check to see if switching to interfaces saves gas
 
     WerewolfTokenV1 private werewolfToken;
@@ -146,15 +149,19 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         require(empBrief.isMember, "Not an employee of this company");
 
         CompanyBrief memory compBrief = companyBrief[_companyId];
-        CompanyStruct storage s_companyPtr = ownerToCompanies[compBrief.owner][compBrief.index];
+        CompanyStruct storage s_companyPtr = ownerToCompanies[compBrief.owner][
+            compBrief.index
+        ];
         // Check if the employee's role is in the powerRoles list
         uint256 cachedLength = s_companyPtr.powerRoles.length;
-        string memory employeeRoleCached = s_companyPtr.employees[empBrief.employeeIndex].role;
+        string memory employeeRoleCached = s_companyPtr
+            .employees[empBrief.employeeIndex]
+            .role;
         bool hasPower;
         for (uint256 i = 0; i < cachedLength; i++) {
             if (
-                keccak256(abi.encodePacked(s_companyPtr.powerRoles[i])) //mh need to make sure no company has id of 0
-                    == keccak256(abi.encodePacked(employeeRoleCached))
+                keccak256(abi.encodePacked(s_companyPtr.powerRoles[i])) == //mh need to make sure no company has id of 0
+                keccak256(abi.encodePacked(employeeRoleCached))
             ) {
                 hasPower = true;
                 break;
@@ -180,10 +187,12 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
      * @param _daoAddress privileged address
      * @param tokenSaleAddress the address that will handle the token sale
      */
-    function initialize(address _token, address _treasuryAddress, address _daoAddress, address tokenSaleAddress)
-        public
-        initializer
-    {
+    function initialize(
+        address _token,
+        address _treasuryAddress,
+        address _daoAddress,
+        address tokenSaleAddress
+    ) public initializer {
         werewolfToken = WerewolfTokenV1(_token);
         dao = DAO(_daoAddress);
         tokenSale = TokenSale(tokenSaleAddress);
@@ -209,20 +218,32 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
      * @param _creationParams is a CreateCompany struct with company creation details
      */
     function createCompany(CreateCompany memory _creationParams) public {
-        require(werewolfToken.balanceOf(msg.sender) >= creationFee, "Token balance must be more than amount to pay.");
-        require(werewolfToken.transferFrom(msg.sender, address(this), creationFee), "Transfer failed."); // question Should the fee be transfer to this address??
-        //note probably need to add some checks on the params
-        //uint96 ownerCurrentCompanyIndex = uint96(ownerToCompanies[msg.sender].length);
+        require(
+            werewolfToken.balanceOf(msg.sender) >= creationFee,
+            "Token balance must be more than amount to pay."
+        );
+        require(
+            werewolfToken.transferFrom(
+                msg.sender,
+                treasuryAddress,
+                creationFee
+            ),
+            "Transfer failed."
+        ); // question Should the fee be transferred to this address??
 
-        //trying to avoid compiling via-ir
-        uint256 ownedCompLength = ownerToCompanies[msg.sender].length; //this can be zero
+        // note: Probably need to add some checks on the params
+        uint256 ownedCompLength = ownerToCompanies[msg.sender].length; // This can be zero
         uint256 nextCompIndex;
+
         if (ownedCompLength == 0) {
-            //do nothing and leave nextCompIndex = 0
+            // Do nothing and leave nextCompIndex = 0
         } else {
             nextCompIndex = ownerToCompanies[msg.sender].length - 1;
         }
-        CompanyStruct storage compPtr = ownerToCompanies[msg.sender][nextCompIndex];
+
+        CompanyStruct storage compPtr = ownerToCompanies[msg.sender][
+            nextCompIndex
+        ];
 
         {
             compPtr.companyId = currentCompanyIndex;
@@ -234,47 +255,50 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
             compPtr.domain = _creationParams.domain;
             compPtr.roles = _creationParams.roles;
             compPtr.powerRoles = _creationParams.powerRoles;
+            compPtr.currency = _creationParams.currency;
         }
 
-        //The below logic requires compiling via-ir
-        /*   Employee[] memory employeesArray;
-        ownerToCompanies[msg.sender].push(
-            CompanyStruct(
-                currentCompanyIndex,
-                msg.sender,
-                _creationParams.industry,
-                _creationParams.name,
-                block.timestamp,
-                true,
-                employeesArray,
-                _creationParams.domain,
-                _creationParams.roles,
-                _creationParams.powerRoles
-            )
-        ); */
+        companyBrief[currentCompanyIndex] = CompanyBrief(
+            msg.sender,
+            uint96(nextCompIndex)
+        );
 
-        companyBrief[currentCompanyIndex] = CompanyBrief(msg.sender, uint96(nextCompIndex));
+        // Add the owner as the first employee with the CEO role
+        HireEmployee memory ownerHireParams = HireEmployee({
+            salary: _creationParams.ownerSalary,
+            employeeAddress: msg.sender,
+            name: _creationParams.ownerName,
+            companyId: currentCompanyIndex,
+            role: "CEO",
+            currency: _creationParams.currency
+        });
 
-        //now add the owner as an employee of the company
-        /*TODO
-        Call the hire employee function to hire the owner as an employee 
-        */
+        hireEmployee(ownerHireParams); // Hire the owner as an employee with the CEO role
+
         emit CompanyCreated(msg.sender, currentCompanyIndex);
-        //increment the number of created companies
+
+        // Increment the number of created companies
         currentCompanyIndex += 1;
     }
 
     function deleteCompany(uint96 _number) public {
-        require(companyBrief[_number].owner == msg.sender, "CompaniesHouse::deleteCompany not owner");
+        require(
+            companyBrief[_number].owner == msg.sender,
+            "CompaniesHouse::deleteCompany not owner"
+        );
         uint96 companyIndex = companyBrief[_number].index;
         uint256 companyLength = ownerToCompanies[msg.sender].length;
         if ((companyLength - 1) == (uint256(companyIndex))) {
             ownerToCompanies[msg.sender].pop();
         } else {
             //get the id of the last company in the array
-            uint96 lastCompanyId = ownerToCompanies[msg.sender][companyLength - 1].companyId;
+            uint96 lastCompanyId = ownerToCompanies[msg.sender][
+                companyLength - 1
+            ].companyId;
             // overwrite the deleted company with the last company in the array
-            ownerToCompanies[msg.sender][_number] = ownerToCompanies[msg.sender][companyLength - 1];
+            ownerToCompanies[msg.sender][_number] = ownerToCompanies[
+                msg.sender
+            ][companyLength - 1];
             // delete company brief
             delete companyBrief[_number];
             //update the companyBrief of the
@@ -285,19 +309,26 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         emit CompanyDeleted(msg.sender, companyIndex);
     }
 
-    function hireEmployee(HireEmployee memory _hireParams) public /* onlyRoleWithPower(_companyId) */ {
+    function hireEmployee(
+        HireEmployee memory _hireParams
+    ) public /* onlyRoleWithPower(_companyId) */ {
         CompanyBrief memory compBrief = companyBrief[_hireParams.companyId]; //cache the owner and index
-        require(msg.sender == compBrief.owner, "Only owner of the company can hire employee");
+        require(
+            msg.sender == compBrief.owner,
+            "Only owner of the company can hire employee"
+        );
         bool roleExists; // Flag to check if role exists
 
-        CompanyStruct storage compPtr = ownerToCompanies[compBrief.owner][compBrief.index];
+        CompanyStruct storage compPtr = ownerToCompanies[compBrief.owner][
+            compBrief.index
+        ];
         uint256 cachedLength = compPtr.roles.length; //caching the length to avoid SLOAD's
         //note might change the roles from an array to a mapping to avoid looping through an array and wasting gas
         //See if the new employee's role exists within the company
         for (uint256 i = 0; i < cachedLength; i++) {
             if (
-                keccak256(abi.encodePacked(compPtr.roles[i])) //question might need []
-                    == keccak256(abi.encodePacked(_hireParams.role))
+                keccak256(abi.encodePacked(compPtr.roles[i])) == //question might need []
+                keccak256(abi.encodePacked(_hireParams.role))
             ) {
                 roleExists = true;
                 break;
@@ -321,7 +352,9 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         );
         uint96 currentNumEmployees = uint96(compPtr.employees.length - 1);
         //update employee quick access storage
-        employeeBrief[_hireParams.employeeAddress][_hireParams.companyId] = EmployeeBrief(true, currentNumEmployees);
+        employeeBrief[_hireParams.employeeAddress][
+            _hireParams.companyId
+        ] = EmployeeBrief(true, currentNumEmployees);
 
         emit EmployeeHired(_hireParams.employeeAddress, _hireParams.salary);
     }
@@ -332,11 +365,18 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
 
     function fireEmployee(address _employeeAddress, uint96 _companyId) public {
         CompanyBrief memory compBrief = companyBrief[_companyId];
-        require(compBrief.owner == msg.sender, "CompaniesHouse:fireEmployee not owner");
-        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
+        require(
+            compBrief.owner == msg.sender,
+            "CompaniesHouse:fireEmployee not owner"
+        );
+        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][
+            _companyId
+        ];
         require(empBrief.isMember, "CompaniesHouse:fireEmployee not a member");
 
-        Employee[] storage s_employeesPtr = ownerToCompanies[compBrief.owner][compBrief.index].employees;
+        Employee[] storage s_employeesPtr = ownerToCompanies[compBrief.owner][
+            compBrief.index
+        ].employees;
 
         uint96 numEmployees = uint96(s_employeesPtr.length - 1);
 
@@ -345,11 +385,14 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
             s_employeesPtr.pop();
         } else {
             lastEmployee = s_employeesPtr[numEmployees].employeeId;
-            s_employeesPtr[empBrief.employeeIndex] = s_employeesPtr[numEmployees];
+            s_employeesPtr[empBrief.employeeIndex] = s_employeesPtr[
+                numEmployees
+            ];
             s_employeesPtr.pop();
 
             //update the employeeBrief mapping for the last employee
-            employeeBrief[lastEmployee][_companyId].employeeIndex = empBrief.employeeIndex;
+            employeeBrief[lastEmployee][_companyId].employeeIndex = empBrief
+                .employeeIndex;
         }
 
         //delete the employeeBrief mapping for the fired employee
@@ -359,17 +402,23 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
     }
 
     function payEmployee(address _employeeAddress, uint96 _companyId) public {
-        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
-        require(empBrief.isMember, "CompaniesHouse:payEmployee Employee not found");
+        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][
+            _companyId
+        ];
+        require(
+            empBrief.isMember,
+            "CompaniesHouse:payEmployee Employee not found"
+        );
 
         CompanyBrief memory compBrief = companyBrief[_companyId];
 
-        Employee storage s_employee =
-            ownerToCompanies[compBrief.owner][compBrief.index].employees[empBrief.employeeIndex];
+        Employee storage s_employee = ownerToCompanies[compBrief.owner][
+            compBrief.index
+        ].employees[empBrief.employeeIndex];
 
         uint256 payPeriod = block.timestamp - s_employee.lastPayDate;
         //question is the decimals of the token 18??
-        uint256 payAmount = payPeriod * s_employee.salary / 1 hours; // we can make the salary hourly
+        uint256 payAmount = (payPeriod * s_employee.salary) / 1 hours; // we can make the salary hourly
         require(payAmount > 0, "Not enough time has passed to pay employee");
 
         werewolfToken.payEmployee(_employeeAddress, payAmount);
@@ -444,22 +493,39 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         }
     } */
 
-    function setCompanyRole(address _employeeAddress, string memory _newRole, uint96 _companyId) public {
+    function setCompanyRole(
+        address _employeeAddress,
+        string memory _newRole,
+        uint96 _companyId
+    ) public {
         CompanyBrief memory compBrief = companyBrief[_companyId];
-        require(compBrief.owner == msg.sender, "CompaniesHouse:SetCompantRole not owner");
-        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
+        require(
+            compBrief.owner == msg.sender,
+            "CompaniesHouse:SetCompantRole not owner"
+        );
+        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][
+            _companyId
+        ];
         require(empBrief.isMember, "COmpaniesHouse:setCompanyRole not member");
 
-        CompanyStruct storage s_companyPtr = ownerToCompanies[compBrief.owner][compBrief.index];
+        CompanyStruct storage s_companyPtr = ownerToCompanies[compBrief.owner][
+            compBrief.index
+        ];
         uint256 rolesLength = s_companyPtr.roles.length; //cache length to avoid SLOAD's
         bool roleExists; // Flag to check if role exists
         for (uint256 i = 0; i < rolesLength; i++) {
-            if (keccak256(abi.encodePacked(s_companyPtr.roles[i])) == keccak256(abi.encodePacked(_newRole))) {
+            if (
+                keccak256(abi.encodePacked(s_companyPtr.roles[i])) ==
+                keccak256(abi.encodePacked(_newRole))
+            ) {
                 roleExists = true;
                 break;
             }
         }
-        require(roleExists, "CompaniesHouse:setCompanyRole role does not exist");
+        require(
+            roleExists,
+            "CompaniesHouse:setCompanyRole role does not exist"
+        );
         s_companyPtr.employees[empBrief.employeeIndex].role = _newRole;
         //TODO emit an event for updateed role
     }
@@ -468,19 +534,35 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         companies[_companyId].roles.push(_newRole);
     } */
 
-    function retrieveCompany(uint96 _companyId) public view returns (CompanyStruct memory) {
+    function retrieveCompany(
+        uint96 _companyId
+    ) public view returns (CompanyStruct memory) {
         CompanyBrief memory compBrief = companyBrief[_companyId];
-        require(compBrief.owner != address(0), "CompaniesHouse:retrieveCompany company not found");
+        require(
+            compBrief.owner != address(0),
+            "CompaniesHouse:retrieveCompany company not found"
+        );
         return ownerToCompanies[compBrief.owner][compBrief.index];
     }
 
-    function retrieveEmployee(uint96 _companyId, address _employeeAddress) public view returns (Employee memory) {
+    function retrieveEmployee(
+        uint96 _companyId,
+        address _employeeAddress
+    ) public view returns (Employee memory) {
         // Ensure that only the owner of the company can retrieve employee details
         CompanyBrief memory compBrief = companyBrief[_companyId];
         //require(compOwner == msg.sender, "CompaniesHouse:retrieveEmployee not owner");
-        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
-        require(empBrief.isMember, "CompaniesHouse:retrieveEmployee not member");
+        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][
+            _companyId
+        ];
+        require(
+            empBrief.isMember,
+            "CompaniesHouse:retrieveEmployee not member"
+        );
 
-        return ownerToCompanies[compBrief.owner][compBrief.index].employees[empBrief.employeeIndex];
+        return
+            ownerToCompanies[compBrief.owner][compBrief.index].employees[
+                empBrief.employeeIndex
+            ];
     }
 }
