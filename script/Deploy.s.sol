@@ -11,6 +11,7 @@ import {Timelock} from "../src/Timelock.sol";
 import {DAO} from "../src/DAO.sol";
 import {Staking} from "../src/Staking.sol";
 import {UniswapHelper} from "../src/UniswapHelper.sol";
+import {CompaniesHouseV1} from "../src/CompaniesHouseV1.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
 contract Deploy is Script {
@@ -35,6 +36,7 @@ contract Deploy is Script {
     DAO dao;
     TokenSale tokenSale;
     UniswapHelper uniswapHelper;
+    CompaniesHouseV1 companiesHouse;
 
     function run() external {
         // setting up a helper contract that will handle mocks and mainnet address's etc
@@ -50,10 +52,11 @@ contract Deploy is Script {
 
         // Deploy UniswapHelper
         uniswapHelper = new UniswapHelper(founder);
-        /*Current order of Deployment: 
-        * Treasury --> Timelock --> WereWolfToken --> Treasury::setWereWolfToken --> Staking --> DAO --> TokenSale
-        *
-        */
+
+        /*Current order of Deployment:
+         * Treasury --> Timelock --> WereWolfToken --> Treasury::setWereWolfToken --> Staking --> DAO --> TokenSale
+         *
+         */
         //deploy treasury
         _deployTreasury();
 
@@ -75,6 +78,9 @@ contract Deploy is Script {
         // Deploy TokenSale
         _deployTokenSale();
 
+        // Deploy CompaniesHouseV1
+        _deployCompaniesHouse();
+
         // Airdrop tokens to TokenSale
         werewolfToken.airdrop(address(tokenSale), tokenSaleAirdrop);
 
@@ -95,19 +101,49 @@ contract Deploy is Script {
     function _deployTreasury() internal {
         // Deploy Treasury
         Treasury treasuryImpl = new Treasury();
-        bytes memory initDataTreasury = abi.encodeWithSelector(Treasury.initialize.selector, founder);
-        TransparentUpgradeableProxy treasuryProxy =
-            new TransparentUpgradeableProxy(address(treasuryImpl), netConfig.multiSig, initDataTreasury);
+        bytes memory initDataTreasury = abi.encodeWithSelector(
+            Treasury.initialize.selector,
+            founder
+        );
+        TransparentUpgradeableProxy treasuryProxy = new TransparentUpgradeableProxy(
+                address(treasuryImpl),
+                netConfig.multiSig,
+                initDataTreasury
+            );
         treasury = Treasury(address(treasuryProxy));
         //vm.setEnv("TREASURY_ADDRESS", vm.toString(address(treasury)));
     }
 
     function _deployTimelock() internal {
         Timelock timelockImpl = new Timelock();
-        bytes memory initDataTimelock = abi.encodeWithSelector(Timelock.initialize.selector, founder, votingPeriod);
-        TransparentUpgradeableProxy timelockProxy =
-            new TransparentUpgradeableProxy(address(timelockImpl), netConfig.multiSig, initDataTimelock);
+        bytes memory initDataTimelock = abi.encodeWithSelector(
+            Timelock.initialize.selector,
+            founder,
+            votingPeriod
+        );
+        TransparentUpgradeableProxy timelockProxy = new TransparentUpgradeableProxy(
+                address(timelockImpl),
+                netConfig.multiSig,
+                initDataTimelock
+            );
         timelock = Timelock(address(timelockProxy));
+    }
+
+    function _deployCompaniesHouse() internal {
+        CompaniesHouseV1 companiesHouseImpl = new CompaniesHouseV1();
+        bytes memory initDataCompaniesHouse = abi.encodeWithSelector(
+            CompaniesHouseV1.initialize.selector,
+            address(werewolfToken),
+            address(treasury),
+            address(dao),
+            address(tokenSale)
+        );
+        TransparentUpgradeableProxy companiesHouseProxy = new TransparentUpgradeableProxy(
+                address(companiesHouseImpl),
+                netConfig.multiSig,
+                initDataCompaniesHouse
+            );
+        companiesHouse = CompaniesHouseV1(address(companiesHouseProxy));
     }
 
     function _deployWereWolfToken() internal {
@@ -120,27 +156,43 @@ contract Deploy is Script {
             founder,
             address(0x1) // Placeholder for another address
         );
-        TransparentUpgradeableProxy werewolfTokenProxy =
-            new TransparentUpgradeableProxy(address(werewolfTokenImpl), netConfig.multiSig, initDataWerewolfToken);
+        TransparentUpgradeableProxy werewolfTokenProxy = new TransparentUpgradeableProxy(
+                address(werewolfTokenImpl),
+                netConfig.multiSig,
+                initDataWerewolfToken
+            );
         werewolfToken = WerewolfTokenV1(address(werewolfTokenProxy));
     }
 
     function _deployStaking() internal {
         Staking stakingImpl = new Staking();
-        bytes memory initDataStaking =
-            abi.encodeWithSelector(Staking.initialize.selector, address(werewolfToken), address(timelock));
-        TransparentUpgradeableProxy stakingProxy =
-            new TransparentUpgradeableProxy(address(stakingImpl), netConfig.multiSig, initDataStaking);
+        bytes memory initDataStaking = abi.encodeWithSelector(
+            Staking.initialize.selector,
+            address(werewolfToken),
+            address(timelock)
+        );
+        TransparentUpgradeableProxy stakingProxy = new TransparentUpgradeableProxy(
+                address(stakingImpl),
+                netConfig.multiSig,
+                initDataStaking
+            );
         staking = Staking(address(stakingProxy));
     }
 
     function _deployDao() internal {
         DAO daoImpl = new DAO();
         bytes memory initDataDAO = abi.encodeWithSelector(
-            DAO.initialize.selector, address(werewolfToken), address(treasury), address(timelock), founder
+            DAO.initialize.selector,
+            address(werewolfToken),
+            address(treasury),
+            address(timelock),
+            founder
         );
-        TransparentUpgradeableProxy daoProxy =
-            new TransparentUpgradeableProxy(address(daoImpl), netConfig.multiSig, initDataDAO);
+        TransparentUpgradeableProxy daoProxy = new TransparentUpgradeableProxy(
+            address(daoImpl),
+            netConfig.multiSig,
+            initDataDAO
+        );
         dao = DAO(address(daoProxy));
     }
 
@@ -156,8 +208,11 @@ contract Deploy is Script {
             address(staking),
             address(uniswapHelper)
         );
-        TransparentUpgradeableProxy tokenSaleProxy =
-            new TransparentUpgradeableProxy(address(tokenSaleImpl), netConfig.multiSig, initDataTokenSale);
+        TransparentUpgradeableProxy tokenSaleProxy = new TransparentUpgradeableProxy(
+                address(tokenSaleImpl),
+                netConfig.multiSig,
+                initDataTokenSale
+            );
         tokenSale = TokenSale(address(tokenSaleProxy));
     }
 
@@ -168,27 +223,54 @@ contract Deploy is Script {
         string memory path = "./script/output/deployed-addresses.txt";
         vm.removeFile(path);
 
-        vm.writeLine(path, string.concat("Chain ID:", vm.toString(block.chainid)));
+        vm.writeLine(
+            path,
+            string.concat("Chain ID:", vm.toString(block.chainid))
+        );
 
-        string memory treasuryStr = string.concat("Treasury:", vm.toString(address(treasury)));
+        string memory treasuryStr = string.concat(
+            "Treasury:",
+            vm.toString(address(treasury))
+        );
         vm.writeLine(path, treasuryStr);
 
-        string memory timelockStr = string.concat("TimeLock:", vm.toString(address(timelock)));
+        string memory timelockStr = string.concat(
+            "TimeLock:",
+            vm.toString(address(timelock))
+        );
         vm.writeLine(path, timelockStr);
 
-        string memory werewolfTokenStr = string.concat("WerewolfToken:", vm.toString(address(werewolfToken)));
+        string memory werewolfTokenStr = string.concat(
+            "WerewolfToken:",
+            vm.toString(address(werewolfToken))
+        );
         vm.writeLine(path, werewolfTokenStr);
 
-        string memory stakingStr = string.concat("Staking:", vm.toString(address(staking)));
+        string memory stakingStr = string.concat(
+            "Staking:",
+            vm.toString(address(staking))
+        );
         vm.writeLine(path, stakingStr);
 
         string memory daoStr = string.concat("DAO:", vm.toString(address(dao)));
         vm.writeLine(path, daoStr);
 
-        string memory tokenSaleStr = string.concat("TokenSale:", vm.toString(address(tokenSale)));
+        string memory tokenSaleStr = string.concat(
+            "TokenSale:",
+            vm.toString(address(tokenSale))
+        );
         vm.writeLine(path, tokenSaleStr);
 
-        string memory usdtStr = string.concat("USDT:", vm.toString(address(netConfig.usdt)));
+        string memory usdtStr = string.concat(
+            "USDT:",
+            vm.toString(address(netConfig.usdt))
+        );
         vm.writeLine(path, usdtStr);
+
+        string memory companiesHouseStr = string.concat(
+            "CompaniesHouse:",
+            vm.toString(address(companiesHouse))
+        );
+        vm.writeLine(path, companiesHouseStr);
     }
 }
