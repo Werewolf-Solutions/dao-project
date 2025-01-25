@@ -4,32 +4,72 @@
 
 - discord https://discord.gg/DVDtsbHp
 
+# TODO
+
+- [] **staking**
+
+  - [] calculateAPY
+
+  - [] fixed staking
+
+  - [] flexible staking
+
+- [] **DAO**
+
+  - [] create/queue/execute proposals
+
+  - [] use checkPoints for voting power (`WLF`, `sWLF`, `WLF_(token)_LP`)
+
+- [] **token sale**
+
+  - [] buyTokens
+
+    - [] add liquidity to uniswap `WLF_(token)`
+
+    - [] stake `WLF_(token)_LP`
+
+- [] **companiesHouse**
+
+  - [] CRUD company
+
+  - [] hire/fire employees/collaborators
+
+  - [] pay employees/collaborators
+
+  - [] give/revoke role
+
+- []
+
+- [] ...
+
 # Summary
 
 - You can read deploy steps [here](#deploy-steps)
 
 ## Contract Layout and Natspec
+
 //Example function natspec:
-/**
- * @notice Explain what this function does
- * @param Documents a parameter just like in doxygen (must be followed by parameter name)
- * @return Documents the return variables of a contract’s function state variable
- * @inheritdoc	Copies all missing tags from the base function (must be followed by the contract name)
- */
+/\*\*
+
+- @notice Explain what this function does
+- @param Documents a parameter just like in doxygen (must be followed by parameter name)
+- @return Documents the return variables of a contract’s function state variable
+- @inheritdoc Copies all missing tags from the base function (must be followed by the contract name)
+  \*/
 
 //When adding anything please follow the contract layout
-/* Contract layout:
- Data types: structs, enums, and type declarations
- State Variables
- Events
- Function Modifiers
- Constructor/Initialize
- Fallback and Receive function
- External functions
- Public functions
- Internal functions
- Private Functions
-*/
+/_ Contract layout:
+Data types: structs, enums, and type declarations
+State Variables
+Events
+Function Modifiers
+Constructor/Initialize
+Fallback and Receive function
+External functions
+Public functions
+Internal functions
+Private Functions
+_/
 
 ## DAO
 
@@ -161,5 +201,3 @@ roles:
 
 9. **Proposal and Voting**
    - The founder proposes and votes for `tokenSale#1` using the `DAO` contract. This ensures the governance system is functional and the next token sale is prepared.
-
-
