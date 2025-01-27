@@ -81,7 +81,7 @@ contract DAO is Initializable {
     bytes32 merkleRoot;
     uint256 minVotesRequired; //minimum votes require to enforce participation
     uint256 public proposalCount;
-    uint256 public proposalCost; // cost to create a proposal in WWF tokens
+    uint256 public proposalCost; // cost to create a proposal in WLF tokens
 
     mapping(address => bool) public authorizedCallers;
     mapping(uint256 => Proposal) public proposals;
@@ -122,16 +122,22 @@ contract DAO is Initializable {
         _disableInitializers();
     }
 
-    function initialize(address _token, address _treasury, address _timelock, address _gaurdian) public initializer {
+    function initialize(
+        address _token,
+        address _treasury,
+        address _timelock,
+        address _gaurdian
+    ) public initializer {
         werewolfToken = WerewolfTokenV1(_token);
         treasury = Treasury(_treasury);
         timelock = Timelock(_timelock);
         treasuryAddress = _treasury;
         werewolfTokenAddress = _token;
         guardian = _gaurdian;
-        proposalCost = 10e18; // 10 WWF tokens
-            //guardian = msg.sender;
-            // _authorizeCaller(_timelock);
+        proposalCost = 10e18; // 10 WLF tokens
+        proposalCount = 0;
+        //guardian = msg.sender;
+        // _authorizeCaller(_timelock);
     }
 
     ///////////////////////////////////////
@@ -160,13 +166,24 @@ contract DAO is Initializable {
      * @param _support boolean for if the voter is "for" or "against" the proposal
      * @param _proof this is the proof for the merkle tree, which can be retrieved through the front-end
      */
-    function vote(uint256 _proposalId, uint256 _voteAmount, bool _support, bytes32[] calldata _proof) external {
+    function vote(
+        uint256 _proposalId,
+        uint256 _voteAmount,
+        bool _support,
+        bytes32[] calldata _proof
+    ) external {
         Proposal storage proposal = proposals[_proposalId];
         _checkAndUpdateProposal(proposal);
-        require(proposal.proposalState == ProposalState.Active, "DAO:vote proposal is not active");
+        require(
+            proposal.proposalState == ProposalState.Active,
+            "DAO:vote proposal is not active"
+        );
 
         bytes32 leaf = keccak256(abi.encode(msg.sender, _voteAmount));
-        require(MerkleProof.verifyCalldata(_proof, merkleRoot, leaf), "DAO:vote merkle proof failed");
+        require(
+            MerkleProof.verifyCalldata(_proof, merkleRoot, leaf),
+            "DAO:vote merkle proof failed"
+        );
 
         //note it is possible for users to vote on multiple proposal
         Receipt storage receipt = proposalReceipts[_proposalId][msg.sender];
@@ -196,8 +213,14 @@ contract DAO is Initializable {
         Proposal storage proposal = proposals[_proposalId];
         //check the status of the proposal and update it if needed
         _checkAndUpdateProposal(proposal);
-        require(proposal.proposalState != ProposalState.Executed, "DAO:executeProposal Proposal already executed");
-        require(proposal.proposalState == ProposalState.Succeeded, "DAO:executeProposal proposal defeated"); //question maybe just check it is on the succeeded state?
+        require(
+            proposal.proposalState != ProposalState.Executed,
+            "DAO:executeProposal Proposal already executed"
+        );
+        require(
+            proposal.proposalState == ProposalState.Succeeded,
+            "DAO:executeProposal proposal defeated"
+        ); //question maybe just check it is on the succeeded state?
 
         // Ensure the proposal has enough "For" votes (must be more than 50% of total votes)
         uint256 totalVotes = proposal.votesFor + proposal.votesAgainst;
@@ -210,7 +233,12 @@ contract DAO is Initializable {
         proposal.proposalState = ProposalState.Executed;
 
         for (uint256 i = 0; i < proposal.targets.length; i++) {
-            timelock.executeTransaction(proposal.targets[i], proposal.signatures[i], proposal.datas[i], proposal.eta);
+            timelock.executeTransaction(
+                proposal.targets[i],
+                proposal.signatures[i],
+                proposal.datas[i],
+                proposal.eta
+            );
             emit ProposalExecuted(_proposalId);
         }
     }
@@ -228,10 +256,18 @@ contract DAO is Initializable {
     ///////////////////////////////////////
 
     // Function to create a proposal
-    function createProposal(address[] memory _targets, string[] memory _signatures, bytes[] memory _datas) public {
+    function createProposal(
+        address[] memory _targets,
+        string[] memory _signatures,
+        bytes[] memory _datas
+    ) public {
         // Transfer the proposal cost to the treasury address
         require(
-            werewolfToken.transferFrom(msg.sender, treasuryAddress, proposalCost),
+            werewolfToken.transferFrom(
+                msg.sender,
+                treasuryAddress,
+                proposalCost
+            ),
             "DAO::createProposal: WerewolfTokenV1 transfer for proposal cost failed"
         );
         //question not sure what this code is...
@@ -246,21 +282,28 @@ contract DAO is Initializable {
 
         /*
          * Requiring the proposal creator to hold a balance of werewolf tokens greater than 0.5% of the total balance within
-         * the treasury. For example, the treasury hold 1000 tokens, then the proposal creator 
+         * the treasury. For example, the treasury hold 1000 tokens, then the proposal creator
          * must hold more than 5 tokens (ignoring decimals).
          */
-        require(
-            werewolfToken.balanceOf(msg.sender)
-                > ((werewolfToken.balanceOf(address(treasury)) * proposalThreshold()) / 1e18),
-            "DAO:createProposal proposer votes below proposal threshold"
-        );
+        // require(
+        //     werewolfToken.balanceOf(msg.sender)
+        //         > ((werewolfToken.balanceOf(address(treasury)) * proposalThreshold()) / 1e18),
+        //     "DAO:createProposal proposer votes below proposal threshold"
+        // );
 
         require(
-            _targets.length == _signatures.length && _targets.length == _datas.length,
+            _targets.length == _signatures.length &&
+                _targets.length == _datas.length,
             "DAO:createProposal proposal function information arity mismatch"
         );
-        require(_targets.length != 0, "DAO:createProposal must provide actions");
-        require(_targets.length <= proposalMaxOperations(), "DAO:createProposal too many actions");
+        require(
+            _targets.length != 0,
+            "DAO:createProposal must provide actions"
+        );
+        require(
+            _targets.length <= proposalMaxOperations(),
+            "DAO:createProposal too many actions"
+        );
 
         uint256 startTime = block.timestamp;
         uint256 endTime = (block.timestamp + votingPeriod());
@@ -295,14 +338,22 @@ contract DAO is Initializable {
         Proposal storage proposal = proposals[proposalId];
         uint256 eta = block.timestamp + timelock.delay();
         for (uint256 i = 0; i < proposal.targets.length; i++) {
-            _queueOrRevert(proposal.targets[i], proposal.signatures[i], proposal.datas[i], eta);
+            _queueOrRevert(
+                proposal.targets[i],
+                proposal.signatures[i],
+                proposal.datas[i],
+                eta
+            );
         }
         proposal.eta = eta;
         emit ProposalQueued(proposalId, eta);
     }
 
     function __acceptAdmin() public {
-        require(msg.sender == guardian, "GovernorAlpha::__acceptAdmin: sender must be gov guardian");
+        require(
+            msg.sender == guardian,
+            "GovernorAlpha::__acceptAdmin: sender must be gov guardian"
+        );
         timelock.acceptAdmin();
     }
     ///////////////////////////////////////
@@ -328,16 +379,26 @@ contract DAO is Initializable {
     ///////////////////////////////////////
     //         Internal Functions        //
     ///////////////////////////////////////
-    function _queueOrRevert(address target, string memory signature, bytes memory data, uint256 eta) internal {
+    function _queueOrRevert(
+        address target,
+        string memory signature,
+        bytes memory data,
+        uint256 eta
+    ) internal {
         require(
-            !timelock.queuedTransactions(keccak256(abi.encode(target, signature, data))),
+            !timelock.queuedTransactions(
+                keccak256(abi.encode(target, signature, data))
+            ),
             "DAO::_queueOrRevert: proposal action already queued at eta"
         );
         timelock.queueTransaction(target, signature, data, eta);
     }
 
     function _checkAndUpdateProposal(Proposal storage s_proposalPtr) internal {
-        if (s_proposalPtr.startTime >= block.timestamp && s_proposalPtr.endTime <= block.timestamp) {
+        if (
+            s_proposalPtr.startTime >= block.timestamp &&
+            s_proposalPtr.endTime <= block.timestamp
+        ) {
             s_proposalPtr.proposalState = ProposalState.Active;
         } else if (s_proposalPtr.startTime < block.timestamp) {
             revert("DAO:_checkAndUpdateProposal proposal not started");
@@ -347,7 +408,8 @@ contract DAO is Initializable {
     }
 
     function _calculateResult(Proposal storage s_proposalPtr) internal {
-        uint256 totalVotes = s_proposalPtr.votesAgainst + s_proposalPtr.votesFor;
+        uint256 totalVotes = s_proposalPtr.votesAgainst +
+            s_proposalPtr.votesFor;
         if (totalVotes < minVotesRequired) {
             s_proposalPtr.proposalState = ProposalState.Canceled;
         } else if (s_proposalPtr.votesAgainst >= s_proposalPtr.votesFor) {
