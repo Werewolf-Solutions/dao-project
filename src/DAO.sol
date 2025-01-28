@@ -126,16 +126,16 @@ contract DAO is Initializable {
         address _token,
         address _treasury,
         address _timelock,
-        address _gaurdian
+        address _guardian
     ) public initializer {
         werewolfToken = WerewolfTokenV1(_token);
         treasury = Treasury(_treasury);
         timelock = Timelock(_timelock);
         treasuryAddress = _treasury;
         werewolfTokenAddress = _token;
-        guardian = _gaurdian;
+        guardian = _guardian;
         proposalCost = 10e18; // 10 WLF tokens
-        proposalCount = 0;
+        proposalCount = 1;
         //guardian = msg.sender;
         // _authorizeCaller(_timelock);
     }
@@ -261,6 +261,11 @@ contract DAO is Initializable {
         string[] memory _signatures,
         bytes[] memory _datas
     ) public {
+        // Check if msg.sender has enough tokens to pay proposalCost
+        require(
+            werewolfToken.balanceOf(msg.sender) >= proposalCost,
+            "DAO::createProposal: Insufficient balance to create proposal"
+        );
         // Transfer the proposal cost to the treasury address
         require(
             werewolfToken.transferFrom(
@@ -270,6 +275,7 @@ contract DAO is Initializable {
             ),
             "DAO::createProposal: WerewolfTokenV1 transfer for proposal cost failed"
         );
+
         //question not sure what this code is...
         // require(
         //     werewolfToken.getPriorVotes(msg.sender, sub256(block.number, 1)) >
@@ -305,19 +311,19 @@ contract DAO is Initializable {
             "DAO:createProposal too many actions"
         );
 
-        uint256 startTime = block.timestamp;
-        uint256 endTime = (block.timestamp + votingPeriod());
+        uint256 startTime = (block.timestamp + votingDelay());
+        uint256 endTime = (startTime + votingPeriod());
 
         proposals[proposalCount] = Proposal({
+            proposalState: ProposalState.Pending,
             proposer: msg.sender,
             targets: _targets,
             signatures: _signatures,
             datas: _datas,
-            startTime: startTime,
-            endTime: endTime,
             votesFor: 0,
             votesAgainst: 0,
-            proposalState: ProposalState.Pending,
+            startTime: startTime,
+            endTime: endTime,
             eta: 0
         });
 
@@ -359,6 +365,10 @@ contract DAO is Initializable {
     ///////////////////////////////////////
     //   Public View/Pure Functions      //
     ///////////////////////////////////////
+
+    function votingDelay() public pure returns (uint) {
+        return 1;
+    } // 1 block
 
     function proposalMaxOperations() public pure returns (uint256) {
         return 10;
