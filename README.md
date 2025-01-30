@@ -20,6 +20,30 @@
 
   - [] use checkPoints for voting power (`WLF`, `sWLF`, `WLF_(token)_LP`)
 
+  - [] add emergency proposal when `emergency_pause` function is called by the 100% of voting power and only if proposal is queued
+
+  - **dao proposal flow**
+
+  - normal:
+
+    - create proposal
+
+    - `reviewingPeriod = 2 days`
+
+    - `votingPeriod = 3 days`
+
+    - if proposal is succeeded `quorum = 60%` and `threshold = 51%` the proposal is queued for `queuePeriod = 2 days`
+
+  - emergency (is created automatically from multisig?)
+
+    - create proposal(targets: [`DAO.address`, `DAO.address`], signatures: [`emergencyPause(uint256 proposalId)`, `emergencyCancel(uint256 proposalId)`], calldatas: [`encode(proposalId)`, `encode(proposalId)`])
+
+    - `emergencyReviewingPeriod = 0 days` is automatically active
+
+    - `emergencyVotingPeriod = 7 days`
+
+    - if proposal is succeeded `emergencyQuorum = 100%` and `emergencyThreshold = 100%` the proposal is not queued but it's automatically executed `emergencyQueuePeriod = 0 days`
+
 - [] **token sale**
 
   - [] buyTokens

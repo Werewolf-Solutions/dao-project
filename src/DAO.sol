@@ -25,17 +25,34 @@ contract DAO is Initializable {
     ///////////////////////////////////////
     //           Data Types              //
     ///////////////////////////////////////
+
     struct Proposal {
-        ProposalState proposalState; //current state of the proposal
+        /// @notice State of proposal
+        ProposalState state; //current state of the proposal
+        /// @notice Unique id for looking up a proposal
+        uint256 id;
+        /// @notice Creator of the proposal
         address proposer;
-        address[] targets; // Contract to call
-        string[] signatures; // Contract to call
-        bytes[] datas; // Encoded function call with arguments
-        uint256 votesFor; // Votes in favor of the proposal
-        uint256 votesAgainst; // Votes against the proposal
+        /// @notice the ordered list of target addresses for calls to be made
+        address[] targets;
+        /// @notice The ordered list of function signatures to be called
+        string[] signatures;
+        /// @notice The ordered list of calldata to be passed to each call
+        bytes[] datas;
+        /// @notice Current number of votes in favor of this proposal
+        uint256 votesFor;
+        /// @notice Current number of votes in opposition to this proposal
+        uint256 votesAgainst;
+        /// @notice The block at which voting begins: holders must delegate their votes prior to this block
         uint256 startTime;
+        /// @notice The block at which voting ends: votes must be cast prior to this block
         uint256 endTime;
-        uint256 eta;
+        /// @notice The timestamp that the proposal will be available for execution, set once the vote succeeds
+        uint eta;
+        /// @notice Flag marking whether the proposal has been canceled
+        bool canceled;
+        /// @notice Flag marking whether the proposal has been executed
+        bool executed;
     }
 
     struct Receipt {
@@ -159,30 +176,19 @@ contract DAO is Initializable {
     }
 
     /**
-     * @dev Using a Merkle proof to verify voting power. The root if generated off-chain
      * @notice Allows token holders, stakers, and LP's to vote on proposals
      * @param _proposalId this ID of the proposal they are voting on
-     * @param _voteAmount this is the weight of the voter which is also equal to the "balance" at the time of the snapshot
      * @param _support boolean for if the voter is "for" or "against" the proposal
-     * @param _proof this is the proof for the merkle tree, which can be retrieved through the front-end
      */
-    function vote(
-        uint256 _proposalId,
-        uint256 _voteAmount,
-        bool _support,
-        bytes32[] calldata _proof
-    ) external {
+    function vote(uint256 _proposalId, bool _support) external {
         Proposal storage proposal = proposals[_proposalId];
-        _checkAndUpdateProposal(proposal);
-        require(
-            proposal.proposalState == ProposalState.Active,
-            "DAO:vote proposal is not active"
-        );
 
-        bytes32 leaf = keccak256(abi.encode(msg.sender, _voteAmount));
+        // question do we need this?
+        // _checkAndUpdateProposal(proposal);
+
         require(
-            MerkleProof.verifyCalldata(_proof, merkleRoot, leaf),
-            "DAO:vote merkle proof failed"
+            proposal.state == ProposalState.Active,
+            "DAO:vote proposal is not active"
         );
 
         //note it is possible for users to vote on multiple proposal
@@ -193,10 +199,12 @@ contract DAO is Initializable {
         receipt.hasVoted = true;
         receipt.support = _support;
 
+        uint256 _voteAmount = werewolfToken.balanceOf(msg.sender);
+
         if (_support) {
-            proposal.votesFor += _voteAmount;
+            proposal.votesFor += 1; //_voteAmount;
         } else {
-            proposal.votesAgainst += _voteAmount;
+            proposal.votesAgainst += 1; // _voteAmount;
         }
 
         emit Voted(_proposalId, msg.sender, _support, _voteAmount);
@@ -214,11 +222,11 @@ contract DAO is Initializable {
         //check the status of the proposal and update it if needed
         _checkAndUpdateProposal(proposal);
         require(
-            proposal.proposalState != ProposalState.Executed,
+            proposal.state != ProposalState.Executed,
             "DAO:executeProposal Proposal already executed"
         );
         require(
-            proposal.proposalState == ProposalState.Succeeded,
+            proposal.state == ProposalState.Succeeded,
             "DAO:executeProposal proposal defeated"
         ); //question maybe just check it is on the succeeded state?
 
@@ -230,7 +238,7 @@ contract DAO is Initializable {
         );
 
         // Mark the proposal as executed
-        proposal.proposalState = ProposalState.Executed;
+        proposal.state = ProposalState.Executed;
 
         for (uint256 i = 0; i < proposal.targets.length; i++) {
             timelock.executeTransaction(
@@ -315,7 +323,8 @@ contract DAO is Initializable {
         uint256 endTime = (startTime + votingPeriod());
 
         proposals[proposalCount] = Proposal({
-            proposalState: ProposalState.Pending,
+            state: ProposalState.Pending,
+            id: proposalCount,
             proposer: msg.sender,
             targets: _targets,
             signatures: _signatures,
@@ -324,7 +333,9 @@ contract DAO is Initializable {
             votesAgainst: 0,
             startTime: startTime,
             endTime: endTime,
-            eta: 0
+            eta: 0,
+            canceled: false,
+            executed: false
         });
 
         emit ProposalCreated(proposalCount, msg.sender);
@@ -333,11 +344,11 @@ contract DAO is Initializable {
 
     function approveProposal(uint256 _proposalId) public onlyGuardian {
         Proposal storage s_proposal = proposals[_proposalId];
-        require(s_proposal.proposalState == ProposalState.Pending);
-        s_proposal.proposalState = ProposalState.Active;
+        require(s_proposal.state == ProposalState.Pending);
+        s_proposal.state = ProposalState.Active;
         //set the proposal deadlines
-        s_proposal.startTime = block.timestamp;
-        s_proposal.endTime = block.timestamp + votingPeriod();
+        // s_proposal.startTime = block.timestamp;
+        // s_proposal.endTime = block.timestamp + votingPeriod();
     }
 
     function queueProposal(uint256 proposalId) public {
@@ -352,6 +363,7 @@ contract DAO is Initializable {
             );
         }
         proposal.eta = eta;
+        proposal.state = ProposalState.Queued;
         emit ProposalQueued(proposalId, eta);
     }
 
@@ -386,6 +398,24 @@ contract DAO is Initializable {
         return (5 * 10 ** 18) / 1000; // 0.5% represented with a factor of 10**18
     }
 
+    function getProposalState(
+        uint256 _proposalId
+    ) public view returns (string memory status) {
+        Proposal storage proposal = proposals[_proposalId];
+
+        // Convert enum to a string
+        if (proposal.state == ProposalState.Pending) return "Pending";
+        if (proposal.state == ProposalState.Active) return "Active";
+        if (proposal.state == ProposalState.Canceled) return "Canceled";
+        if (proposal.state == ProposalState.Defeated) return "Defeated";
+        if (proposal.state == ProposalState.Succeeded) return "Succeeded";
+        if (proposal.state == ProposalState.Queued) return "Queued";
+        if (proposal.state == ProposalState.Expired) return "Expired";
+        if (proposal.state == ProposalState.Executed) return "Executed";
+
+        return "Unknown"; // Fallback case (should never be hit)
+    }
+
     ///////////////////////////////////////
     //         Internal Functions        //
     ///////////////////////////////////////
@@ -409,7 +439,7 @@ contract DAO is Initializable {
             s_proposalPtr.startTime >= block.timestamp &&
             s_proposalPtr.endTime <= block.timestamp
         ) {
-            s_proposalPtr.proposalState = ProposalState.Active;
+            s_proposalPtr.state = ProposalState.Active;
         } else if (s_proposalPtr.startTime < block.timestamp) {
             revert("DAO:_checkAndUpdateProposal proposal not started");
         } else if (s_proposalPtr.endTime < block.timestamp) {
@@ -421,11 +451,11 @@ contract DAO is Initializable {
         uint256 totalVotes = s_proposalPtr.votesAgainst +
             s_proposalPtr.votesFor;
         if (totalVotes < minVotesRequired) {
-            s_proposalPtr.proposalState = ProposalState.Canceled;
+            s_proposalPtr.state = ProposalState.Canceled;
         } else if (s_proposalPtr.votesAgainst >= s_proposalPtr.votesFor) {
-            s_proposalPtr.proposalState = ProposalState.Defeated;
+            s_proposalPtr.state = ProposalState.Defeated;
         } else {
-            s_proposalPtr.proposalState = ProposalState.Succeeded;
+            s_proposalPtr.state = ProposalState.Succeeded;
         }
     }
 }
