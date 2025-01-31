@@ -96,12 +96,15 @@ contract Timelock is Initializable {
         emit NewPendingAdmin(pendingAdmin);
     }
 
+    event DebugSender(address sender, address expectedAdmin);
+
     function queueTransaction(
         address target,
         string memory signature,
         bytes memory data,
         uint256 eta
     ) public returns (bytes32) {
+        emit DebugSender(msg.sender, admin);
         require(
             msg.sender == admin,
             "Timelock::queueTransaction: Call must come from admin."

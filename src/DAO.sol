@@ -185,6 +185,10 @@ contract DAO is Initializable {
 
         // question do we need this?
         // _checkAndUpdateProposal(proposal);
+        require(
+            proposal.endTime >= block.timestamp,
+            "DAO:vote voting period has finished"
+        );
 
         require(
             proposal.state == ProposalState.Active,
@@ -220,15 +224,15 @@ contract DAO is Initializable {
 
         Proposal storage proposal = proposals[_proposalId];
         //check the status of the proposal and update it if needed
-        _checkAndUpdateProposal(proposal);
+        // _checkAndUpdateProposal(proposal);
         require(
             proposal.state != ProposalState.Executed,
             "DAO:executeProposal Proposal already executed"
         );
-        require(
-            proposal.state == ProposalState.Succeeded,
-            "DAO:executeProposal proposal defeated"
-        ); //question maybe just check it is on the succeeded state?
+        // require(
+        //     proposal.state == ProposalState.Succeeded,
+        //     "DAO:executeProposal proposal defeated"
+        // ); //question maybe just check it is on the succeeded state?
 
         // Ensure the proposal has enough "For" votes (must be more than 50% of total votes)
         uint256 totalVotes = proposal.votesFor + proposal.votesAgainst;
@@ -351,8 +355,17 @@ contract DAO is Initializable {
         // s_proposal.endTime = block.timestamp + votingPeriod();
     }
 
-    function queueProposal(uint256 proposalId) public {
-        Proposal storage proposal = proposals[proposalId];
+    // todo remove after testing
+    function getTargets(
+        uint256 _proposalId
+    ) public view returns (uint256 targets) {
+        Proposal storage proposal = proposals[_proposalId];
+        // return proposal.targets;
+        return timelock.delay();
+    }
+
+    function queueProposal(uint256 _proposalId) public {
+        Proposal storage proposal = proposals[_proposalId];
         uint256 eta = block.timestamp + timelock.delay();
         for (uint256 i = 0; i < proposal.targets.length; i++) {
             _queueOrRevert(
@@ -364,7 +377,7 @@ contract DAO is Initializable {
         }
         proposal.eta = eta;
         proposal.state = ProposalState.Queued;
-        emit ProposalQueued(proposalId, eta);
+        emit ProposalQueued(_proposalId, eta);
     }
 
     function __acceptAdmin() public {
