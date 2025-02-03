@@ -14,9 +14,13 @@
 
   - [] flexible staking
 
-- [] **DAO**
+- [>] **DAO**
 
-  - [] create/queue/execute proposals
+  > `forge test -vvvv DaoTest.t.sol`
+
+  - [?] implement OZ contracts https://docs.openzeppelin.com/contracts/5.x/governance
+
+  - [>] create/queue/execute proposals
 
   - [] use checkPoints for voting power (`WLF`, `sWLF`, `WLF_(token)_LP`)
 
@@ -49,6 +53,8 @@
   - [] buyTokens
 
     - [] add liquidity to uniswap `WLF_(token)`
+
+      > https://docs.uniswap.org/contracts/v3/guides/providing-liquidity/setting-up
 
     - [] stake `WLF_(token)_LP`
 

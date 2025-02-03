@@ -267,6 +267,12 @@ contract DAO is Initializable {
     //           Public Functions        //
     ///////////////////////////////////////
 
+    // todo remove after testing
+    function getEta(uint256 _proposalId) public view returns (uint256 eta) {
+        Proposal storage proposal = proposals[_proposalId];
+        return proposal.eta;
+    }
+
     // Function to create a proposal
     function createProposal(
         address[] memory _targets,

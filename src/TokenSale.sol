@@ -59,10 +59,14 @@ contract TokenSale is OwnableUpgradeable {
 
     event SaleStarted(uint256 saleId, uint256 tokensAvailable, uint256 price);
     event SaleEnded(uint256 saleId);
-    event TokensPurchased(address indexed buyer, uint256 amount, uint256 saleId);
+    event TokensPurchased(
+        address indexed buyer,
+        uint256 amount,
+        uint256 saleId
+    );
 
     // BUG: remove address _uniswapHelper
-    constructor() 
+    constructor()
     /* address _token,
         address _treasury,
         address _timelock,
@@ -114,8 +118,14 @@ contract TokenSale is OwnableUpgradeable {
     function startSaleZero(uint256 _amount, uint256 _price) external onlyOwner {
         require(!saleActive, "Sale is already active.");
         require(_amount > 0, "Amount must be greater than zero.");
-        require(_price >= price, "Price must be greater or equal to prev price.");
-        require(werewolfToken.balanceOf(address(this)) >= _amount, "Not enough tokens for sale.");
+        require(
+            _price >= price,
+            "Price must be greater or equal to prev price."
+        );
+        require(
+            werewolfToken.balanceOf(address(this)) >= _amount,
+            "Not enough tokens for sale."
+        );
 
         sales[saleIdCounter] = Sale(saleIdCounter, _amount, _price, true);
         price = _price;
@@ -127,8 +137,14 @@ contract TokenSale is OwnableUpgradeable {
     function startSale(uint256 _amount, uint256 _price) external onlyOwner {
         require(!saleActive, "Sale is already active.");
         require(_amount > 0, "Amount must be greater than zero.");
-        require(_price >= price, "Price must be greater or equal to prev price.");
-        require(werewolfToken.balanceOf(address(this)) >= _amount, "Not enough tokens for sale.");
+        require(
+            _price >= price,
+            "Price must be greater or equal to prev price."
+        );
+        require(
+            werewolfToken.balanceOf(address(this)) >= _amount,
+            "Not enough tokens for sale."
+        );
 
         saleIdCounter++;
         sales[saleIdCounter] = Sale(saleIdCounter, _amount, _price, true);
@@ -150,18 +166,29 @@ contract TokenSale is OwnableUpgradeable {
     ) external {
         require(saleActive, "Sale is not active");
         Sale storage currentSale = sales[saleIdCounter];
-        require(currentSale.tokensAvailable >= _amount, "Not enough tokens available for sale");
+        require(
+            currentSale.tokensAvailable >= _amount,
+            "Not enough tokens available for sale"
+        );
 
         uint256 tokenAmount = amount0Desired; //_amount * 10 ** werewolfToken.decimals();
         uint256 usdtRequired = amount1Desired; //_amount * currentSale.price;
 
         // Transfer USDT from buyer to staking contract
-        require(usdtToken.transferFrom(msg.sender, address(stakingContract), usdtRequired), "USDT transfer failed");
+        require(
+            usdtToken.transferFrom(
+                msg.sender,
+                address(stakingContract),
+                usdtRequired
+            ),
+            "USDT transfer failed"
+        );
 
         // Transfer tokens to staking contract
         currentSale.tokensAvailable -= _amount;
         require(
-            werewolfToken.transfer(address(stakingContract), tokenAmount), "Token transfer to staking contract failed"
+            werewolfToken.transfer(address(stakingContract), tokenAmount),
+            "Token transfer to staking contract failed"
         );
 
         // // Stake tokens in staking contract for msg.sender with a 10-year lock
@@ -171,7 +198,7 @@ contract TokenSale is OwnableUpgradeable {
         //     5 * 365 days
         // );
 
-        // // Call the addLiquidity function on the helper contract
+        // Call the addLiquidity function on the helper contract
         // uint256 tokenId = uniswapHelper.addLiquidity(
         //     token0,
         //     token1,

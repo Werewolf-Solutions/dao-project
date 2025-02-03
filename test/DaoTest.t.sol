@@ -230,6 +230,7 @@ contract DaoTest is Test {
 
     function test_dao_mint_tokens_to_treasury() public {
         console.log("Starting DAO mint token test...");
+        console.log("Minting amount:", mintAmount);
 
         // Declare proposal variables
         delete targets;
@@ -237,10 +238,12 @@ contract DaoTest is Test {
         delete calldatas;
 
         // Encode function call data correctly for minting tokens
-        bytes memory mintProposalCallData = abi.encodeWithSignature(
-            "mint(uint256)",
-            mintAmount
-        );
+        bytes memory mintProposalCallData = abi.encode(mintAmount);
+
+        // abi.encodeWithSignature(
+        //     "mint(uint256)",
+        //     mintAmount
+        // );
 
         // Approve DAO to spend proposalCost tokens on behalf of founder
         vm.prank(founder);
@@ -261,8 +264,8 @@ contract DaoTest is Test {
         vm.prank(founder);
         dao.approveProposal(proposalId);
 
-        // Simulate the voting period
-        vm.roll(block.number + dao.votingPeriod());
+        console.log("Start voting period:", block.timestamp);
+        console.log("Voting period:", dao.votingPeriod());
 
         // Cast votes
         vm.prank(founder);
@@ -271,13 +274,11 @@ contract DaoTest is Test {
         vm.prank(addr1);
         dao.vote(proposalId, true);
 
-        console.log("Block number:", block.number);
-        console.log("Voting period:", dao.votingPeriod());
+        // Simulate the end of voting period
+        vm.roll(block.timestamp + dao.votingPeriod());
+        vm.warp(block.timestamp + dao.votingPeriod());
 
-        // Simulate end of voting period
-        vm.roll(block.number + dao.votingPeriod());
-
-        console.log("Block number:", block.number);
+        console.log("End voting period:", block.timestamp);
 
         // Check Treasury balance before proposal execution
         uint256 initialTreasuryBalance = werewolfToken.balanceOf(
@@ -291,16 +292,24 @@ contract DaoTest is Test {
         // Ensure timelock admin is correct before proceeding
         require(timelock.admin() == address(dao), "Timelock admin mismatch");
 
+        console.log("Queue proposal");
         // Queue proposal
         vm.prank(founder);
         dao.queueProposal(proposalId);
 
-        // Simulate timelock delay
-        vm.roll(block.number + timelock.delay() + 1);
-
+        console.log("Start timelock delay after queueing:", block.timestamp);
         console.log("Timelock delay:", timelock.delay());
-        console.log("Block number:", block.number);
+        // Simulate timelock delay
+        vm.roll(block.timestamp + timelock.delay() + 1);
+        vm.warp(block.timestamp + timelock.delay() + 1);
+        console.log("End of timelock delay:", block.timestamp);
 
+        console.log("Executing proposal...");
+        uint256 eta = dao.getEta(proposalId);
+
+        console.log("Block number:", block.timestamp);
+        console.log("ETA:", eta);
+        console.log("Check ETA:", block.timestamp >= eta);
         // Execute proposal
         vm.prank(founder);
         dao.executeProposal(proposalId);
@@ -310,6 +319,7 @@ contract DaoTest is Test {
         console.log("Treasury balance after execution:", newTreasuryBalance);
 
         uint256 expectedTreasuryBalance = initialTreasuryBalance + mintAmount;
+        console.log("Expected treasury balance:", expectedTreasuryBalance);
         assertEq(
             newTreasuryBalance,
             expectedTreasuryBalance,
