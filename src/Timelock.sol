@@ -96,6 +96,7 @@ contract Timelock is Initializable {
         emit NewPendingAdmin(pendingAdmin);
     }
 
+    // todo remove on production
     event DebugSender(address sender, address expectedAdmin);
 
     function queueTransaction(
@@ -104,6 +105,7 @@ contract Timelock is Initializable {
         bytes memory data,
         uint256 eta
     ) public returns (bytes32) {
+        // todo remove on production
         emit DebugSender(msg.sender, admin);
         require(
             msg.sender == admin,

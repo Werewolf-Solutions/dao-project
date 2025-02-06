@@ -370,6 +370,11 @@ contract DAO is Initializable {
         return timelock.delay();
     }
 
+    // todo remove after testing
+    function getAdmin() public view returns (address _admin) {
+        return timelock.admin();
+    }
+
     function queueProposal(uint256 _proposalId) public {
         Proposal storage proposal = proposals[_proposalId];
         uint256 eta = block.timestamp + timelock.delay();

@@ -28,7 +28,7 @@ contract Deploy is Script {
     address multiSig;
     address founder;
 
-    //Protocol contract instances
+    // Protocol contract instances
     Treasury treasury;
     Timelock timelock;
     WerewolfTokenV1 werewolfToken;
@@ -53,11 +53,7 @@ contract Deploy is Script {
         // Deploy UniswapHelper
         uniswapHelper = new UniswapHelper(founder);
 
-        /*Current order of Deployment:
-         * Treasury --> Timelock --> WereWolfToken --> Treasury::setWereWolfToken --> Staking --> DAO --> TokenSale
-         *
-         */
-        //deploy treasury
+        // Deploy Treasury
         _deployTreasury();
 
         // Deploy Timelock
@@ -92,10 +88,72 @@ contract Deploy is Script {
         treasury.transferOwnership(address(timelock));
         tokenSale.transferOwnership(address(timelock));
 
+        _setTimelockAdmin();
+
         vm.stopBroadcast();
 
         //Write the address to file
         _writeDeploymentData();
+    }
+
+    function _setTimelockAdmin() internal {
+        // Step 1: Queue `setPendingAdmin(address(dao))`
+        bytes memory setPendingAdminCallData = abi.encode(address(dao));
+
+        console.log("Current Block Timestamp:", block.timestamp);
+        console.log("Timelock Delay:", timelock.delay());
+
+        uint256 eta = block.timestamp + timelock.delay(); // Ensure eta is exactly timelock.delay()
+
+        console.log("Queueing setPendingAdmin transaction at ETA:", eta);
+        console.log("QueueTransaction called by:", msg.sender);
+        console.log("Transaction ETA:", eta);
+        console.log("Required min ETA:", block.timestamp + timelock.delay());
+
+        timelock.queueTransaction(
+            address(timelock),
+            "setPendingAdmin(address)", // Function signature
+            setPendingAdminCallData,
+            eta
+        );
+
+        console.log("Warping to:", eta + 5);
+        vm.warp(eta + 5); // Give extra buffer of 5 seconds
+        console.log("New Block Timestamp:", block.timestamp);
+        console.log("Time Difference:", block.timestamp - eta);
+
+        bytes32 txHash = keccak256(
+            abi.encode(
+                address(timelock),
+                "setPendingAdmin(address)",
+                setPendingAdminCallData,
+                eta
+            )
+        );
+        console.log(
+            "Is transaction queued?",
+            timelock.queuedTransactions(txHash)
+        );
+        require(
+            timelock.queuedTransactions(txHash),
+            "Transaction was not properly queued!"
+        );
+
+        // Step 3: Execute `setPendingAdmin(address(dao))`
+        timelock.executeTransaction(
+            address(timelock),
+            "setPendingAdmin(address)", // Function signature
+            setPendingAdminCallData,
+            eta
+        );
+
+        // Step 4: DAO accepts admin role
+        dao.__acceptAdmin();
+
+        require(
+            timelock.admin() == address(dao),
+            "Timelock admin was not set correctly"
+        );
     }
 
     function _deployTreasury() internal {
@@ -111,7 +169,6 @@ contract Deploy is Script {
                 initDataTreasury
             );
         treasury = Treasury(address(treasuryProxy));
-        //vm.setEnv("TREASURY_ADDRESS", vm.toString(address(treasury)));
     }
 
     function _deployTimelock() internal {
@@ -217,7 +274,7 @@ contract Deploy is Script {
     }
 
     function _writeDeploymentData() internal {
-        //Inside foundry.toml it must have the following settings enabled
+        // Inside foundry.toml it must have the following settings enabled
         // fs_permissions = [{ access = "write", path = "./"}]
 
         string memory path = "./script/output/deployed-addresses.txt";
