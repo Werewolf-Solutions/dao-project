@@ -217,8 +217,8 @@ contract DaoTest is Test {
         console.log("Timelock admin: ", timelock.admin());
 
         // Step 4: DAO accepts admin role
-        vm.prank(address(dao));
-        timelock.acceptAdmin();
+        vm.prank(founder);
+        dao.__acceptAdmin();
 
         console.log("New Timelock admin set to DAO:", timelock.admin());
 

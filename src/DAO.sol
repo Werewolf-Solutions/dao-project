@@ -375,6 +375,15 @@ contract DAO is Initializable {
         return timelock.admin();
     }
 
+    // todo remove after testing
+    function testAdmin() public view returns (bool isAdmin) {
+        return msg.sender == timelock.admin();
+        require(
+            msg.sender == timelock.admin(),
+            "DAO::testAdmin: Call must come from admin."
+        );
+    }
+
     function queueProposal(uint256 _proposalId) public {
         Proposal storage proposal = proposals[_proposalId];
         uint256 eta = block.timestamp + timelock.delay();

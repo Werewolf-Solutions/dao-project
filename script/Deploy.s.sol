@@ -21,6 +21,7 @@ contract Deploy is Script {
 
     // Constants
     uint256 constant votingPeriod = 2 days;
+    uint256 constant delay = 2 days;
     uint256 constant tokenSaleAirdrop = 5_000_000 ether;
     uint256 constant tokenPrice = 0.001 ether;
 
@@ -88,7 +89,7 @@ contract Deploy is Script {
         treasury.transferOwnership(address(timelock));
         tokenSale.transferOwnership(address(timelock));
 
-        _setTimelockAdmin();
+        // _setTimelockAdmin();
 
         vm.stopBroadcast();
 
@@ -117,10 +118,10 @@ contract Deploy is Script {
             eta
         );
 
-        console.log("Warping to:", eta + 5);
-        vm.warp(eta + 5); // Give extra buffer of 5 seconds
+        console.log("Warping to:", eta + 1);
+        vm.warp(eta + timelock.delay()); // Give extra buffer of 1 second
         console.log("New Block Timestamp:", block.timestamp);
-        console.log("Time Difference:", block.timestamp - eta);
+        // console.log("Time Difference:", block.timestamp - eta);
 
         bytes32 txHash = keccak256(
             abi.encode(
@@ -176,7 +177,7 @@ contract Deploy is Script {
         bytes memory initDataTimelock = abi.encodeWithSelector(
             Timelock.initialize.selector,
             founder,
-            votingPeriod
+            delay
         );
         TransparentUpgradeableProxy timelockProxy = new TransparentUpgradeableProxy(
                 address(timelockImpl),
