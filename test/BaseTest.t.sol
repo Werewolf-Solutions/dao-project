@@ -8,6 +8,7 @@ import {TokenSale} from "../src/TokenSale.sol";
 import {Timelock} from "../src/Timelock.sol";
 import {DAO} from "../src/DAO.sol";
 import {Staking} from "../src/Staking.sol";
+import {LPStaking} from "../src/LPStaking.sol";
 import {UniswapHelper} from "../src/UniswapHelper.sol";
 import {MockUSDT} from "./mocks/MockUSDT.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
@@ -20,6 +21,7 @@ contract BaseTest is Test {
     Timelock timelock;
     DAO dao;
     Staking staking;
+    LPStaking lpStaking;
     UniswapHelper uniswapHelper;
     MockUSDT mockUSDT;
 
@@ -80,6 +82,19 @@ contract BaseTest is Test {
         address stakingAddress = address(new TransparentUpgradeableProxy(stakingImpl, multiSig, initDataStaking));
         staking = Staking(stakingAddress);
 
+        // Deploy LPStaking
+        address lpStakingImpl = address(new LPStaking());
+        bytes memory initDataLPStaking = abi.encodeWithSelector(
+            LPStaking.initialize.selector,
+            address(werewolfToken),
+            address(mockUSDT),
+            founder,
+            address(treasury),
+            founder  // Using founder as positionManager for tests
+        );
+        address lpStakingAddress = address(new TransparentUpgradeableProxy(lpStakingImpl, multiSig, initDataLPStaking));
+        lpStaking = LPStaking(lpStakingAddress);
+
         // Deploy DAO
         address daoImpl = address(new DAO());
         bytes memory initDataDAO = abi.encodeWithSelector(
@@ -98,10 +113,15 @@ contract BaseTest is Test {
             address(timelock),
             address(mockUSDT),
             address(staking),
+            address(lpStaking),
             address(uniswapHelper)
         );
         address tokenSaleAddress = address(new TransparentUpgradeableProxy(tokenSaleImpl, multiSig, initDataTokenSale));
         tokenSale = TokenSale(tokenSaleAddress);
+
+        // Configure LPStaking
+        vm.prank(founder);
+        lpStaking.setTokenSaleContract(address(tokenSale));
 
         // Airdrop tokens to TokenSale contract
         vm.startPrank(founder);
@@ -145,28 +165,31 @@ contract BaseTest is Test {
 
     function test_FounderBuyTokens() public {
         vm.startPrank(founder);
-        uint256 amount = 5_000e6; //mainnet USDT has 6 decimals
-        mockUSDT.mint(founder, amount);
-        uint256 founderWLFBalanceBefore = werewolfToken.balanceOf(founder);
+        // Buy only 50% of tokens to avoid triggering auto-end of sale
+        uint256 purchaseAmount = tokenSaleAirdrop / 2; // 2.5M WLF
+        uint256 usdtAmount = 2_500e6; // 2500 USDT
+
+        mockUSDT.mint(founder, usdtAmount);
         uint256 founderUSDTBalanceBefore = mockUSDT.balanceOf(founder);
 
-        // Approve TokenSale contract to spend tokens
-        werewolfToken.approve(address(tokenSale), tokenSaleAirdrop);
-        mockUSDT.approve(address(tokenSale), amount);
+        // Approve TokenSale contract to spend USDT
+        mockUSDT.approve(address(tokenSale), usdtAmount);
 
-        // Buy tokens (updated signature: amount, tokenAmount, usdtAmount)
-        tokenSale.buyTokens(
-            tokenSaleAirdrop, tokenSaleAirdrop, amount
-        );
+        // Buy tokens (new flow: tokens stay in TokenSale until sale ends)
+        tokenSale.buyTokens(purchaseAmount / 1e18, purchaseAmount, usdtAmount);
 
-        uint256 founderWLFBalanceAfter = werewolfToken.balanceOf(founder);
+        // Verify USDT was transferred to TokenSale
         uint256 founderUSDTBalanceAfter = mockUSDT.balanceOf(founder);
-        uint256 stakingWLFBalance = werewolfToken.balanceOf(address(staking));
-        uint256 stakingUSDTBalance = mockUSDT.balanceOf(address(staking));
+        uint256 tokenSaleUSDTBalance = mockUSDT.balanceOf(address(tokenSale));
 
-        assertEq(stakingWLFBalance, tokenSaleAirdrop);
-        assertEq(founderUSDTBalanceAfter, founderUSDTBalanceBefore - amount);
-        assertEq(stakingUSDTBalance, amount);
+        assertEq(founderUSDTBalanceAfter, founderUSDTBalanceBefore - usdtAmount, "USDT should be transferred from founder");
+        assertEq(tokenSaleUSDTBalance, usdtAmount, "USDT should be in TokenSale");
+
+        // Verify purchase is tracked (new system)
+        assertEq(tokenSale.purchases(0, founder), purchaseAmount, "Purchase should be tracked");
+        assertEq(tokenSale.saleWLFCollected(0), purchaseAmount, "WLF collected should match");
+        assertEq(tokenSale.saleUSDTCollected(0), usdtAmount, "USDT collected should match");
+
         vm.stopPrank();
     }
 }

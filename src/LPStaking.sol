@@ -10,7 +10,7 @@ import "./interfaces/IWerewolfTokenV1.sol";
 import "./interfaces/ITreasury.sol";
 
 // Uniswap v3 interfaces
-interface INonfungiblePositionManager {
+interface IPositionManager {
     struct CollectParams {
         uint256 tokenId;
         address recipient;
@@ -118,7 +118,7 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
     ///////////////////////////////////////
 
     // Core contracts
-    INonfungiblePositionManager public positionManager;
+    IPositionManager public positionManager;
     IWerewolfTokenV1 public wlfToken;
     IERC20 public usdtToken;
     ITreasury public treasury;
@@ -205,7 +205,7 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
         wlfToken = IWerewolfTokenV1(_wlfToken);
         usdtToken = IERC20(_usdtToken);
         treasury = ITreasury(_treasury);
-        positionManager = INonfungiblePositionManager(_positionManager);
+        positionManager = IPositionManager(_positionManager);
 
         lastUpdateTime = block.timestamp;
         lastEpochUpdate = block.timestamp;
@@ -340,8 +340,8 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
         LPPosition storage position = lpPositions[saleId];
 
         // Collect all available fees
-        INonfungiblePositionManager.CollectParams memory params =
-            INonfungiblePositionManager.CollectParams({
+        IPositionManager.CollectParams memory params =
+            IPositionManager.CollectParams({
                 tokenId: position.tokenId,
                 recipient: address(this),
                 amount0Max: type(uint128).max,

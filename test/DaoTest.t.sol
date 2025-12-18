@@ -8,6 +8,7 @@ import {TokenSale} from "../src/TokenSale.sol";
 import {Timelock} from "../src/Timelock.sol";
 import {DAO} from "../src/DAO.sol";
 import {Staking} from "../src/Staking.sol";
+import {LPStaking} from "../src/LPStaking.sol";
 import {UniswapHelper} from "../src/UniswapHelper.sol";
 import {MockUSDT} from "./mocks/MockUSDT.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
@@ -20,6 +21,7 @@ contract DaoTest is Test {
     Timelock timelock;
     DAO dao;
     Staking staking;
+    LPStaking lpStaking;
     UniswapHelper uniswapHelper;
     MockUSDT mockUSDT;
 
@@ -124,6 +126,25 @@ contract DaoTest is Test {
         );
         staking = Staking(stakingAddress);
 
+        // Deploy LPStaking
+        address lpStakingImpl = address(new LPStaking());
+        bytes memory initDataLPStaking = abi.encodeWithSelector(
+            LPStaking.initialize.selector,
+            address(werewolfToken),
+            address(mockUSDT),
+            founder,
+            address(treasury),
+            founder  // Using founder as positionManager for tests
+        );
+        address lpStakingAddress = address(
+            new TransparentUpgradeableProxy(
+                lpStakingImpl,
+                multiSig,
+                initDataLPStaking
+            )
+        );
+        lpStaking = LPStaking(lpStakingAddress);
+
         // Deploy DAO
         address daoImpl = address(new DAO());
         bytes memory initDataDAO = abi.encodeWithSelector(
@@ -148,6 +169,7 @@ contract DaoTest is Test {
             address(timelock),
             address(mockUSDT),
             address(staking),
+            address(lpStaking),
             address(uniswapHelper)
         );
         address tokenSaleAddress = address(
@@ -158,6 +180,10 @@ contract DaoTest is Test {
             )
         );
         tokenSale = TokenSale(tokenSaleAddress);
+
+        // Configure LPStaking
+        vm.prank(founder);
+        lpStaking.setTokenSaleContract(address(tokenSale));
 
         // Airdrop tokens to TokenSale contract
         vm.startPrank(founder);

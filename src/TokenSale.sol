@@ -8,6 +8,7 @@ import "./WerewolfTokenV1.sol";
 import "./Treasury.sol";
 import "./Staking.sol";
 import "./interfaces/ILPStaking.sol";
+import "@uniswap/v3-periphery/contracts/interfaces/INonfungiblePositionManager.sol";
 
 // Define an interface for UniswapHelper to interact with it
 interface ILiquidityExamples {
@@ -34,11 +35,6 @@ interface IUniswapHelper {
     ) external returns (uint256 tokenId);
 
     function positionManager() external view returns (address);
-}
-
-// Uniswap v3 NFT interface for transferring LP tokens
-interface INonfungiblePositionManager {
-    function transferFrom(address from, address to, uint256 tokenId) external;
 }
 
 contract TokenSale is OwnableUpgradeable {
