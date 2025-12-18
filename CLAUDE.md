@@ -23,6 +23,11 @@ A decentralized autonomous organization (DAO) project built on Solidity with gov
 - Solidity version: `0.8.28` (fixed in foundry.toml)
 - Via IR: `false` (can be enabled as last resort)
 
+### Debugging
+- Use `-vvvv` flag for maximum verbosity to see detailed logs, event emissions, and transaction traces
+- Debug functions in DAO.sol (`testAdmin()`) and Timelock.sol (`DebugEta` events) - **REMOVE BEFORE PRODUCTION**
+- Check logs for ETA timing issues when debugging timelock execution failures
+
 ## Architecture
 
 ### Core Governance Flow
@@ -42,6 +47,7 @@ The project implements a timelock-based governance system where the DAO controls
    - Grace period: 14 days for execution after eta
    - Admin initially set to founder, designed to be transferred to DAO
    - All ownership-critical functions must go through Timelock
+   - **Important**: Initialize with `delay` parameter (2 days), not `votingPeriod`
 
 3. **WerewolfTokenV1** ([src/WerewolfTokenV1.sol](src/WerewolfTokenV1.sol)) - Governance token (WLF)
    - Total supply: 1B tokens minted to Treasury
@@ -113,10 +119,30 @@ See [script/Deploy.s.sol](script/Deploy.s.sol) for full deployment script and [t
 
 ## Testing Patterns
 
-- Base test setup in [test/BaseTest.t.sol](test/BaseTest.t.sol) - inherit from `BaseTest` for all tests
+- Base test setup in [test/BaseTest.t.sol](test/BaseTest.t.sol) - inherit from `BaseTest` for reusable setup
+- Note: [test/DaoTest.t.sol](test/DaoTest.t.sol) uses standalone setup (doesn't inherit BaseTest)
 - Uses TransparentUpgradeableProxy pattern with multiSig as proxy admin
 - MockUSDT provided for local testing (6 decimals like mainnet USDT)
 - Prank `founder` address for ownership actions in tests
+
+### Time Manipulation for Timelock Testing
+When testing timelock operations, use `vm.warp()` to advance time:
+```solidity
+uint256 eta = block.timestamp + timelock.delay();
+vm.warp(eta);  // Warp to exactly eta
+// or
+vm.warp(eta + 1);  // Add buffer if needed
+```
+
+### Proposal Lifecycle Testing Pattern
+1. Create proposal (prank proposer with enough tokens)
+2. Guardian approves proposal (prank guardian)
+3. Warp past voting delay: `vm.roll(block.number + 2)`
+4. Vote on proposal (prank voters)
+5. Warp past voting period: `vm.warp(block.timestamp + votingPeriod + 1)`
+6. Queue proposal (calculates eta)
+7. Warp to eta: `vm.warp(eta)`
+8. Execute proposal
 
 ## DAO Proposal Flow
 
@@ -137,21 +163,53 @@ See [script/Deploy.s.sol](script/Deploy.s.sol) for full deployment script and [t
 
 ## Key Gotchas
 
-- **Admin Transfer**: Timelock admin must be transferred to DAO via `setPendingAdmin()` → `acceptAdmin()` flow. Currently commented out in Deploy script (`_setTimelockAdmin()`)
+- **Admin Transfer**: Timelock admin must be transferred to DAO via two-step process:
+  1. Current admin calls `timelock.setPendingAdmin(address(dao))`
+  2. DAO calls `timelock.acceptAdmin()` (via proposal or direct call from DAO contract)
+
+  **Current Status**: Commented out in Deploy script (`_setTimelockAdmin()`)
+
+  **Testing Pattern**:
+  ```solidity
+  // Step 1: Set pending admin (as current admin)
+  vm.prank(founder);
+  dao.__queueSetTimelockPendingAdmin(address(dao));
+
+  // Step 2: Accept admin (from DAO)
+  vm.prank(founder);
+  dao.__acceptAdmin();
+  ```
+
+  **Common Issues**:
+  - "Call must come from pendingAdmin" → Ensure DAO is calling `acceptAdmin()`, not founder
+  - "Call must come from admin" → Ensure current admin (founder) is calling `setPendingAdmin()` first
+  - Timing: Admin transfer typically happens after initial setup but before full decentralization
+
 - **Voting Power**: Currently uses simple token balance (`balanceOf`) in voting, not checkpoints. Checkpoint integration is TODO
 - **Guardian Role**: DAO has a guardian (initially founder) who approves proposals. This is a centralization point
 - **State Management**: Proposal state updates are partially manual - some state transitions require explicit calls
 - **ETA Precision**: When queueing proposals, ensure `eta = block.timestamp + timelock.delay()` exactly matches expected timing
+  - In tests: Calculate eta when queueing, then `vm.warp(eta)` before executing
+  - Common error: "Transaction hasn't surpassed time lock" → Check that `block.timestamp >= eta`
 
 ## Project Status
 
+**Current Branch**: v0.1.1
+
+**Recent Work** (from git commits):
+- Implementing setPendingAdmin flow in Deploy script
+- Testing DAO proposal queue and execute functionality
+- Debugging timelock admin transfer and ETA timing
+
 Active development areas (from README TODO):
 - [ ] Staking: calculateAPY, fixed/flexible staking
-- [>] DAO: create/queue/execute proposals (in progress)
+- [>] DAO: create/queue/execute proposals (in progress - queue/execute working, admin transfer in testing)
 - [ ] DAO: Use checkpoints for voting power (WLF, sWLF, WLF_LP)
 - [ ] DAO: Emergency proposals with 100% voting power requirement
 - [ ] Token sale integration with Uniswap liquidity and staking
 - [ ] CompaniesHouse CRUD, employee management, payments
+
+**Uncommitted Changes**: There are currently uncommitted changes in the working directory. Check `git status` before starting new work.
 
 ## Contract Layout and NatSpec
 

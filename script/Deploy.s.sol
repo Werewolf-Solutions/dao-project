@@ -10,6 +10,7 @@ import {TokenSale} from "../src/TokenSale.sol";
 import {Timelock} from "../src/Timelock.sol";
 import {DAO} from "../src/DAO.sol";
 import {Staking} from "../src/Staking.sol";
+import {LPStaking} from "../src/LPStaking.sol";
 import {UniswapHelper} from "../src/UniswapHelper.sol";
 import {CompaniesHouseV1} from "../src/CompaniesHouseV1.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
@@ -34,6 +35,7 @@ contract Deploy is Script {
     Timelock timelock;
     WerewolfTokenV1 werewolfToken;
     Staking staking;
+    LPStaking lpStaking;
     DAO dao;
     TokenSale tokenSale;
     UniswapHelper uniswapHelper;
@@ -69,11 +71,21 @@ contract Deploy is Script {
         // Deploy Staking
         _deployStaking();
 
+        // Deploy LPStaking
+        _deployLPStaking();
+
+        // Configure Treasury for LP staking
+        treasury.setStakingContract(address(staking));
+        treasury.setLPStakingContract(address(lpStaking));
+
         // Deploy DAO
         _deployDao();
 
         // Deploy TokenSale
         _deployTokenSale();
+
+        // Set TokenSale contract in LPStaking (can only be set once)
+        lpStaking.setTokenSaleContract(address(tokenSale));
 
         // Deploy CompaniesHouseV1
         _deployCompaniesHouse();
@@ -237,6 +249,24 @@ contract Deploy is Script {
         staking = Staking(address(stakingProxy));
     }
 
+    function _deployLPStaking() internal {
+        LPStaking lpStakingImpl = new LPStaking();
+        bytes memory initDataLPStaking = abi.encodeWithSelector(
+            LPStaking.initialize.selector,
+            address(werewolfToken),         // WLF token
+            netConfig.usdt,                  // USDT token
+            address(timelock),               // Owner
+            address(treasury),               // Reward source
+            netConfig.positionManager        // Uniswap v3 NFT manager
+        );
+        TransparentUpgradeableProxy lpStakingProxy = new TransparentUpgradeableProxy(
+                address(lpStakingImpl),
+                netConfig.multiSig,
+                initDataLPStaking
+            );
+        lpStaking = LPStaking(address(lpStakingProxy));
+    }
+
     function _deployDao() internal {
         DAO daoImpl = new DAO();
         bytes memory initDataDAO = abi.encodeWithSelector(
@@ -264,6 +294,7 @@ contract Deploy is Script {
             address(timelock),
             netConfig.usdt,
             address(staking),
+            address(lpStaking),
             address(uniswapHelper)
         );
         TransparentUpgradeableProxy tokenSaleProxy = new TransparentUpgradeableProxy(
@@ -309,6 +340,12 @@ contract Deploy is Script {
             vm.toString(address(staking))
         );
         vm.writeLine(path, stakingStr);
+
+        string memory lpStakingStr = string.concat(
+            "LPStaking:",
+            vm.toString(address(lpStaking))
+        );
+        vm.writeLine(path, lpStakingStr);
 
         string memory daoStr = string.concat("DAO:", vm.toString(address(dao)));
         vm.writeLine(path, daoStr);

@@ -22,7 +22,7 @@
 
   - [>] create/queue/execute proposals
 
-  - [] use checkPoints for voting power (`WLF`, `sWLF`, `WLF_(token)_LP`)
+  - [] use checkPoints for voting power (`WLF`, `sWLF`, `sWLF_(token)_LP`)
 
   - [] add emergency proposal when `emergency_pause` function is called by the 100% of voting power and only if proposal is queued
 
@@ -182,6 +182,10 @@ roles:
 - ...
 
 # Style Guidelines
+
+# Deploy Locally
+
+1 - run `make deploy-local`
 
 ...
 

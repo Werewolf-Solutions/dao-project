@@ -154,9 +154,9 @@ contract BaseTest is Test {
         werewolfToken.approve(address(tokenSale), tokenSaleAirdrop);
         mockUSDT.approve(address(tokenSale), amount);
 
-        // Buy tokens
+        // Buy tokens (updated signature: amount, tokenAmount, usdtAmount)
         tokenSale.buyTokens(
-            tokenSaleAirdrop, address(werewolfToken), address(mockUSDT), 100, -887272, 887272, tokenSaleAirdrop, amount
+            tokenSaleAirdrop, tokenSaleAirdrop, amount
         );
 
         uint256 founderWLFBalanceAfter = werewolfToken.balanceOf(founder);

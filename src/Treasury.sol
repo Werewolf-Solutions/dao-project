@@ -6,11 +6,13 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import "./WerewolfTokenV1.sol";
 import "./Staking.sol";
+import "./interfaces/ILPStaking.sol";
 
 contract Treasury is OwnableUpgradeable {
     // address public werewolfToken;
     WerewolfTokenV1 private werewolfToken;
     Staking public stakingContract;
+    ILPStaking public lpStakingContract;
 
     // Percentage threshold, e.g., 20 for 20%
     uint256 public thresholdPercentage = 20;
@@ -18,7 +20,10 @@ contract Treasury is OwnableUpgradeable {
     // Mapping to track allowed tokens (werewolfToken address => allowed)
     mapping(address => bool) public allowedTokens;
 
-    event RewardsDistributed(address indexed caller, uint256 amount);
+    // Mapping to track reward allocations for different staking contracts
+    mapping(address => uint256) public stakingRewardAllocations;
+
+    event RewardsDistributed(address indexed stakingContract, uint256 amount);
 
     constructor( /* address _token */ ) {
         /*       require(_token != address(0), "WerewolfTokenV1 address cannot be zero");
@@ -45,6 +50,19 @@ contract Treasury is OwnableUpgradeable {
 
     function setStakingContract(address _stakingAddress) external onlyOwner {
         stakingContract = Staking(_stakingAddress);
+    }
+
+    function setLPStakingContract(address _lpStaking) external onlyOwner {
+        require(_lpStaking != address(0), "Invalid LP staking address");
+        lpStakingContract = ILPStaking(_lpStaking);
+    }
+
+    function setStakingRewardAllocation(address _stakingContract, uint256 _amount)
+        external
+        onlyOwner
+    {
+        require(_stakingContract != address(0), "Invalid staking contract address");
+        stakingRewardAllocations[_stakingContract] = _amount;
     }
 
     // Function to add allowed tokens, can only be called by the DAO
@@ -83,6 +101,26 @@ contract Treasury is OwnableUpgradeable {
             werewolfToken.transfer(address(stakingContract), stakingContract.stakingRewards()), "Reward transfer failed"
         );
 
-        emit RewardsDistributed(msg.sender, stakingContract.stakingRewards());
+        emit RewardsDistributed(address(stakingContract), stakingContract.stakingRewards());
+    }
+
+    /**
+     * @notice Distribute rewards to LP staking contract
+     */
+    function distributeRewardsToLP() external {
+        require(address(lpStakingContract) != address(0), "LP staking not set");
+        uint256 allocation = stakingRewardAllocations[address(lpStakingContract)];
+        require(allocation > 0, "No allocation set for LP staking");
+        require(
+            werewolfToken.balanceOf(address(this)) >= allocation,
+            "Insufficient rewards"
+        );
+
+        require(
+            werewolfToken.transfer(address(lpStakingContract), allocation),
+            "Reward transfer failed"
+        );
+
+        emit RewardsDistributed(address(lpStakingContract), allocation);
     }
 }

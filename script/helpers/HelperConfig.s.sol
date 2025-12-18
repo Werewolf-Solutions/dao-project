@@ -14,6 +14,7 @@ contract HelperConfig is Script, Constants {
         uint256 deployerPrivateKey;
         address multiSig;
         address usdt;
+        address positionManager;  // Uniswap v3 NonfungiblePositionManager
     }
     ///////////////////////////////////////
     //           State Variables         //
@@ -52,8 +53,15 @@ contract HelperConfig is Script, Constants {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address multiSig = vm.envAddress("MULTISIG_ADDRESS");
 
-        sepoliaNetworkConfig =
-            NetworkConfig({usdt: mockUsdt, deployerPrivateKey: deployerPrivateKey, multiSig: multiSig});
+        // Uniswap v3 NonfungiblePositionManager on Sepolia
+        address positionManager = 0x1238536071E1c677A632429e3655c799b22cDA52;
+
+        sepoliaNetworkConfig = NetworkConfig({
+            usdt: mockUsdt,
+            deployerPrivateKey: deployerPrivateKey,
+            multiSig: multiSig,
+            positionManager: positionManager
+        });
     }
 
     function getLocalChainConfig() public returns (NetworkConfig memory localNetworkConfig) {
@@ -65,6 +73,15 @@ contract HelperConfig is Script, Constants {
         MockUSDT(mockUsdt).mint(defaultFoundryAddress, 1_000_000e6);
         vm.stopBroadcast();
         address multiSig = makeAddr("multiSig");
-        localNetworkConfig = NetworkConfig({deployerPrivateKey: deployerPrivateKey, multiSig: multiSig, usdt: mockUsdt});
+
+        // For local testing, use a placeholder address (in tests, we'd mock this)
+        address positionManager = makeAddr("uniswapPositionManager");
+
+        localNetworkConfig = NetworkConfig({
+            deployerPrivateKey: deployerPrivateKey,
+            multiSig: multiSig,
+            usdt: mockUsdt,
+            positionManager: positionManager
+        });
     }
 }
