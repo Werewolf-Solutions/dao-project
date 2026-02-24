@@ -96,17 +96,12 @@ contract Timelock is Initializable {
         emit NewPendingAdmin(pendingAdmin);
     }
 
-    // todo remove on production
-    event DebugSender(address sender, address expectedAdmin);
-
     function queueTransaction(
         address target,
         string memory signature,
         bytes memory data,
         uint256 eta
     ) public returns (bytes32) {
-        // todo remove on production
-        emit DebugSender(msg.sender, admin);
         require(
             msg.sender == admin,
             "Timelock::queueTransaction: Call must come from admin."
@@ -140,10 +135,6 @@ contract Timelock is Initializable {
         emit CancelTransaction(txHash, target, signature, data, eta);
     }
 
-    // todo remove on production
-    event DebugEta(uint256 eta);
-    event DebugEtaBool(bool over);
-
     function executeTransaction(
         address target,
         string memory signature,
@@ -162,9 +153,6 @@ contract Timelock is Initializable {
             queuedTransactions[txHash],
             "Timelock::executeTransaction: Transaction hasn't been queued."
         );
-        emit DebugEta(eta);
-        emit DebugEta(getBlockTimestamp());
-        emit DebugEtaBool(getBlockTimestamp() >= eta);
         require(
             getBlockTimestamp() >= eta,
             "Timelock::executeTransaction: Transaction hasn't surpassed time lock."

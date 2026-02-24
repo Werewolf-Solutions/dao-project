@@ -182,9 +182,6 @@ contract DAO is Initializable {
      */
     function vote(uint256 _proposalId, bool _support) external {
         Proposal storage proposal = proposals[_proposalId];
-
-        // question do we need this?
-        // _checkAndUpdateProposal(proposal);
         require(
             proposal.endTime >= block.timestamp,
             "DAO:vote voting period has finished"
@@ -204,11 +201,12 @@ contract DAO is Initializable {
         receipt.support = _support;
 
         uint256 _voteAmount = werewolfToken.balanceOf(msg.sender);
+        receipt.votes = uint96(_voteAmount);
 
         if (_support) {
-            proposal.votesFor += 1; //_voteAmount;
+            proposal.votesFor += _voteAmount;
         } else {
-            proposal.votesAgainst += 1; // _voteAmount;
+            proposal.votesAgainst += _voteAmount;
         }
 
         emit Voted(_proposalId, msg.sender, _support, _voteAmount);
@@ -223,22 +221,9 @@ contract DAO is Initializable {
         //@dev need to have a min execution requirement
 
         Proposal storage proposal = proposals[_proposalId];
-        //check the status of the proposal and update it if needed
-        // _checkAndUpdateProposal(proposal);
         require(
-            proposal.state != ProposalState.Executed,
-            "DAO:executeProposal Proposal already executed"
-        );
-        // require(
-        //     proposal.state == ProposalState.Succeeded,
-        //     "DAO:executeProposal proposal defeated"
-        // ); //question maybe just check it is on the succeeded state?
-
-        // Ensure the proposal has enough "For" votes (must be more than 50% of total votes)
-        uint256 totalVotes = proposal.votesFor + proposal.votesAgainst;
-        require(
-            proposal.votesFor > (totalVotes * quorumVotes()) / 1e18, //1e18 since the precision of the totalVotes and quorumVotes is 1e18
-            "DAO:executeProposal min quorum votes not reached"
+            proposal.state == ProposalState.Queued,
+            "DAO:executeProposal proposal is not queued"
         );
 
         // Mark the proposal as executed
@@ -267,7 +252,6 @@ contract DAO is Initializable {
     //           Public Functions        //
     ///////////////////////////////////////
 
-    // todo remove after testing
     function getEta(uint256 _proposalId) public view returns (uint256 eta) {
         Proposal storage proposal = proposals[_proposalId];
         return proposal.eta;
@@ -361,31 +345,21 @@ contract DAO is Initializable {
         // s_proposal.endTime = block.timestamp + votingPeriod();
     }
 
-    // todo remove after testing
-    function getTargets(
-        uint256 _proposalId
-    ) public view returns (uint256 targets) {
-        Proposal storage proposal = proposals[_proposalId];
-        // return proposal.targets;
-        return timelock.delay();
-    }
-
-    // todo remove after testing
     function getAdmin() public view returns (address _admin) {
         return timelock.admin();
     }
 
-    // todo remove after testing
-    function testAdmin() public view returns (bool isAdmin) {
-        return msg.sender == timelock.admin();
-        require(
-            msg.sender == timelock.admin(),
-            "DAO::testAdmin: Call must come from admin."
-        );
-    }
-
     function queueProposal(uint256 _proposalId) public {
         Proposal storage proposal = proposals[_proposalId];
+        require(
+            block.timestamp >= proposal.endTime,
+            "DAO::queueProposal: voting period has not ended"
+        );
+        _calculateResult(proposal);
+        require(
+            proposal.state == ProposalState.Succeeded,
+            "DAO::queueProposal: proposal did not succeed"
+        );
         uint256 eta = block.timestamp + timelock.delay();
         for (uint256 i = 0; i < proposal.targets.length; i++) {
             _queueOrRevert(
@@ -460,24 +434,11 @@ contract DAO is Initializable {
     ) internal {
         require(
             !timelock.queuedTransactions(
-                keccak256(abi.encode(target, signature, data))
+                keccak256(abi.encode(target, signature, data, eta))
             ),
             "DAO::_queueOrRevert: proposal action already queued at eta"
         );
         timelock.queueTransaction(target, signature, data, eta);
-    }
-
-    function _checkAndUpdateProposal(Proposal storage s_proposalPtr) internal {
-        if (
-            s_proposalPtr.startTime >= block.timestamp &&
-            s_proposalPtr.endTime <= block.timestamp
-        ) {
-            s_proposalPtr.state = ProposalState.Active;
-        } else if (s_proposalPtr.startTime < block.timestamp) {
-            revert("DAO:_checkAndUpdateProposal proposal not started");
-        } else if (s_proposalPtr.endTime < block.timestamp) {
-            _calculateResult(s_proposalPtr);
-        }
     }
 
     function _calculateResult(Proposal storage s_proposalPtr) internal {

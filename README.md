@@ -235,3 +235,103 @@ roles:
 
 9. **Proposal and Voting**
    - The founder proposes and votes for `tokenSale#1` using the `DAO` contract. This ensures the governance system is functional and the next token sale is prepared.
+
+# Testing
+
+## Run everything
+
+```bash
+forge test                   # all tests, summary
+forge test -vvvv             # all tests, full traces
+```
+
+## By suite
+
+```bash
+forge test --match-contract DaoTest              # 11 tests — DAO governance
+forge test --match-contract BaseTest             # 5 tests  — setup & ownership
+forge test --match-contract LPStakingTest        # 14 tests — LP staking vault
+forge test --match-contract TokenSaleWithLPTest  # 6 tests  — token sale + Uniswap LP flow
+forge test --match-contract StakingTest          # 2 tests  — staking APY
+```
+
+## DAO tests (DaoTest)
+
+```bash
+# Happy path — full proposal lifecycle (create → vote → queue → execute)
+forge test --match-test test_dao_mint_tokens_to_treasury
+
+# Admin & ownership
+forge test --match-test test_timelockAdminTransfer
+forge test --match-test test_ownership_transfers
+
+# Proposal state machine
+forge test --match-test test_proposal_state_transitions
+forge test --match-test test_cannot_queue_before_voting_ends
+forge test --match-test test_cannot_queue_defeated_proposal
+forge test --match-test test_cannot_execute_without_queuing
+forge test --match-test test_proposal_expired_after_grace_period
+
+# Voting
+forge test --match-test test_weighted_voting
+forge test --match-test test_cannot_vote_twice
+forge test --match-test test_vote_split_outcome
+```
+
+## Base setup tests (BaseTest)
+
+```bash
+forge test --match-test test_SetupProcess
+forge test --match-test test_AirdropToTokenSale
+forge test --match-test test_StartTokenSaleZero
+forge test --match-test test_TransferOwnershipToTimelock
+forge test --match-test test_FounderBuyTokens
+```
+
+## LP staking tests (LPStakingTest)
+
+```bash
+forge test --match-test test_Initialization
+forge test --match-test test_InitializeLPPosition
+forge test --match-test test_InitializeLPPosition_OnlyTokenSale
+forge test --match-test test_InitializeLPPosition_AlreadyInitialized
+forge test --match-test test_ClaimShares_FlexibleDuration
+forge test --match-test test_ClaimShares_FixedDuration
+forge test --match-test test_ClaimShares_MultipleUsers
+forge test --match-test test_CalculateAPY
+forge test --match-test test_GetPositionValue
+forge test --match-test test_GetPositionValue_NotInitialized
+forge test --match-test test_SetTokenSaleContract_OnlyOnce
+forge test --match-test test_SetTokenSaleContract_OnlyOwner
+forge test --match-test test_Constants
+forge test --match-test test_OnERC721Received
+```
+
+## Token sale tests (TokenSaleWithLPTest)
+
+```bash
+forge test --match-test test_FullLPStakingFlow
+forge test --match-test test_CannotClaimBeforeSaleEnds
+forge test --match-test test_CannotClaimTwice
+forge test --match-test test_EmptySaleHandling
+forge test --match-test test_PartialSaleCompletion
+forge test --match-test test_MultipleSequentialSales
+```
+
+## Staking tests (StakingTest)
+
+```bash
+forge test --match-test test_staking_setup
+forge test --match-test test_staking_apy_calculations
+```
+
+## Verbosity flags
+
+| Flag | Shows |
+|------|-------|
+| _(none)_ | pass/fail + gas |
+| `-vv` | `console.log` output |
+| `-vvv` | stack traces on failure |
+| `-vvvv` | full traces on every test |
+
+> `--match-test` matches by substring — e.g. `forge test --match-test test_cannot` runs all tests with "cannot" in the name.
