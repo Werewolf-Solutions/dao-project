@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ADDRESSES_FILE="script/output/deployed-addresses.txt"
+
+# ── 1. Start Anvil ────────────────────────────────────────────────────────────
+echo "Starting Anvil..."
+anvil --port 8545 &
+ANVIL_PID=$!
+trap 'kill "$ANVIL_PID" 2>/dev/null' EXIT
+sleep 1
+
+# ── 2. Deploy ─────────────────────────────────────────────────────────────────
+echo "Deploying contracts..."
+make deploy-local
+
+# ── 3. Parse deployed addresses ───────────────────────────────────────────────
+TIMELOCK_ADDRESS=$(grep "^TimeLock:" "$ADDRESSES_FILE" | cut -d: -f2)
+DAO_ADDRESS=$(grep      "^DAO:"      "$ADDRESSES_FILE" | cut -d: -f2)
+ADMIN_ETA=$(grep        "^AdminEta:" "$ADDRESSES_FILE" | cut -d: -f2)
+
+echo ""
+echo "Deployed addresses:"
+echo "  TimeLock : $TIMELOCK_ADDRESS"
+echo "  DAO      : $DAO_ADDRESS"
+echo "  AdminEta : $ADMIN_ETA"
+
+# ── 4. Advance Anvil time past the 2-day timelock delay ──────────────────────
+echo ""
+echo "Advancing Anvil time by 2 days (172800 seconds)..."
+cast rpc evm_increaseTime 172800 --rpc-url http://localhost:8545
+cast rpc evm_mine         1      --rpc-url http://localhost:8545
+
+# ── 5. Accept admin ───────────────────────────────────────────────────────────
+echo ""
+echo "Accepting Timelock admin (transferring to DAO)..."
+export TIMELOCK_ADDRESS DAO_ADDRESS ADMIN_ETA
+make accept-admin-local
+
+# ── 6. Verify ─────────────────────────────────────────────────────────────────
+ACTUAL=$(cast call "$TIMELOCK_ADDRESS" "admin()(address)" --rpc-url http://localhost:8545)
+
+if [ "$(echo "$ACTUAL" | tr '[:upper:]' '[:lower:]')" = \
+     "$(echo "$DAO_ADDRESS" | tr '[:upper:]' '[:lower:]')" ]; then
+    echo ""
+    echo "SUCCESS: Timelock admin = DAO ($DAO_ADDRESS)"
+else
+    echo ""
+    echo "FAIL: Timelock admin is $ACTUAL (expected $DAO_ADDRESS)"
+    exit 1
+fi
+
+echo ""
+echo "Local deploy complete. Anvil is still running (PID $ANVIL_PID)."
+echo "Press Ctrl+C to stop."
+wait "$ANVIL_PID"

@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Require env vars (set from deploy-sepolia output)
+: "${TIMELOCK_ADDRESS:?Set TIMELOCK_ADDRESS (from deployed-addresses.txt)}"
+: "${DAO_ADDRESS:?Set DAO_ADDRESS (from deployed-addresses.txt)}"
+: "${ADMIN_ETA:?Set ADMIN_ETA (from deployed-addresses.txt)}"
+
+# ── Accept admin ──────────────────────────────────────────────────────────────
+echo "Accepting Timelock admin on Sepolia..."
+export TIMELOCK_ADDRESS DAO_ADDRESS ADMIN_ETA
+make accept-admin-sepolia
+
+# ── Verify ────────────────────────────────────────────────────────────────────
+# Read RPC URL from environment or fall back to .env file
+RPC_URL="${SEPOLIA_RPC_URL:-$(grep '^SEPOLIA_RPC_URL' .env | cut -d= -f2)}"
+ACTUAL=$(cast call "$TIMELOCK_ADDRESS" "admin()(address)" --rpc-url "$RPC_URL")
+
+if [ "$(echo "$ACTUAL" | tr '[:upper:]' '[:lower:]')" = \
+     "$(echo "$DAO_ADDRESS" | tr '[:upper:]' '[:lower:]')" ]; then
+    echo "SUCCESS: Timelock admin = DAO ($DAO_ADDRESS)"
+else
+    echo "FAIL: Timelock admin is $ACTUAL (expected $DAO_ADDRESS)"
+    exit 1
+fi
