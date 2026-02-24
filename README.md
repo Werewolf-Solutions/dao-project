@@ -6,6 +6,16 @@
 
 # TODO
 
+- [] **token sale**
+
+  - [] buyTokens
+
+    - [] add liquidity to uniswap `WLF_(token)`
+
+      > https://docs.uniswap.org/contracts/v3/guides/providing-liquidity/setting-up
+
+    - [] stake `WLF_(token)_LP`
+
 - [] **staking**
 
   - [] calculateAPY
@@ -47,16 +57,6 @@
     - `emergencyVotingPeriod = 7 days`
 
     - if proposal is succeeded `emergencyQuorum = 100%` and `emergencyThreshold = 100%` the proposal is not queued but it's automatically executed `emergencyQueuePeriod = 0 days`
-
-- [] **token sale**
-
-  - [] buyTokens
-
-    - [] add liquidity to uniswap `WLF_(token)`
-
-      > https://docs.uniswap.org/contracts/v3/guides/providing-liquidity/setting-up
-
-    - [] stake `WLF_(token)_LP`
 
 - [] **companiesHouse**
 
