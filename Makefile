@@ -1,9 +1,38 @@
 include .env
 
+# ─── Local (Anvil on localhost:8545) ──────────────────────────────────────────
+
 deploy-local-dry:
 	forge script script/Deploy.s.sol:Deploy --fork-url http://localhost:8545
+
 deploy-local:
 	forge script script/Deploy.s.sol:Deploy --fork-url http://localhost:8545 --broadcast
+
+# Run after advancing Anvil time past the timelock delay:
+#   cast rpc evm_increaseTime 172800 && cast rpc evm_mine 1
+# Set env vars from script/output/deployed-addresses.txt before running:
+#   export TIMELOCK_ADDRESS=0x... DAO_ADDRESS=0x... ADMIN_ETA=...
+accept-admin-local:
+	forge script script/AcceptTimelockAdmin.s.sol:AcceptTimelockAdmin \
+		--fork-url http://localhost:8545 --broadcast
+
+# ─── Sepolia ──────────────────────────────────────────────────────────────────
+
+deploy-sepolia-dry:
+	forge script script/Deploy.s.sol:Deploy --rpc-url $(SEPOLIA_RPC_URL)
+
+deploy-sepolia:
+	forge script script/Deploy.s.sol:Deploy \
+		--rpc-url $(SEPOLIA_RPC_URL) --broadcast --verify
+
+# Run 2 days after deploy-sepolia.
+# Set env vars from script/output/deployed-addresses.txt before running:
+#   export TIMELOCK_ADDRESS=0x... DAO_ADDRESS=0x... ADMIN_ETA=...
+accept-admin-sepolia:
+	forge script script/AcceptTimelockAdmin.s.sol:AcceptTimelockAdmin \
+		--rpc-url $(SEPOLIA_RPC_URL) --broadcast
+
+# ─── Utils ────────────────────────────────────────────────────────────────────
 
 create-interfaces:
 	cast interface ./out/Counter.sol/Counter.json -n ICounter -o ./src/interfaces/ICounter.sol; \

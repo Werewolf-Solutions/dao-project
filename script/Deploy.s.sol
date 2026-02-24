@@ -41,6 +41,9 @@ contract Deploy is Script {
     UniswapHelper uniswapHelper;
     CompaniesHouseV1 companiesHouse;
 
+    // Admin transfer tracking
+    uint256 adminEta;
+
     function run() external {
         // setting up a helper contract that will handle mocks and mainnet address's etc
         // The helper will handle all dependencies/external contract that the protocol will interact with
@@ -101,7 +104,7 @@ contract Deploy is Script {
         treasury.transferOwnership(address(timelock));
         tokenSale.transferOwnership(address(timelock));
 
-        // _setTimelockAdmin();
+        _setTimelockAdmin();
 
         vm.stopBroadcast();
 
@@ -110,63 +113,18 @@ contract Deploy is Script {
     }
 
     function _setTimelockAdmin() internal {
-        // Step 1: Queue `setPendingAdmin(address(dao))`
-        bytes memory setPendingAdminCallData = abi.encode(address(dao));
-
-        console.log("Current Block Timestamp:", block.timestamp);
-        console.log("Timelock Delay:", timelock.delay());
-
-        uint256 eta = block.timestamp + timelock.delay(); // Ensure eta is exactly timelock.delay()
-
-        console.log("Queueing setPendingAdmin transaction at ETA:", eta);
-        console.log("QueueTransaction called by:", msg.sender);
-        console.log("Transaction ETA:", eta);
-        console.log("Required min ETA:", block.timestamp + timelock.delay());
+        bytes memory callData = abi.encode(address(dao));
+        adminEta = block.timestamp + timelock.delay();
 
         timelock.queueTransaction(
             address(timelock),
-            "setPendingAdmin(address)", // Function signature
-            setPendingAdminCallData,
-            eta
+            "setPendingAdmin(address)",
+            callData,
+            adminEta
         );
 
-        console.log("Warping to:", eta + 1);
-        vm.warp(eta + timelock.delay()); // Give extra buffer of 1 second
-        console.log("New Block Timestamp:", block.timestamp);
-        // console.log("Time Difference:", block.timestamp - eta);
-
-        bytes32 txHash = keccak256(
-            abi.encode(
-                address(timelock),
-                "setPendingAdmin(address)",
-                setPendingAdminCallData,
-                eta
-            )
-        );
-        console.log(
-            "Is transaction queued?",
-            timelock.queuedTransactions(txHash)
-        );
-        require(
-            timelock.queuedTransactions(txHash),
-            "Transaction was not properly queued!"
-        );
-
-        // Step 3: Execute `setPendingAdmin(address(dao))`
-        timelock.executeTransaction(
-            address(timelock),
-            "setPendingAdmin(address)", // Function signature
-            setPendingAdminCallData,
-            eta
-        );
-
-        // Step 4: DAO accepts admin role
-        dao.__acceptAdmin();
-
-        require(
-            timelock.admin() == address(dao),
-            "Timelock admin was not set correctly"
-        );
+        console.log("Timelock admin transfer queued. ETA:", adminEta);
+        console.log("Run `make accept-admin-*` after the timelock delay passes.");
     }
 
     function _deployTreasury() internal {
@@ -367,5 +325,10 @@ contract Deploy is Script {
             vm.toString(address(companiesHouse))
         );
         vm.writeLine(path, companiesHouseStr);
+
+        vm.writeLine(
+            path,
+            string.concat("AdminEta:", vm.toString(adminEta))
+        );
     }
 }
