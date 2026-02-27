@@ -152,24 +152,14 @@ contract TokenSaleWithLPTest is Test {
         _makePurchase(user1, 3_000_000 ether, 3_000e6);
         _makePurchase(user2, 4_000_000 ether, 4_000e6);
 
-        // 4. Buy last batch (auto-closes sale), then create LP in separate tx
+        // 4. Buy last batch (auto-closes sale), then create LP + auto-distribute shares
         uint256 totalWLF = 10_000_000 ether;
         uint256 totalUSDT = 10_000e6;
         _mockUniswapForEndSale(totalWLF, totalUSDT);
         _makePurchase(user3, 3_000_000 ether, 3_000e6);
-        tokenSale.endSale(); // permissionless after sale auto-closes
+        tokenSale.endSale(); // creates LP and auto-distributes shares to all buyers
 
-        // 6-8. Claim shares
-        vm.prank(user1);
-        tokenSale.claimLPShares(0, true);
-
-        vm.prank(user2);
-        tokenSale.claimLPShares(0, false);
-
-        vm.prank(user3);
-        tokenSale.claimLPShares(0, false);
-
-        // Verify proportional distribution
+        // Verify proportional distribution happened automatically (no claimLPShares needed)
         _verifyProportionalShares();
     }
 
@@ -231,13 +221,13 @@ contract TokenSaleWithLPTest is Test {
         tokenSale.buyTokens(purchaseAmount / 1e18, purchaseAmount, usdtAmount);
         vm.stopPrank();
 
-        tokenSale.endSale(); // create LP in separate tx (anyone can call after sale closes)
+        // endSale auto-distributes shares to all buyers (purchases zeroed)
+        tokenSale.endSale();
 
-        // Claim once
-        vm.prank(user1);
-        tokenSale.claimLPShares(0, false);
+        // User should already have shares
+        assertGt(lpStaking.balanceOf(user1), 0, "User should have shares after endSale");
 
-        // Try to claim again
+        // Attempting to claim again should fail (purchases already zeroed by endSale)
         vm.prank(user1);
         vm.expectRevert("No purchase to claim");
         tokenSale.claimLPShares(0, false);
@@ -284,10 +274,8 @@ contract TokenSaleWithLPTest is Test {
         assertEq(lpWLF, purchaseAmount, "LP should have sold WLF amount");
         assertEq(lpUSDT, usdtAmount, "LP should have collected USDT amount");
 
-        // User can claim shares
-        vm.prank(user1);
-        tokenSale.claimLPShares(0, false);
-        assertGt(lpStaking.balanceOf(user1), 0, "User should receive shares");
+        // Shares auto-distributed by endSale — verify user has received them
+        assertGt(lpStaking.balanceOf(user1), 0, "User should receive shares from auto-distribution");
     }
 
     function test_MultipleSequentialSales() public {
@@ -326,15 +314,9 @@ contract TokenSaleWithLPTest is Test {
         assertTrue(tokenSale.saleLPCreated(1), "Sale 1 LP should exist");
         assertNotEq(tokenSale.saleLPTokenId(0), tokenSale.saleLPTokenId(1), "Different token IDs");
 
-        // Both users can claim from their respective sales
-        vm.prank(user1);
-        tokenSale.claimLPShares(0, false);
-
-        vm.prank(user2);
-        tokenSale.claimLPShares(1, false);
-
-        assertGt(lpStaking.balanceOf(user1), 0, "User1 should have shares");
-        assertGt(lpStaking.balanceOf(user2), 0, "User2 should have shares");
+        // Both users' shares are auto-distributed by endSale — verify
+        assertGt(lpStaking.balanceOf(user1), 0, "User1 should have shares from sale 0 auto-distribution");
+        assertGt(lpStaking.balanceOf(user2), 0, "User2 should have shares from sale 1 auto-distribution");
     }
 
     // Helper function to mock Uniswap interactions for endSale

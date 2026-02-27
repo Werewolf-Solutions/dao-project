@@ -277,7 +277,7 @@ export default function TokenSale() {
             value={
               saleActive === undefined ? '…' :
                 <span className={saleActive ? 'text-green-400 font-semibold' : 'text-red-400'}>
-                  {saleActive ? 'Active' : 'Inactive'}
+                  {saleActive ? 'Active' : 'Ended'}
                 </span>
             }
           />
@@ -325,7 +325,8 @@ export default function TokenSale() {
             {!saleLPCreated && !saleLPETHCreated ? (
               <>
                 <p className={`text-sm mb-3 ${theme.textMuted}`}>
-                  The Uniswap LP position has not been created yet. Anyone can trigger this step.
+                  The Uniswap LP position has not been created yet. The owner triggers this step —
+                  it creates the LP and automatically locks all buyer shares for 5 years.
                 </p>
                 <Button
                   variant="success"
@@ -333,7 +334,7 @@ export default function TokenSale() {
                   onClick={handleEndSale}
                   loading={isEndSalePending || isEndSaleConfirming}
                 >
-                  Create LP Position
+                  Create LP &amp; Lock All Shares
                 </Button>
               </>
             ) : (

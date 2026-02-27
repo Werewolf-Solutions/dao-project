@@ -67,6 +67,10 @@ contract TokenSale is OwnableUpgradeable {
     mapping(uint256 saleId => uint256 lpTokenId) public saleLPTokenIdETH;  // ETH/WLF LP NFT
     mapping(uint256 saleId => bool lpCreated) public saleLPETHCreated;
 
+    // Buyer tracking for auto-distribution in endSale()
+    mapping(uint256 saleId => address[]) public saleBuyers;
+    mapping(uint256 saleId => mapping(address => bool)) private _buyerTracked;
+
     // WETH address for ETH/WLF LP creation
     address public wethAddress;
 
@@ -240,6 +244,12 @@ contract TokenSale is OwnableUpgradeable {
         saleUSDTWLFCollected[saleIdCounter] += tokenAmount;
         saleUSDTCollected[saleIdCounter] += usdtRequired;
 
+        // Track unique buyers for auto-distribution in endSale()
+        if (!_buyerTracked[saleIdCounter][msg.sender]) {
+            _buyerTracked[saleIdCounter][msg.sender] = true;
+            saleBuyers[saleIdCounter].push(msg.sender);
+        }
+
         emit TokensPurchased(msg.sender, _amount, saleIdCounter);
 
         // Auto-close sale when last token is sold (LP creation is a separate tx via endSale())
@@ -267,6 +277,12 @@ contract TokenSale is OwnableUpgradeable {
         purchases[saleIdCounter][msg.sender] += _amount;
         saleWLFCollected[saleIdCounter] += _amount;
         saleETHCollected[saleIdCounter] += ethRequired;
+
+        // Track unique buyers for auto-distribution in endSale()
+        if (!_buyerTracked[saleIdCounter][msg.sender]) {
+            _buyerTracked[saleIdCounter][msg.sender] = true;
+            saleBuyers[saleIdCounter].push(msg.sender);
+        }
 
         emit TokensPurchased(msg.sender, _amount, saleIdCounter);
 
@@ -379,6 +395,17 @@ contract TokenSale is OwnableUpgradeable {
             saleLPTokenIdETH[currentSale] = ethTokenId;
             saleLPETHCreated[currentSale] = true;
             emit LPCreated(currentSale, ethTokenId, wlfForETH, totalETH);
+        }
+
+        // ── Auto-distribute LP shares to all buyers (5-year lock) ──
+        address[] storage buyers = saleBuyers[currentSale];
+        for (uint256 i = 0; i < buyers.length; i++) {
+            address buyer = buyers[i];
+            uint256 amt = purchases[currentSale][buyer];
+            if (amt == 0) continue;
+            purchases[currentSale][buyer] = 0;
+            lpStaking.claimShares(buyer, currentSale, amt, true);
+            emit LPSharesClaimed(buyer, currentSale, amt, true);
         }
     }
 

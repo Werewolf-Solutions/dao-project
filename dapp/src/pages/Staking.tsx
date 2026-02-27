@@ -66,22 +66,16 @@ function LPSaleCard({ saleId, userAddress, lpStakingAddress, tokenSaleAddress }:
     args: [saleId],
   });
 
-  const { writeContract: writeClaim, data: claimTxHash, isPending: isClaimPending } = useWriteContract();
-  const { isLoading: isClaimConfirming, isSuccess: isClaimConfirmed } = useWaitForTransactionReceipt({ hash: claimTxHash });
-
   const { writeContract: writeEndSale, data: endSaleTxHash, isPending: isEndSalePending } = useWriteContract();
   const { isLoading: isEndSaleConfirming, isSuccess: isEndSaleConfirmed } = useWaitForTransactionReceipt({ hash: endSaleTxHash });
 
   useEffect(() => {
-    if (isClaimConfirmed) void refetchPurchase();
-  }, [isClaimConfirmed, refetchPurchase]);
+    if (isEndSaleConfirmed) {
+      void refetchUsdtLPCreated();
+      void refetchPurchase();
+    }
+  }, [isEndSaleConfirmed, refetchUsdtLPCreated, refetchPurchase]);
 
-  useEffect(() => {
-    if (isEndSaleConfirmed) void refetchUsdtLPCreated();
-  }, [isEndSaleConfirmed, refetchUsdtLPCreated]);
-
-  const canClaim = purchaseAmount !== undefined && purchaseAmount > 0n && (usdtLPCreated || ethLPCreated);
-  const isLoading = isClaimPending || isClaimConfirming;
   const isEndSaleLoading = isEndSalePending || isEndSaleConfirming;
   const anyLPExists = usdtLPCreated || ethLPCreated;
 
@@ -142,36 +136,11 @@ function LPSaleCard({ saleId, userAddress, lpStakingAddress, tokenSaleAddress }:
         </div>
       )}
 
-      {canClaim && (
-        <div className="mt-4">
-          <p className="text-xs mb-3" style={{ color: theme.textMuted }}>
-            Your purchase ({fmt18(purchaseAmount)} WLF) was paired with your payment to create a
-            Uniswap LP position. Staking it gives you{' '}
-            <strong className="text-white">LP shares</strong> that earn WLF rewards continuously.
-            Shares are locked for 5 years.
-          </p>
-          <Button
-            variant="primary"
-            onClick={() =>
-              writeClaim({
-                address: tokenSaleAddress,
-                abi: tokenSaleABI,
-                functionName: 'claimLPShares',
-                args: [saleId, true],
-              })
-            }
-            loading={isLoading}
-            disabled={isLoading}
-            fullWidth
-          >
-            Stake LP Position (5-yr lock)
-          </Button>
-          {isClaimConfirmed && (
-            <p className="text-sm mt-2" style={{ color: theme.textMuted }}>
-              Staked. Your LP shares balance is now updated above.
-            </p>
-          )}
-        </div>
+      {anyLPExists && purchaseAmount !== undefined && purchaseAmount > 0n && (
+        <p className="text-xs mt-3" style={{ color: theme.textMuted }}>
+          Your LP shares were automatically locked for 5 years when the sale ended.
+          Check your <strong className="text-white">LP staking shares (sWLP)</strong> balance above.
+        </p>
       )}
     </Card>
   );
@@ -336,6 +305,8 @@ export default function Staking() {
 
   const { writeContract: writeLp, data: lpTxHash, isPending: isLpPending } = useWriteContract();
   const { isLoading: isLpConfirming, isSuccess: isLpConfirmed } = useWaitForTransactionReceipt({ hash: lpTxHash });
+  const { writeContract: writeCompound, data: compoundTxHash, isPending: isCompoundPending } = useWriteContract();
+  const { isLoading: isCompoundConfirming, isSuccess: isCompoundConfirmed } = useWaitForTransactionReceipt({ hash: compoundTxHash });
   const [lastLpAction, setLastLpAction] = useState('');
 
   useEffect(() => {
@@ -344,6 +315,10 @@ export default function Staking() {
       void refetchLpShares();
     }
   }, [isLpConfirmed, refetchLpEarned, refetchLpShares]);
+
+  useEffect(() => {
+    if (isCompoundConfirmed) void refetchLpEarned();
+  }, [isCompoundConfirmed, refetchLpEarned]);
 
   // ── Derived ─────────────────────────────────────────────────────────────
 
@@ -408,6 +383,17 @@ export default function Staking() {
     if (!lpStakingAddress) return;
     setLastLpAction('claim-rewards');
     writeLp({ address: lpStakingAddress, abi: lpStakingABI, functionName: 'claimRewards', args: [] });
+  };
+
+  const handleLpCompoundRewards = (fixedDuration: boolean) => {
+    if (!lpStakingAddress || !stakingAddress) return;
+    setLastLpAction(fixedDuration ? 'compound-fixed' : 'compound-flexible');
+    writeCompound({
+      address: lpStakingAddress,
+      abi: lpStakingABI,
+      functionName: 'claimAndStakeRewards',
+      args: [stakingAddress, fixedDuration],
+    });
   };
 
   const handleLpWithdraw = () => {
@@ -574,15 +560,35 @@ export default function Staking() {
                   <p className={`text-sm mb-2 ${theme.textMuted}`}>
                     Accrued: <span className="font-mono">{fmt18(displayReward, 6)} WLF</span>
                   </p>
-                  <Button
-                    variant="primary"
-                    fullWidth
-                    onClick={handleLpClaimRewards}
-                    loading={isLpLoading && lastLpAction === 'claim-rewards'}
-                    disabled={isLpLoading || !displayReward || displayReward === 0n}
-                  >
-                    Claim WLF Rewards
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="primary"
+                      fullWidth
+                      onClick={handleLpClaimRewards}
+                      loading={isLpLoading && lastLpAction === 'claim-rewards'}
+                      disabled={isLpLoading || isCompoundPending || isCompoundConfirming || !displayReward || displayReward === 0n}
+                    >
+                      Withdraw to Wallet
+                    </Button>
+                    <Button
+                      variant="success"
+                      fullWidth
+                      onClick={() => handleLpCompoundRewards(false)}
+                      loading={(isCompoundPending || isCompoundConfirming) && lastLpAction === 'compound-flexible'}
+                      disabled={isLpLoading || isCompoundPending || isCompoundConfirming || !displayReward || displayReward === 0n}
+                    >
+                      Stake WLF (Flexible)
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      fullWidth
+                      onClick={() => handleLpCompoundRewards(true)}
+                      loading={(isCompoundPending || isCompoundConfirming) && lastLpAction === 'compound-fixed'}
+                      disabled={isLpLoading || isCompoundPending || isCompoundConfirming || !displayReward || displayReward === 0n}
+                    >
+                      Stake WLF (Fixed 30d)
+                    </Button>
+                  </div>
                 </div>
 
                 <div>
@@ -606,9 +612,11 @@ export default function Staking() {
               </div>
 
               <p className={`text-xs mt-4 ${theme.textMuted}`}>
-                Rewards accrue continuously. Use <strong>Claim WLF Rewards</strong> to receive them.
-                Withdrawing shares does <strong>not</strong> auto-claim rewards — always claim first.
-                LP shares are locked for 5 years from your first claim.
+                Rewards accrue continuously. <strong>Withdraw to Wallet</strong> sends WLF to your address.{' '}
+                <strong>Stake WLF (Flexible)</strong> stakes with no lock.{' '}
+                <strong>Stake WLF (Fixed 30d)</strong> locks for 30 days and earns +5% APY bonus.
+                Withdrawing LP shares does <strong>not</strong> auto-claim rewards — always claim first.
+                LP shares are locked for 5 years from sale end.
               </p>
             </Card>
           </>

@@ -67,6 +67,11 @@ interface IPositionManager {
     function transferFrom(address from, address to, uint256 tokenId) external;
 }
 
+interface IStakingVault {
+    function stakeFlexibleDuration(address _staker, uint256 _amount) external;
+    function stakeFixedDuration(address _staker, uint256 _amount) external;
+}
+
 /* Contract layout:
  Data types: structs, enums, and type declarations
  State Variables
@@ -158,6 +163,7 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
     event SharesWithdrawn(address indexed user, uint256 shares, uint256 wlfAmount, uint256 usdtAmount);
     event FeesCollected(uint256 indexed saleId, uint256 wlf, uint256 usdt);
     event RewardsDistributed(address indexed user, uint256 amount);
+    event RewardsCompounded(address indexed user, uint256 amount);
     event LockedStakesUpdated(address indexed staker, uint256 amount);
 
     ///////////////////////////////////////
@@ -409,6 +415,26 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
             );
             emit RewardsDistributed(msg.sender, reward);
         }
+    }
+
+    /**
+     * @notice Claims accrued WLF rewards and stakes them in the WLF staking vault.
+     * @param stakingVault Address of the Staking contract
+     * @param fixedDuration True for 30-day fixed lock (+5% APY), false for flexible (no lock)
+     */
+    function claimAndStakeRewards(address stakingVault, bool fixedDuration) external updateReward(msg.sender) {
+        uint256 reward = rewards[msg.sender];
+        require(reward > 0, "LPStaking: No rewards to compound");
+        rewards[msg.sender] = 0;
+
+        IERC20(address(wlfToken)).approve(stakingVault, reward);
+        if (fixedDuration) {
+            IStakingVault(stakingVault).stakeFixedDuration(msg.sender, reward);
+        } else {
+            IStakingVault(stakingVault).stakeFlexibleDuration(msg.sender, reward);
+        }
+
+        emit RewardsCompounded(msg.sender, reward);
     }
 
     ///////////////////////////////////////

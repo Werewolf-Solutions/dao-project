@@ -191,6 +191,24 @@ export const lpStakingABI = [
   },
   {
     "type": "function",
+    "name": "claimAndStakeRewards",
+    "inputs": [
+      {
+        "name": "stakingVault",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "fixedDuration",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "claimRewards",
     "inputs": [],
     "outputs": [],
@@ -1106,6 +1124,25 @@ export const lpStakingABI = [
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardsCompounded",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
