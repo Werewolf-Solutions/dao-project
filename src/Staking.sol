@@ -1,15 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-//Debugging
-import {console} from "forge-std/Test.sol";
-
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC4626Upgradeable.sol";
-
-// @dev Might be better to use something like erc1155 for the shares and clearly
-// differenitate between locked and unlocked shares
 
 /* Contract layout:
  Data types: structs, enums, and type declarations
@@ -25,45 +19,80 @@ import "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC4626Upgrad
 */
 contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
     ///////////////////////////////////////
-    //           Constants              //
+    //           Constants               //
     ///////////////////////////////////////
-    uint256 public constant MIN_APY = 6_000;
-    uint256 public constant MAX_APY = 80_000;
-    uint256 public constant LOCKED_STAKE_BONUS_APY = 5_000;
-    uint256 public constant PERCENTAGE_SCALE = 1e5;
-    uint256 public constant SCALE = 1e18;
-    uint256 public constant YEAR_IN_TIME = 365 days;
-    uint256 public constant EPOCH_DURATION = 30 days;
+    uint256 public constant PERCENTAGE_SCALE = 1e5;     // 100_000 = 100%
+    uint256 public constant SCALE            = 1e18;
+    uint256 public constant YEAR_IN_TIME     = 365 days;
+
+    // Valid fixed-duration lock periods (immutable — define the allowed set)
+    uint256 public constant DURATION_30D  = 30 days;
+    uint256 public constant DURATION_3MO  = 90 days;
+    uint256 public constant DURATION_6MO  = 180 days;
+    uint256 public constant DURATION_1YR  = 365 days;
+    uint256 public constant DURATION_2YR  = 730 days;
+    uint256 public constant DURATION_5YR  = 1825 days;
+    uint256 public constant DURATION_10YR = 3650 days;
 
     ///////////////////////////////////////
     //           Data Types              //
     ///////////////////////////////////////
 
+    struct StakePosition {
+        uint256 shares;    // sWLF shares allocated to this position
+        uint256 assets;    // WLF deposited (informational, not used in math)
+        uint256 stakedAt;  // block.timestamp when created
+        uint256 unlockAt;  // 0 = flexible; future timestamp for fixed
+        uint256 bonusApy;  // extra APY (PERCENTAGE_SCALE units); 0 for flexible
+        bool    active;    // false once fully withdrawn
+    }
+
     ///////////////////////////////////////
     //           State Variables         //
     ///////////////////////////////////////
-    IERC20 public stakingToken;
-    uint256 public stakedBalance;
-    uint256 public stakingRewards;
-    // shares per token
-    // uint256 public sharesPerToken;
+    IERC20  public stakingToken;
+    uint256 public stakedBalance;   // total WLF held (including accrued rewards)
+    uint256 public stakingRewards;  // reserve added by owner
     uint256 public lastUpdateTime;
-    uint256 public currentEpoch;
 
-    // mapping(address => StakeInfo) public stakes;
-    //contract total locked amount
-    mapping(uint256 epoch => uint256) public epochToLockedAmount;
-    mapping(uint256 epoch => mapping(address => uint256)) public lockedStakes;
-    mapping(address => uint256[]) public userToLockedEpochs;
+    mapping(address => StakePosition[]) public stakePositions;
+
+    // Governance-adjustable APY parameters (set in initialize; changeable via DAO)
+    uint256 public minApy;  // floor APY in PERCENTAGE_SCALE units (e.g. 6_000 = 6%)
+    uint256 public maxApy;  // ceiling APY in PERCENTAGE_SCALE units (e.g. 80_000 = 80%)
+
+    // Bonus APY per fixed lock duration (duration seconds → PERCENTAGE_SCALE units)
+    mapping(uint256 => uint256) public durationBonus;
+
+    // Treasury address — used to compute circulating supply for APY decay curve
+    address public treasury;
+
+    // Cached result of calculateApy() — updated on every _updateRewardPerToken() call.
+    // Read this directly from the frontend instead of calling calculateApy().
+    uint256 public currentApy;
+
     ///////////////////////////////////////
     //           Events                  //
     ///////////////////////////////////////
-
-    event TokensStaked(address indexed staker, uint256 indexed amount, uint256 indexed epoch, bool isFixed);
-    event TokensWithdrawn(address indexed staker, uint256 amountWithdrawn, uint256 sharesBurned);
+    event TokensStaked(
+        address indexed staker,
+        uint256 positionIndex,
+        uint256 assets,
+        uint256 shares,
+        bool    isFixed,
+        uint256 unlockAt,
+        uint256 bonusApy
+    );
+    event TokensWithdrawn(
+        address indexed staker,
+        uint256 positionIndex,
+        uint256 assetsWithdrawn,
+        uint256 sharesBurned
+    );
     event RewardsAdded(uint256 amount);
-    event LockedStakesUpdated(address indexed staker, uint256 amount);
-    event LockedTokenTransferred(address indexed from, address indexed to, uint256 amount);
+    event ApyBoundsUpdated(uint256 minApy, uint256 maxApy);
+    event DurationBonusUpdated(uint256 duration, uint256 bonus);
+    event TreasuryUpdated(address treasury);
 
     ///////////////////////////////////////
     //      Constructor/Initializer      //
@@ -75,17 +104,29 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
 
     /**
      * @notice Initialize the staking contract
-     * @param _stakingToken The a token that will be staked and used for rewards
-     * @param _timelock contract which will handle the governance
+     * @param _stakingToken WLF token address
+     * @param _timelock     Timelock / owner address
      */
     function initialize(address _stakingToken, address _timelock) public initializer {
-        //staked token which will be WLF
         stakingToken = IERC20(_stakingToken);
-
-        // decimals will be the same as the staking token thus 18
-        __ERC4626_init(stakingToken); //Staked Werewolf Token
-        // Time lock contract which will handle the governance
+        __ERC4626_init(stakingToken);
         __Ownable_init(_timelock);
+
+        // Default APY bounds
+        minApy = 6_000;   // 6%
+        maxApy = 80_000;  // 80%
+
+        // Default duration bonuses
+        durationBonus[DURATION_30D]  = 5_000;   // 1.05x
+        durationBonus[DURATION_3MO]  = 10_000;  // 1.1x
+        durationBonus[DURATION_6MO]  = 15_000;  // 1.2x (approx)
+        durationBonus[DURATION_1YR]  = 25_000;  // 1.5x
+        durationBonus[DURATION_2YR]  = 40_000;  // 2x
+        durationBonus[DURATION_5YR]  = 60_000;  // 2.5x
+        durationBonus[DURATION_10YR] = 80_000;  // 3x
+
+        // Seed the cache: nothing staked yet → maxApy
+        currentApy = maxApy;
     }
 
     ///////////////////////////////////////
@@ -93,59 +134,188 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
     ///////////////////////////////////////
 
     /**
-     * @notice Stake tokens for a fixed duration
-     * @param _owner The address that will receive the staked shares
-     * @param _amount The amount of tokens to stake
+     * @notice Stake WLF with no lock (flexible).
+     * @param _amount WLF amount to stake
+     */
+    function stakeFlexible(uint256 _amount) external {
+        _createPosition(msg.sender, _amount, 0, 0);
+    }
+
+    /**
+     * @notice Stake WLF for a fixed lock duration.
+     * @param _amount   WLF amount to stake
+     * @param _duration One of the DURATION_* constants (seconds)
+     */
+    function stakeFixed(uint256 _amount, uint256 _duration) external {
+        uint256 bonus = _bonusApyForDuration(_duration);
+        require(bonus > 0, "Staking: invalid duration");
+        _createPosition(msg.sender, _amount, block.timestamp + _duration, bonus);
+    }
+
+    // ── Backward-compat aliases (called by LPStaking.claimAndStakeRewards) ──
+
+    /**
+     * @notice Stake tokens for a fixed 30-day duration (legacy interface).
+     * @dev msg.sender supplies the tokens; _owner receives the position.
      */
     function stakeFixedDuration(address _owner, uint256 _amount) external {
-        _stake(_owner, _amount, true);
+        _createPosition(_owner, _amount, block.timestamp + DURATION_30D, durationBonus[DURATION_30D]);
     }
 
     /**
-     * @notice Stake tokens for a flexible duration
-     * @param _owner The address that will receive the staked shares
-     * @param _amount The amount of tokens to stake
+     * @notice Stake tokens with no lock (legacy interface).
+     * @dev msg.sender supplies the tokens; _owner receives the position.
      */
     function stakeFlexibleDuration(address _owner, uint256 _amount) external {
-        _stake(_owner, _amount, false);
+        _createPosition(_owner, _amount, 0, 0);
     }
 
     /**
-     * @dev Will revert if the caller does not have enough token balance to mint
-     * the specified amount of shares
-     * @notice Needed to be compliant with the ERC4626 interface
-     * @notice Mint shares for the specified amount of tokens
-     * @param _shares The amount of shares to mint
-     * @param _receiver The address that will receive the minted shares
+     * @notice Withdraw an entire position (must be unlocked).
+     * @param _index Index in stakePositions[msg.sender]
      */
-    function mint(uint256 _shares, address _receiver) public override returns (uint256) {
-        //Round up to increase the deposited amount
-        uint256 assetAmount = _convertToAssets(_shares, Math.Rounding.Ceil);
-        _stake(_receiver, assetAmount, false);
-        // returns assetDeposited;
-    }
-
-    function deposit(uint256 _asset, address _receiver) public override returns (uint256) {
-        _stake(_receiver, _asset, false);
-        //returns sharesMinted;
+    function withdrawPosition(uint256 _index) external returns (uint256 withdrawn) {
+        StakePosition storage pos = stakePositions[msg.sender][_index];
+        require(pos.active, "Staking: position withdrawn");
+        require(pos.unlockAt == 0 || block.timestamp >= pos.unlockAt, "Staking: still locked");
+        withdrawn = _withdrawFromPosition(msg.sender, _index, pos.shares);
     }
 
     /**
-     * @dev returns the amount of shares that can be minted for the specified amount of tokens
+     * @notice Withdraw a partial asset amount from a position (must be unlocked).
+     * @param _index       Position index
+     * @param _assetAmount WLF amount to withdraw
      */
+    function withdrawAmountFromPosition(uint256 _index, uint256 _assetAmount) external returns (uint256 withdrawn) {
+        StakePosition storage pos = stakePositions[msg.sender][_index];
+        require(pos.active, "Staking: position withdrawn");
+        require(pos.unlockAt == 0 || block.timestamp >= pos.unlockAt, "Staking: still locked");
+        uint256 sharesToBurn = _convertToShares(_assetAmount, Math.Rounding.Ceil);
+        require(sharesToBurn <= pos.shares, "Staking: exceeds position");
+        withdrawn = _withdrawFromPosition(msg.sender, _index, sharesToBurn);
+    }
+
+    /**
+     * @notice Withdraw all unlocked positions in one transaction.
+     */
+    function withdrawAll() external {
+        StakePosition[] storage positions = stakePositions[msg.sender];
+        bool found;
+        for (uint256 i = 0; i < positions.length; i++) {
+            if (!positions[i].active) continue;
+            if (positions[i].unlockAt > 0 && block.timestamp < positions[i].unlockAt) continue;
+            _withdrawFromPosition(msg.sender, i, positions[i].shares);
+            found = true;
+        }
+        require(found, "Staking: no unlocked positions");
+    }
+
+    /**
+     * @notice ERC4626-compatible withdraw (withdraws from unlocked positions, oldest first).
+     */
+    function withdraw(uint256 _assetAmount, address _receiver, address _owner)
+        public
+        virtual
+        override
+        returns (uint256 sharesBurned)
+    {
+        require(_assetAmount > 0, "Staking: amount must be > 0");
+        require(_owner == msg.sender, "Staking: only owner");
+        require(_receiver != address(0), "Staking: zero receiver");
+        _updateRewardPerToken();
+        uint256 remaining = _convertToShares(_assetAmount, Math.Rounding.Ceil);
+        sharesBurned = remaining;
+        StakePosition[] storage positions = stakePositions[_owner];
+        for (uint256 i = 0; i < positions.length && remaining > 0; i++) {
+            if (!positions[i].active) continue;
+            if (positions[i].unlockAt > 0 && block.timestamp < positions[i].unlockAt) continue;
+            uint256 toTake = remaining < positions[i].shares ? remaining : positions[i].shares;
+            positions[i].shares -= toTake;
+            if (positions[i].shares == 0) positions[i].active = false;
+            remaining -= toTake;
+        }
+        require(remaining == 0, "Staking: insufficient unlocked");
+        stakedBalance -= _assetAmount;
+        _burn(_owner, sharesBurned);
+        require(stakingToken.transfer(_receiver, _assetAmount), "Staking: transfer failed");
+        emit TokensWithdrawn(_owner, type(uint256).max, _assetAmount, sharesBurned);
+    }
+
+    /**
+     * @notice Return all positions for a user (including withdrawn ones).
+     */
+    function getPositions(address _user) external view returns (StakePosition[] memory) {
+        return stakePositions[_user];
+    }
+
+    /**
+     * @notice Number of positions (including withdrawn) for a user.
+     */
+    function getPositionCount(address _user) external view returns (uint256) {
+        return stakePositions[_user].length;
+    }
+
+    /**
+     * @notice Add WLF to the staking rewards reserve.
+     */
+    function addStakingRewards(uint256 _amount) external onlyOwner {
+        require(_amount > 0, "Staking: amount must be > 0");
+        require(stakingToken.transferFrom(msg.sender, address(this), _amount), "Staking: transfer failed");
+        stakingRewards += _amount;
+        emit RewardsAdded(_amount);
+    }
+
+    /**
+     * @notice Update the minimum and maximum base APY bounds.
+     * @dev Callable by the Timelock (owner), which is governed by DAO proposals.
+     * @param _minApy New minimum APY in PERCENTAGE_SCALE units (e.g. 6_000 = 6%)
+     * @param _maxApy New maximum APY in PERCENTAGE_SCALE units (e.g. 80_000 = 80%)
+     */
+    function setApyBounds(uint256 _minApy, uint256 _maxApy) external onlyOwner {
+        require(_minApy < _maxApy, "Staking: min >= max");
+        require(_maxApy <= PERCENTAGE_SCALE, "Staking: max > 100%");
+        minApy = _minApy;
+        maxApy = _maxApy;
+        emit ApyBoundsUpdated(_minApy, _maxApy);
+    }
+
+    /**
+     * @notice Set the bonus APY for a specific lock duration.
+     * @dev Callable by the Timelock (owner), which is governed by DAO proposals.
+     *      Setting a duration's bonus to 0 effectively disables that lock option.
+     * @param _duration Lock duration in seconds (should be one of the DURATION_* constants)
+     * @param _bonus    Bonus APY in PERCENTAGE_SCALE units (e.g. 25_000 = 25%)
+     */
+    function setBonusForDuration(uint256 _duration, uint256 _bonus) external onlyOwner {
+        require(_bonus <= PERCENTAGE_SCALE, "Staking: bonus > 100%");
+        durationBonus[_duration] = _bonus;
+        emit DurationBonusUpdated(_duration, _bonus);
+    }
+
+    /**
+     * @notice Set the treasury address used to compute circulating supply in the APY curve.
+     * @dev Call this once after deployment. Callable by Timelock (owner) if it needs to change.
+     * @param _treasury Treasury contract address
+     */
+    function setTreasury(address _treasury) external onlyOwner {
+        require(_treasury != address(0), "Staking: zero treasury");
+        treasury = _treasury;
+        emit TreasuryUpdated(_treasury);
+    }
+
+    ///////////////////////////////////////
+    //           Public Functions        //
+    ///////////////////////////////////////
+
     function convertToShares(uint256 _asset) public view override returns (uint256) {
         return super._convertToShares(_asset, Math.Rounding.Floor);
     }
 
-    /**
-     * @dev returns the amount of tokens that can be minted for the specified amount of shares
-     */
     function convertToAssets(uint256 _shares) public view override returns (uint256) {
         return super._convertToAssets(_shares, Math.Rounding.Floor);
     }
 
     function maxWithdraw(address _owner) public view override returns (uint256) {
-        //Question should this inlude locked shares?
         return _convertToAssets(balanceOf(_owner), Math.Rounding.Floor);
     }
 
@@ -158,359 +328,140 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
     }
 
     /**
-     * @dev _stakes the specified amount of tokens for the specified duration
-     * @param _receiver The address that will receive the staked shares
-     * @param _amount The amount of tokens to stake
-     * @param _isFixed A boolean indicating if the stake is fixed or flexible
+     * @notice Current base APY (half-life decay based on staking ratio).
+     * @return APY in PERCENTAGE_SCALE units (80_000 = 80%)
      */
-    function _stake(address _receiver, uint256 _amount, bool _isFixed) internal {
-        require(_amount > 0, "Staking:_stake Amount must be greater than zero");
-        require(stakingToken.transferFrom(msg.sender, address(this), _amount), "Staking:_stake Token transfer failed");
+    /**
+     * @notice Current base APY using circulating supply (total supply minus treasury) as denominator.
+     * @dev Matches the frontend staking ratio display: ratio = staked / (totalSupply - treasury).
+     * @return APY in PERCENTAGE_SCALE units (e.g. 80_000 = 80%)
+     */
+    function calculateApy() public view returns (uint256) {
+        if (stakedBalance == 0) return maxApy;
+        uint256 tokenTotalSupply = stakingToken.totalSupply();
+        if (tokenTotalSupply == 0) return maxApy;
 
-        // update the reward per token, increasing share value
+        // Circulating supply excludes treasury holdings (not yet distributed to the market)
+        uint256 treasuryBalance = treasury != address(0) ? stakingToken.balanceOf(treasury) : 0;
+        uint256 circulatingSupply = tokenTotalSupply > treasuryBalance
+            ? tokenTotalSupply - treasuryBalance
+            : tokenTotalSupply;
+        if (circulatingSupply == 0) return maxApy;
+
+        uint256 stakingRatio = (stakedBalance * SCALE) / circulatingSupply;
+        uint256 exponent = stakingRatio / 1e17;
+        uint256 apyValue = SCALE * minApy + ((maxApy - minApy) * SCALE) / (2 ** exponent);
+        return apyValue / SCALE;
+    }
+
+    ///////////////////////////////////////
+    //           Internal Functions      //
+    ///////////////////////////////////////
+
+    /**
+     * @dev Core staking logic: transfers tokens, mints shares, records the position.
+     *      msg.sender supplies the tokens; _receiver owns the position.
+     */
+    function _createPosition(
+        address _receiver,
+        uint256 _amount,
+        uint256 _unlockAt,
+        uint256 _bonusApy
+    ) internal {
+        require(_amount > 0, "Staking: amount must be > 0");
+        require(stakingToken.transferFrom(msg.sender, address(this), _amount), "Staking: transfer failed");
+
         _updateRewardPerToken();
 
         uint256 sharesToMint = _convertToShares(_amount, Math.Rounding.Floor);
-
-        // stakedBalance is use as the totalAssets amount
         stakedBalance += _amount;
 
-        // Set the end stake time if it is a fixed-duration stake
-        if (_isFixed) {
-            //using epochs for the lock period
-            userToLockedEpochs[_receiver].push(currentEpoch);
-            //epoch staked amount
-            epochToLockedAmount[currentEpoch] += sharesToMint;
-        }
+        uint256 idx = stakePositions[_receiver].length;
+        stakePositions[_receiver].push(StakePosition({
+            shares:   sharesToMint,
+            assets:   _amount,
+            stakedAt: block.timestamp,
+            unlockAt: _unlockAt,
+            bonusApy: _bonusApy,
+            active:   true
+        }));
 
-        // The will increase the totalSuppply of shares
         _mint(_receiver, sharesToMint);
-
-        emit TokensStaked(_receiver, _amount, currentEpoch, _isFixed);
+        emit TokensStaked(_receiver, idx, _amount, sharesToMint, _unlockAt > 0, _unlockAt, _bonusApy);
     }
 
     /**
-     * @dev Update the locked stakes for the specified user
-     * @param _user The address of the user to update
+     * @dev Burns _sharesToBurn from position[_index] and sends the corresponding assets to _user.
      */
-    function _updateLockedStakes(address _user) internal {
-        // bonus reward for for locking the tokens
-        uint256 reward;
-        //we will mint bonus shares for locking the tokens
-        uint256 sharesToMint;
-        //bitmap to store the indeces to remove from storage
-        uint256 indecesToRemoveBitMap;
-
-        //update the locked stakes
-        for (uint256 i = 0; i < userToLockedEpochs[_user].length; i++) {
-            if (userToLockedEpochs[_user][i] >= (currentEpoch - 1)) {
-                continue;
-            }
-            // using bitwise or to set the bit at the index
-            indecesToRemoveBitMap = indecesToRemoveBitMap | (1 << i);
-            uint256 epoch = userToLockedEpochs[_user][i];
-            uint256 lockedAmount = lockedStakes[epoch][_user];
-            //reward can be considered as asset amount
-            reward += _lockStakeBonusRewards(lockedAmount);
-        }
-
-        // if there are no epochs to remove, return
-        if (indecesToRemoveBitMap == 0) {
-            return;
-        }
-
-        // determine the most significant bit
-        // we will iterate through the bitmap to remove the epochs
-        uint256 mostSigbit = _mostSignificantBit(indecesToRemoveBitMap);
-        for (uint256 i = 0; i < mostSigbit; i++) {
-            // a bit will signify that the epoch is to be removed
-            if (indecesToRemoveBitMap & (1 << i) == 1) {
-                _removeEpochFromUser(_user, i);
-            }
-        }
-
-        emit LockedStakesUpdated(_user, reward);
-        _stake(_user, reward, false);
-    }
-
-    function _removeEpochFromUser(address _user, uint256 _index) internal {
-        uint256 lastEpoch = userToLockedEpochs[_user].length - 1;
-        userToLockedEpochs[_user][_index] = userToLockedEpochs[_user][lastEpoch];
-        userToLockedEpochs[_user].pop();
-    }
-
-    function _mostSignificantBit(uint256 x) internal pure returns (uint256 msb) {
-        assembly {
-            let f := shl(7, gt(x, 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF))
-            x := shr(f, x)
-            // or can be replaced with add
-            msb := or(msb, f)
-        }
-        assembly {
-            let f := shl(6, gt(x, 0xFFFFFFFFFFFFFFFF))
-            x := shr(f, x)
-            msb := or(msb, f)
-        }
-        assembly {
-            let f := shl(5, gt(x, 0xFFFFFFFF))
-            x := shr(f, x)
-            msb := or(msb, f)
-        }
-        assembly {
-            let f := shl(4, gt(x, 0xFFFF))
-            x := shr(f, x)
-            msb := or(msb, f)
-        }
-        assembly {
-            let f := shl(3, gt(x, 0xFF))
-            x := shr(f, x)
-            msb := or(msb, f)
-        }
-        assembly {
-            let f := shl(2, gt(x, 0xF))
-            x := shr(f, x)
-            msb := or(msb, f)
-        }
-        assembly {
-            let f := shl(1, gt(x, 0x3))
-            x := shr(f, x)
-            msb := or(msb, f)
-        }
-        assembly {
-            let f := gt(x, 0x1)
-            msb := or(msb, f)
-        }
+    function _withdrawFromPosition(
+        address _user,
+        uint256 _index,
+        uint256 _sharesToBurn
+    ) internal returns (uint256 assets) {
+        _updateRewardPerToken();
+        StakePosition storage pos = stakePositions[_user][_index];
+        assets = _convertToAssets(_sharesToBurn, Math.Rounding.Floor);
+        pos.shares -= _sharesToBurn;
+        if (pos.shares == 0) pos.active = false;
+        stakedBalance -= assets;
+        _burn(_user, _sharesToBurn);
+        require(stakingToken.transfer(_user, assets), "Staking: transfer failed");
+        emit TokensWithdrawn(_user, _index, assets, _sharesToBurn);
     }
 
     /**
-     * @dev Transfer function to move locked tokens to another address
-     * @notice Transfer locked staked tokens to another address
-     * @param _receiver The address that will receive the locked staked tokens
-     * @param _amount The amount of locked staked tokens to transfer
+     * @dev Returns bonus APY for a given lock duration, or 0 if not a valid option.
      */
-    function _transferLockedStake(address _receiver, uint256 _amount) internal {
-        uint256 currentEpochBalance = lockedStakes[currentEpoch][msg.sender];
-        uint256 prevEpochBalance = lockedStakes[currentEpoch - 1][msg.sender];
-
-        require(
-            currentEpochBalance + prevEpochBalance >= _amount, "Staking:transferLockedStake Insufficient locked balance"
-        );
-        //update the locked stakes
-        if (prevEpochBalance >= _amount) {
-            lockedStakes[currentEpoch - 1][msg.sender] -= _amount;
-            lockedStakes[currentEpoch - 1][_receiver] += _amount;
-        } else {
-            _amount -= prevEpochBalance;
-            lockedStakes[currentEpoch - 1][msg.sender] = 0;
-            lockedStakes[currentEpoch][msg.sender] -= _amount;
-            //update the receiver balance
-            lockedStakes[currentEpoch - 1][_receiver] += prevEpochBalance;
-            lockedStakes[currentEpoch][_receiver] += _amount;
-        }
-        super._update(msg.sender, _receiver, _amount);
-        emit LockedTokenTransferred(msg.sender, _receiver, _amount);
-    }
-
-    //Todo overwrite the balance function to include the locked stakes
-
-    //TODO have a function to transfer locked staked tokens
-
-    function _lockStakeBonusRewards(uint256 _amount) internal returns (uint256) {
-        //todo check the precision loss
-        uint256 rewardAmount = (_amount * LOCKED_STAKE_BONUS_APY * EPOCH_DURATION) / (YEAR_IN_TIME * PERCENTAGE_SCALE);
-    }
-
-    function _convertToAssets(uint256 _shares, Math.Rounding rounding) internal view override returns (uint256) {
-        //Before converting the asset we need to settle outstanding rewards
-        uint256 assetAmount = super._convertToAssets(_shares, rounding);
-    }
-
-    function totalAssets() public view override returns (uint256) {
-        //prevent direct transfer of tokens to modify the staked balance
-        stakedBalance;
-    }
-    /**
-     * @notice Transfer tokens from one address to another
-     * @dev Overwrite the transfer function to include the locked stakes
-     * @param _from The address to transfer from
-     * @param _to The address to transfer to
-     * @param _value The amount to transfer
-     */
-
-    function _update(address _from, address _to, uint256 _value) internal override {
-        if (_from == address(this)) {
-            //no need to check locked token balance
-            super._update(_from, _to, _value);
-            return;
-        } else if (_to == address(this)) {
-            //direct transfer to the staking contract
-            //trigger the withdraw function
-            _directTransferWithdraw(_from, _value);
-            return;
-        }
-        // If the transfer is not to the staking contract i.e. between users
-        // update the locked stakes and free up pending locked stakes
-        _updateLockedStakes(_from);
-        uint256 prevEpochBalance = lockedStakes[currentEpoch - 1][_from];
-        uint256 currentEpochBalance = lockedStakes[currentEpoch][_from];
-        //This should never underflow
-        uint256 liquidBalance = balanceOf(_from) - prevEpochBalance - currentEpochBalance;
-        if (liquidBalance >= _value) {
-            //if the liquid balance is enough to cover the transfer
-            super._transfer(_from, _to, _value);
-        } else if (liquidBalance > 0) {
-            //transfer the liquid balance
-            super._transfer(_from, _to, liquidBalance);
-            //transfer the remaining amount
-            uint256 lockedBalance = _value - liquidBalance;
-            _transferLockedStake(_to, lockedBalance);
-        } else {
-            //transfer the locked balance
-            _transferLockedStake(_to, _value);
-        }
+    function _bonusApyForDuration(uint256 _duration) internal view returns (uint256) {
+        return durationBonus[_duration];
     }
 
     /**
-     * @notice We can prevent a vault inflation attack since the staked token _transfer will trigger
-     * the stake function if this contract
-     * @dev Convert the staked amount to shares
-     * @param _amount The amount to convert
-     * @param rounding The rounding method to use
-     */
-    function _convertToShares(uint256 _amount, Math.Rounding rounding) internal view override returns (uint256) {
-        //Total supply of the staking token
-        if (totalSupply() == 0) {
-            // Initial conversion 1:1
-            return _amount;
-        } else {
-            super._convertToShares(_amount, rounding);
-        }
-    }
-
-    /**
-     * @dev Update the reward per token based on the current staking balance and APY
-     * This function is called internally to update the reward per token
+     * @dev Accrues rewards into stakedBalance based on APY and elapsed time.
      */
     function _updateRewardPerToken() internal {
-        if (block.timestamp == lastUpdateTime) {
-            return;
-        } else if (lastUpdateTime == 0) {
+        if (block.timestamp == lastUpdateTime) return;
+        if (lastUpdateTime == 0) {
             lastUpdateTime = block.timestamp;
             return;
         }
-        uint256 timeSinceLastUpdate = block.timestamp - lastUpdateTime;
-        //TODO check for precision loss
+        uint256 elapsed = block.timestamp - lastUpdateTime;
         uint256 rewardPerSecond = (stakedBalance * calculateApy()) / YEAR_IN_TIME / PERCENTAGE_SCALE;
-        stakedBalance += rewardPerSecond * timeSinceLastUpdate;
+        stakedBalance += rewardPerSecond * elapsed;
         lastUpdateTime = block.timestamp;
+        currentApy = calculateApy();  // cache the new APY after stakedBalance changed
     }
 
-    function _directTransferWithdraw(address _from, uint256 _sharesAmount) internal {
-        _updateRewardPerToken();
-        _updateLockedStakes(_from);
-        uint256 lockedBalance = lockedStakes[currentEpoch][_from] + lockedStakes[currentEpoch - 1][_from];
-        uint256 unlockedShares = balanceOf(_from) - lockedBalance;
-        require(unlockedShares >= _sharesAmount, "Staking:_directTransferWithdraw Insufficient unlocked balance");
-        uint256 withdrawAmount = _convertToAssets(_sharesAmount, Math.Rounding.Floor);
-        require(stakingToken.transfer(_from, withdrawAmount), "Staking:_directTransferWithdraw Token transfer failed");
-        _burn(_from, _sharesAmount);
-        emit TokensWithdrawn(_from, withdrawAmount, _sharesAmount);
+    function _convertToAssets(uint256 _shares, Math.Rounding rounding) internal view override returns (uint256) {
+        return super._convertToAssets(_shares, rounding);
+    }
+
+    function totalAssets() public view override returns (uint256) {
+        return stakedBalance;
+    }
+
+    function _convertToShares(uint256 _amount, Math.Rounding rounding) internal view override returns (uint256) {
+        if (totalSupply() == 0) return _amount;
+        return super._convertToShares(_amount, rounding);
     }
 
     /**
-     * @notice Withdraw staked tokens
-     * @dev Withdraw staked tokens and collect rewards
-     * @param _assetAmount The amount of tokens to withdraw
-     * @param _receiver The address that will receive the withdrawn tokens
-     * @param _owner The address that owns the staked tokens
+     * @dev Allow mint/burn through super; block direct sWLF token-to-contract transfers.
      */
-    function withdraw(uint256 _assetAmount, address _receiver, address _owner)
-        public
-        virtual
-        override
-        returns (uint256)
-    {
-        require(_assetAmount > 0, "Staking:withdraw Amount must be greater than zero");
-        require(_owner == msg.sender, "Staking:withdraw Only the owner can withdraw");
-        require(_receiver != address(0), "Staking:withdraw Receiver cannot be zero address");
-        _updateRewardPerToken();
-        _updateLockedStakes(_owner);
-        uint256 sharesToBurn = _convertToShares(_assetAmount, Math.Rounding.Floor);
-        uint256 lockedBalance = lockedStakes[currentEpoch][_owner] + lockedStakes[currentEpoch - 1][_owner];
-        uint256 unlockedShares = balanceOf(_owner) - lockedBalance;
-        require(unlockedShares >= sharesToBurn, "Staking:withdraw Insufficient unlocked balance");
-        _burn(_owner, sharesToBurn);
-        require(stakingToken.transfer(_receiver, _assetAmount), "Staking:withdraw Token transfer failed");
-
-        emit TokensWithdrawn(_owner, _assetAmount, sharesToBurn);
-        return sharesToBurn;
+    function _update(address _from, address _to, uint256 _value) internal override {
+        // Mint and burn go straight through
+        if (_from == address(0) || _to == address(0)) {
+            super._update(_from, _to, _value);
+            return;
+        }
+        // sWLF sent directly to this contract is not a valid withdrawal path
+        require(_to != address(this), "Staking: use withdrawPosition");
+        super._update(_from, _to, _value);
     }
 
-    // Withdraw staked tokens after the staking period and collect rewards
-    function withdrawAll() public {
-        _updateRewardPerToken();
-        _updateLockedStakes(msg.sender);
+    // ── Deprecated stubs kept for ABI compat ──────────────────────────────
 
-        uint256 lockedBalance = lockedStakes[currentEpoch][msg.sender] + lockedStakes[currentEpoch - 1][msg.sender];
-
-        uint256 unlockedShares = balanceOf(msg.sender) - lockedBalance;
-
-        require(unlockedShares > 0, "Staking:withdrawAll No unlocked shares to withdraw");
-
-        uint256 withdrawAmount = _convertToAssets(unlockedShares, Math.Rounding.Floor);
-
-        _burn(msg.sender, unlockedShares);
-
-        stakedBalance -= withdrawAmount;
-
-        require(stakingToken.transfer(msg.sender, withdrawAmount), "Staking:withdrawAll Token transfer failed");
-
-        emit TokensWithdrawn(msg.sender, withdrawAmount, unlockedShares);
-    }
-
-    function calculateApy() public view returns (uint256) {
-        /* APY calculation
-        * The apy calculation is following a halflife decay, meaning that the APY
-        * will be halfed at each life which is a 0.1 change in the ratio of staked tokens
-        * to the total supply. The APY will start at MAX_APY and decay to MIN_APY
-        */
-        uint256 tokenTotalSupply = stakingToken.totalSupply();
-        uint256 stakingRatio = (stakedBalance * SCALE) / tokenTotalSupply;
-        //halflife exp
-        //@invariant wexponent <= 10
-        uint256 exponent = stakingRatio / 1e17; //leaving 1 decimal precision
-
-        uint256 currentApy = SCALE * MIN_APY + ((MAX_APY - MIN_APY) * SCALE) / (2 ** exponent);
-
-        return currentApy / SCALE;
-    }
-
-    // Add more tokens to the staking rewards pool
-    function addStakingRewards(uint256 _amount) external onlyOwner {
-        require(_amount > 0, "Reward amount must be greater than zero");
-        require(stakingToken.transferFrom(msg.sender, address(this), _amount), "Token transfer failed");
-
-        stakingRewards += _amount;
-        emit RewardsAdded(_amount);
-    }
-
-    // Get the total staked tokens for a user
-    function getStakedTokens(address _user) external view returns (uint256) {
-        //return stakes[_user].amount;
-        return 0;
-    }
-
-    // Get the last stake time for a user
-    function getLastStakeTime(address _user) external view returns (uint256) {
-        //todo might delete this
-        //return stakes[_user].lastStakeTime;
-        return 0;
-    }
-
-    // Get the end stake time for a user
-    function getEndStakeTime(address _user) external view returns (uint256) {
-        //return stakes[_user].endStakeTime;
-        //Todo return lockedShares;
-        return 0;
-    }
+    function getStakedTokens(address) external pure returns (uint256) { return 0; }
+    function getLastStakeTime(address) external pure returns (uint256) { return 0; }
+    function getEndStakeTime(address) external pure returns (uint256)  { return 0; }
 }

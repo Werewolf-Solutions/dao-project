@@ -7,7 +7,7 @@ export const stakingABI = [
   },
   {
     "type": "function",
-    "name": "EPOCH_DURATION",
+    "name": "DURATION_10YR",
     "inputs": [],
     "outputs": [
       {
@@ -20,7 +20,7 @@ export const stakingABI = [
   },
   {
     "type": "function",
-    "name": "LOCKED_STAKE_BONUS_APY",
+    "name": "DURATION_1YR",
     "inputs": [],
     "outputs": [
       {
@@ -33,7 +33,7 @@ export const stakingABI = [
   },
   {
     "type": "function",
-    "name": "MAX_APY",
+    "name": "DURATION_2YR",
     "inputs": [],
     "outputs": [
       {
@@ -46,7 +46,46 @@ export const stakingABI = [
   },
   {
     "type": "function",
-    "name": "MIN_APY",
+    "name": "DURATION_30D",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "DURATION_3MO",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "DURATION_5YR",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "DURATION_6MO",
     "inputs": [],
     "outputs": [
       {
@@ -242,7 +281,7 @@ export const stakingABI = [
   },
   {
     "type": "function",
-    "name": "currentEpoch",
+    "name": "currentApy",
     "inputs": [],
     "outputs": [
       {
@@ -271,12 +310,12 @@ export const stakingABI = [
     "name": "deposit",
     "inputs": [
       {
-        "name": "_asset",
+        "name": "assets",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "_receiver",
+        "name": "receiver",
         "type": "address",
         "internalType": "address"
       }
@@ -292,10 +331,10 @@ export const stakingABI = [
   },
   {
     "type": "function",
-    "name": "epochToLockedAmount",
+    "name": "durationBonus",
     "inputs": [
       {
-        "name": "epoch",
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -314,6 +353,44 @@ export const stakingABI = [
     "name": "getEndStakeTime",
     "inputs": [
       {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "getLastStakeTime",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "getPositionCount",
+    "inputs": [
+      {
         "name": "_user",
         "type": "address",
         "internalType": "address"
@@ -330,7 +407,7 @@ export const stakingABI = [
   },
   {
     "type": "function",
-    "name": "getLastStakeTime",
+    "name": "getPositions",
     "inputs": [
       {
         "name": "_user",
@@ -341,8 +418,40 @@ export const stakingABI = [
     "outputs": [
       {
         "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
+        "type": "tuple[]",
+        "internalType": "struct Staking.StakePosition[]",
+        "components": [
+          {
+            "name": "shares",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "assets",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "stakedAt",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "unlockAt",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "bonusApy",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "active",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
       }
     ],
     "stateMutability": "view"
@@ -352,7 +461,7 @@ export const stakingABI = [
     "name": "getStakedTokens",
     "inputs": [
       {
-        "name": "_user",
+        "name": "",
         "type": "address",
         "internalType": "address"
       }
@@ -364,7 +473,7 @@ export const stakingABI = [
         "internalType": "uint256"
       }
     ],
-    "stateMutability": "view"
+    "stateMutability": "pure"
   },
   {
     "type": "function",
@@ -399,19 +508,8 @@ export const stakingABI = [
   },
   {
     "type": "function",
-    "name": "lockedStakes",
-    "inputs": [
-      {
-        "name": "epoch",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
+    "name": "maxApy",
+    "inputs": [],
     "outputs": [
       {
         "name": "",
@@ -499,15 +597,28 @@ export const stakingABI = [
   },
   {
     "type": "function",
+    "name": "minApy",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "mint",
     "inputs": [
       {
-        "name": "_shares",
+        "name": "shares",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "_receiver",
+        "name": "receiver",
         "type": "address",
         "internalType": "address"
       }
@@ -661,6 +772,73 @@ export const stakingABI = [
   },
   {
     "type": "function",
+    "name": "setApyBounds",
+    "inputs": [
+      {
+        "name": "_minApy",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "_maxApy",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setBonusForDuration",
+    "inputs": [
+      {
+        "name": "_duration",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "_bonus",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setTreasury",
+    "inputs": [
+      {
+        "name": "_treasury",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "stakeFixed",
+    "inputs": [
+      {
+        "name": "_amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "_duration",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "stakeFixedDuration",
     "inputs": [
       {
@@ -668,6 +846,19 @@ export const stakingABI = [
         "type": "address",
         "internalType": "address"
       },
+      {
+        "name": "_amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "stakeFlexible",
+    "inputs": [
       {
         "name": "_amount",
         "type": "uint256",
@@ -694,6 +885,55 @@ export const stakingABI = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "stakePositions",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "shares",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "assets",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "stakedAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "unlockAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "bonusApy",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "active",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -841,24 +1081,13 @@ export const stakingABI = [
   },
   {
     "type": "function",
-    "name": "userToLockedEpochs",
-    "inputs": [
+    "name": "treasury",
+    "inputs": [],
+    "outputs": [
       {
         "name": "",
         "type": "address",
         "internalType": "address"
-      },
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -885,7 +1114,7 @@ export const stakingABI = [
     ],
     "outputs": [
       {
-        "name": "",
+        "name": "sharesBurned",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -897,6 +1126,49 @@ export const stakingABI = [
     "name": "withdrawAll",
     "inputs": [],
     "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "withdrawAmountFromPosition",
+    "inputs": [
+      {
+        "name": "_index",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "_assetAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "withdrawn",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "withdrawPosition",
+    "inputs": [
+      {
+        "name": "_index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "withdrawn",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "stateMutability": "nonpayable"
   },
   {
@@ -917,6 +1189,25 @@ export const stakingABI = [
       },
       {
         "name": "value",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ApyBoundsUpdated",
+    "inputs": [
+      {
+        "name": "minApy",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxApy",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -957,6 +1248,25 @@ export const stakingABI = [
   },
   {
     "type": "event",
+    "name": "DurationBonusUpdated",
+    "inputs": [
+      {
+        "name": "duration",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "bonus",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "Initialized",
     "inputs": [
       {
@@ -964,50 +1274,6 @@ export const stakingABI = [
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LockedStakesUpdated",
-    "inputs": [
-      {
-        "name": "staker",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LockedTokenTransferred",
-    "inputs": [
-      {
-        "name": "from",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "to",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -1055,15 +1321,21 @@ export const stakingABI = [
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "positionIndex",
         "type": "uint256",
-        "indexed": true,
+        "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "epoch",
+        "name": "assets",
         "type": "uint256",
-        "indexed": true,
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "shares",
+        "type": "uint256",
+        "indexed": false,
         "internalType": "uint256"
       },
       {
@@ -1071,6 +1343,18 @@ export const stakingABI = [
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      },
+      {
+        "name": "unlockAt",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "bonusApy",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -1086,7 +1370,13 @@ export const stakingABI = [
         "internalType": "address"
       },
       {
-        "name": "amountWithdrawn",
+        "name": "positionIndex",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "assetsWithdrawn",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1121,6 +1411,19 @@ export const stakingABI = [
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TreasuryUpdated",
+    "inputs": [
+      {
+        "name": "treasury",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
       }
     ],
     "anonymous": false

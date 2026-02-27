@@ -291,7 +291,7 @@ contract LPStakingTest is Test {
 
     function test_Constants() public {
         assertEq(lpStaking.MIN_APY(), 8_000, "MIN_APY should be 8%");
-        assertEq(lpStaking.MAX_APY(), 100_000, "MAX_APY should be 100%");
+        assertEq(lpStaking.MAX_APY(), 80_000, "MAX_APY should be 80%");
         assertEq(lpStaking.LOCKED_STAKE_BONUS_APY(), 5_000, "Bonus APY should be 5%");
         assertEq(lpStaking.EPOCH_DURATION(), 30 days, "Epoch should be 30 days");
     }

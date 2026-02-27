@@ -33,4 +33,11 @@ export const erc20ABI = [
     inputs: [],
     outputs: [{ type: "uint8" }],
   },
+  {
+    type: "function",
+    name: "totalSupply",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "uint256" }],
+  },
 ] as const;
