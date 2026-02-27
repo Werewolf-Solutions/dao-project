@@ -23,12 +23,13 @@ deploy-sepolia-dry:
 
 deploy-sepolia:
 	forge script script/Deploy.s.sol:Deploy \
-		--rpc-url $(SEPOLIA_RPC_URL) --broadcast
+		--rpc-url $(SEPOLIA_RPC_URL) --broadcast \
+		--private-key $(PRIVATE_KEY)
 	node scripts/sync-dapp.mjs
 	forge script script/Deploy.s.sol:Deploy \
 		--rpc-url $(SEPOLIA_RPC_URL) \
 		--verify --etherscan-api-key $(ETHERSCAN_API_KEY) \
-		--resume
+		--resume --private-key $(PRIVATE_KEY)
 
 # Run 2 days after deploy-sepolia.
 # Set env vars from script/output/deployed-addresses.txt before running:
