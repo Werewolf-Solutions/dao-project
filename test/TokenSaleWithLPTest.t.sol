@@ -116,14 +116,15 @@ contract TokenSaleWithLPTest is Test {
             address(usdtToken),
             address(0), // staking contract (old system)
             address(lpStaking),
-            address(uniswapHelper)
+            address(uniswapHelper),
+            address(0) // wethAddress — not needed for local tests
         );
         TransparentUpgradeableProxy tokenSaleProxy = new TransparentUpgradeableProxy(
             address(tokenSaleImpl),
             multiSig,
             tokenSaleInitData
         );
-        tokenSale = TokenSale(address(tokenSaleProxy));
+        tokenSale = TokenSale(payable(address(tokenSaleProxy)));
 
         // Configure LPStaking
         lpStaking.setTokenSaleContract(address(tokenSale));
@@ -147,18 +148,16 @@ contract TokenSaleWithLPTest is Test {
         vm.prank(owner);
         tokenSale.startSaleZero(TOKENS_FOR_SALE, TOKEN_PRICE);
 
-        // 2-4. Make purchases
+        // 2-3. Make partial purchases
         _makePurchase(user1, 3_000_000 ether, 3_000e6);
         _makePurchase(user2, 4_000_000 ether, 4_000e6);
-        _makePurchase(user3, 3_000_000 ether, 3_000e6);
 
-        // 5. End sale
+        // 4. Buy last batch (auto-closes sale), then create LP in separate tx
         uint256 totalWLF = 10_000_000 ether;
         uint256 totalUSDT = 10_000e6;
         _mockUniswapForEndSale(totalWLF, totalUSDT);
-
-        vm.prank(owner);
-        tokenSale.endSale();
+        _makePurchase(user3, 3_000_000 ether, 3_000e6);
+        tokenSale.endSale(); // permissionless after sale auto-closes
 
         // 6-8. Claim shares
         vm.prank(user1);
@@ -225,16 +224,14 @@ contract TokenSaleWithLPTest is Test {
         uint256 purchaseAmount = 1_000_000 ether;
         uint256 usdtAmount = 1_000e6;
 
+        _mockUniswapForEndSale(purchaseAmount, usdtAmount);
+
         vm.startPrank(user1);
         usdtToken.approve(address(tokenSale), usdtAmount);
         tokenSale.buyTokens(purchaseAmount / 1e18, purchaseAmount, usdtAmount);
         vm.stopPrank();
 
-        // Mock Uniswap for endSale
-        _mockUniswapForEndSale(purchaseAmount, usdtAmount);
-
-        vm.prank(owner);
-        tokenSale.endSale();
+        tokenSale.endSale(); // create LP in separate tx (anyone can call after sale closes)
 
         // Claim once
         vm.prank(user1);
@@ -298,14 +295,14 @@ contract TokenSaleWithLPTest is Test {
         vm.prank(owner);
         tokenSale.startSaleZero(1_000_000 ether, TOKEN_PRICE);
 
+        _mockUniswapForEndSale(1_000_000 ether, 1_000e6);
+
         vm.startPrank(user1);
         usdtToken.approve(address(tokenSale), 1_000e6);
         tokenSale.buyTokens(1_000_000, 1_000_000 ether, 1_000e6);
         vm.stopPrank();
 
-        _mockUniswapForEndSale(1_000_000 ether, 1_000e6);
-        vm.prank(owner);
-        tokenSale.endSale();
+        tokenSale.endSale(); // create LP in separate tx
 
         // Airdrop more tokens for Sale #1
         vm.prank(owner);
@@ -315,14 +312,14 @@ contract TokenSaleWithLPTest is Test {
         vm.prank(owner);
         tokenSale.startSale(2_000_000 ether, TOKEN_PRICE);
 
+        _mockUniswapForEndSale(2_000_000 ether, 2_000e6);
+
         vm.startPrank(user2);
         usdtToken.approve(address(tokenSale), 2_000e6);
         tokenSale.buyTokens(2_000_000, 2_000_000 ether, 2_000e6);
         vm.stopPrank();
 
-        _mockUniswapForEndSale(2_000_000 ether, 2_000e6);
-        vm.prank(owner);
-        tokenSale.endSale();
+        tokenSale.endSale(); // create LP in separate tx
 
         // Verify both sales created separate LP positions
         assertTrue(tokenSale.saleLPCreated(0), "Sale 0 LP should exist");

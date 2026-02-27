@@ -4,6 +4,8 @@ pragma solidity ^0.8.27;
 
 import {Script, console} from "forge-std/Script.sol";
 import {MockUSDT} from "test/mocks/MockUSDT.sol";
+import {MockPositionManager} from "test/mocks/MockPositionManager.sol";
+import {MockWETH} from "test/mocks/MockWETH.sol";
 import {Constants} from "./Constants.sol";
 
 /**
@@ -15,6 +17,7 @@ contract HelperConfig is Script, Constants {
         address multiSig;
         address usdt;
         address positionManager;  // Uniswap v3 NonfungiblePositionManager
+        address weth;             // WETH9 / Wrapped Ether
     }
     ///////////////////////////////////////
     //           State Variables         //
@@ -47,20 +50,28 @@ contract HelperConfig is Script, Constants {
     }
 
     function getSepoliaChainConfig() public returns (NetworkConfig memory sepoliaNetworkConfig) {
-        //first time we will deploy our own usdt then after that we need to hardcode the address in the Constants contract
-        address mockUsdt = address(new MockUSDT(1_000_000e6));
-
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address multiSig = vm.envAddress("MULTISIG_ADDRESS");
+        address deployer = vm.addr(deployerPrivateKey);
+
+        // Deploy MockUSDT inside broadcast so it actually lands on-chain
+        vm.startBroadcast(deployerPrivateKey);
+        address mockUsdt = address(new MockUSDT(1_000_000e6));
+        MockUSDT(mockUsdt).mint(deployer, 1_000_000e6);
+        vm.stopBroadcast();
 
         // Uniswap v3 NonfungiblePositionManager on Sepolia
         address positionManager = 0x1238536071E1c677A632429e3655c799b22cDA52;
+
+        // WETH9 on Sepolia
+        address weth = 0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14;
 
         sepoliaNetworkConfig = NetworkConfig({
             usdt: mockUsdt,
             deployerPrivateKey: deployerPrivateKey,
             multiSig: multiSig,
-            positionManager: positionManager
+            positionManager: positionManager,
+            weth: weth
         });
     }
 
@@ -71,17 +82,17 @@ contract HelperConfig is Script, Constants {
         vm.startBroadcast(deployerPrivateKey);
         address mockUsdt = address(new MockUSDT(1_000_000e6));
         MockUSDT(mockUsdt).mint(defaultFoundryAddress, 1_000_000e6);
+        address positionManager = address(new MockPositionManager());
+        address weth = address(new MockWETH());
         vm.stopBroadcast();
         address multiSig = makeAddr("multiSig");
-
-        // For local testing, use a placeholder address (in tests, we'd mock this)
-        address positionManager = makeAddr("uniswapPositionManager");
 
         localNetworkConfig = NetworkConfig({
             deployerPrivateKey: deployerPrivateKey,
             multiSig: multiSig,
             usdt: mockUsdt,
-            positionManager: positionManager
+            positionManager: positionManager,
+            weth: weth
         });
     }
 }

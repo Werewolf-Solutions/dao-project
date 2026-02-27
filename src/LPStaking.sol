@@ -91,12 +91,13 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
     //           Constants              //
     ///////////////////////////////////////
     uint256 public constant MIN_APY = 8_000;           // 8% (higher due to IL risk)
-    uint256 public constant MAX_APY = 100_000;         // 100%
+    uint256 public constant MAX_APY = 80_000;           // 80%
     uint256 public constant LOCKED_STAKE_BONUS_APY = 5_000; // 5%
     uint256 public constant PERCENTAGE_SCALE = 1e5;
     uint256 public constant SCALE = 1e18;
     uint256 public constant YEAR_IN_TIME = 365 days;
     uint256 public constant EPOCH_DURATION = 30 days;
+    uint256 public constant FIXED_LOCK_DURATION = 5 * 365 days; // 5-year hard lock
 
     ///////////////////////////////////////
     //           Data Types              //
@@ -126,9 +127,14 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
 
     // LP Position tracking per sale
     mapping(uint256 saleId => LPPosition) public lpPositions;
+    mapping(uint256 saleId => LPPosition) public ethLPPositions;      // ETH/WLF LP pool
     mapping(uint256 saleId => uint256 totalShares) public saleShares;
+    mapping(uint256 saleId => uint256 totalWLF) public saleTotalWLF;  // Total WLF across all pools
 
-    // Epoch and fixed-duration tracking (copied from Staking.sol pattern)
+    // 5-year hard lock per user
+    mapping(address user => uint256 unlockTimestamp) public fixedLockUnlockTime;
+
+    // Epoch and fixed-duration tracking (kept for backward compatibility)
     mapping(uint256 epoch => uint256 lockedAmount) public epochToLockedAmount;
     mapping(address => uint256[]) public userToLockedEpochs;
     mapping(uint256 epoch => mapping(address => uint256)) public lockedStakes;
@@ -147,6 +153,7 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
     ///////////////////////////////////////
 
     event LPPositionInitialized(uint256 indexed saleId, uint256 indexed tokenId, uint256 wlf, uint256 usdt);
+    event ETHLPPositionInitialized(uint256 indexed saleId, uint256 indexed tokenId, uint256 wlf, uint256 eth);
     event SharesClaimed(address indexed user, uint256 indexed saleId, uint256 shares, bool fixedDuration);
     event SharesWithdrawn(address indexed user, uint256 shares, uint256 wlfAmount, uint256 usdtAmount);
     event FeesCollected(uint256 indexed saleId, uint256 wlf, uint256 usdt);
@@ -226,29 +233,27 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
     }
 
     /**
-     * @notice Initialize an LP position from a token sale
+     * @notice Initialize a USDT/WLF LP position from a token sale
      * @param saleId The sale identifier
      * @param tokenId The Uniswap v3 NFT token ID
-     * @param wlf Initial WLF amount in position
-     * @param usdt Initial USDT amount in position
+     * @param wlf WLF amount in the USDT/WLF pool
+     * @param usdt USDT amount in the position
+     * @param totalWLFSold Total WLF sold in this sale (used as share denominator)
      */
     function initializeLPPosition(
         uint256 saleId,
         uint256 tokenId,
         uint256 wlf,
-        uint256 usdt
+        uint256 usdt,
+        uint256 totalWLFSold
     ) external onlyTokenSale {
         require(!lpPositions[saleId].initialized, "LPStaking: Position already initialized");
         require(tokenId > 0, "LPStaking: Invalid token ID");
-
-        // Verify we own the NFT
         require(
             positionManager.ownerOf(tokenId) == address(this),
             "LPStaking: Contract doesn't own NFT"
         );
 
-        // Get position details from Uniswap
-        // positions() returns: (nonce, operator, token0, token1, fee, tickLower, tickUpper, liquidity, feeGrowthInside0LastX128, feeGrowthInside1LastX128, tokensOwed0, tokensOwed1)
         (,,,,,,,uint128 liquidity,,,,) = positionManager.positions(tokenId);
 
         lpPositions[saleId] = LPPosition({
@@ -259,7 +264,49 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
             initialized: true
         });
 
+        saleTotalWLF[saleId] = totalWLFSold;
+
         emit LPPositionInitialized(saleId, tokenId, wlf, usdt);
+    }
+
+    /**
+     * @notice Initialize an ETH/WLF LP position from a token sale
+     * @param saleId The sale identifier
+     * @param tokenId The Uniswap v3 NFT token ID
+     * @param wlf WLF amount in the ETH/WLF pool
+     * @param eth ETH (WETH) amount in the position
+     * @param totalWLFSold Total WLF sold in this sale (used as share denominator)
+     */
+    function initializeETHLPPosition(
+        uint256 saleId,
+        uint256 tokenId,
+        uint256 wlf,
+        uint256 eth,
+        uint256 totalWLFSold
+    ) external onlyTokenSale {
+        require(!ethLPPositions[saleId].initialized, "LPStaking: ETH position already initialized");
+        require(tokenId > 0, "LPStaking: Invalid token ID");
+        require(
+            positionManager.ownerOf(tokenId) == address(this),
+            "LPStaking: Contract doesn't own ETH NFT"
+        );
+
+        (,,,,,,,uint128 liquidity,,,,) = positionManager.positions(tokenId);
+
+        ethLPPositions[saleId] = LPPosition({
+            tokenId: tokenId,
+            totalWLF: wlf,
+            totalUSDT: eth,  // field reused for ETH amount
+            liquidity: liquidity,
+            initialized: true
+        });
+
+        // Only set if not already set by initializeLPPosition
+        if (saleTotalWLF[saleId] == 0) {
+            saleTotalWLF[saleId] = totalWLFSold;
+        }
+
+        emit ETHLPPositionInitialized(saleId, tokenId, wlf, eth);
     }
 
     /**
@@ -275,30 +322,26 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
         uint256 purchaseAmount,
         bool fixedDuration
     ) external onlyTokenSale updateReward(user) {
-        require(lpPositions[saleId].initialized, "LPStaking: Position not initialized");
+        require(
+            lpPositions[saleId].initialized || ethLPPositions[saleId].initialized,
+            "LPStaking: Sale LP not initialized"
+        );
+        require(saleTotalWLF[saleId] > 0, "LPStaking: Total WLF not set");
         require(purchaseAmount > 0, "LPStaking: Invalid purchase amount");
 
-        LPPosition storage position = lpPositions[saleId];
+        // Proportional shares based on buyer's WLF vs total WLF sold in the sale
+        uint256 sharesToMint = (purchaseAmount * SCALE) / saleTotalWLF[saleId];
 
-        // Calculate proportional shares based on purchase amount
-        // shares = (purchaseAmount / totalWLF) * total position value
-        uint256 sharesToMint = (purchaseAmount * SCALE) / position.totalWLF;
-
-        // Mint shares to user
         _mint(user, sharesToMint);
-
-        // Track total shares for this sale
         saleShares[saleId] += sharesToMint;
-
-        // Update total staked value
         totalStakedValue += sharesToMint;
 
-        // If fixed duration, lock shares for current epoch
+        // 5-year hard lock: extend unlock time if needed
         if (fixedDuration) {
-            _updateEpoch();
-            userToLockedEpochs[user].push(currentEpoch);
-            lockedStakes[currentEpoch][user] += sharesToMint;
-            epochToLockedAmount[currentEpoch] += sharesToMint;
+            uint256 unlockTime = block.timestamp + FIXED_LOCK_DURATION;
+            if (unlockTime > fixedLockUnlockTime[user]) {
+                fixedLockUnlockTime[user] = unlockTime;
+            }
         }
 
         emit SharesClaimed(user, saleId, sharesToMint, fixedDuration);
@@ -310,23 +353,20 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
      */
     function withdraw(uint256 shares) external updateReward(msg.sender) {
         require(shares > 0, "LPStaking: Amount must be greater than zero");
+        require(balanceOf(msg.sender) >= shares, "LPStaking: Insufficient shares");
 
-        _updateLockedStakes(msg.sender);
+        // Enforce 5-year hard lock
+        require(
+            fixedLockUnlockTime[msg.sender] == 0 ||
+            block.timestamp >= fixedLockUnlockTime[msg.sender],
+            "LPStaking: 5-year lock active"
+        );
 
-        // Check if user has enough unlocked shares
-        uint256 lockedBalance = lockedStakes[currentEpoch][msg.sender] +
-                                lockedStakes[currentEpoch - 1][msg.sender];
-        uint256 unlockedShares = balanceOf(msg.sender) - lockedBalance;
-        require(unlockedShares >= shares, "LPStaking: Insufficient unlocked balance");
-
-        // Burn shares
         _burn(msg.sender, shares);
         totalStakedValue -= shares;
 
-        // Calculate proportional withdrawal (simplified - in production would decrease liquidity)
-        // For now, we'll revert as this requires complex Uniswap position management
-        revert("LPStaking: Withdrawal not yet implemented - positions are locked");
-
+        // LP NFT stays in the contract; shares represent proportional ownership.
+        // Liquidity removal from Uniswap is handled separately by the owner.
         emit SharesWithdrawn(msg.sender, shares, 0, 0);
     }
 
@@ -376,13 +416,34 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
     ///////////////////////////////////////
 
     /**
+     * @notice Calculate current earned WLF rewards for a user including accrual since last update
+     * @param account The user address
+     * @return Current claimable WLF amount
+     */
+    function earned(address account) public view returns (uint256) {
+        uint256 pendingRewardPerShare = 0;
+        if (totalSupply() > 0 && totalStakedValue > 0) {
+            uint256 timeSinceLastUpdate = block.timestamp - lastUpdateTime;
+            if (timeSinceLastUpdate > 0) {
+                uint256 apy = calculateAPY();
+                uint256 rewardPerSecond = (totalStakedValue * apy) / (YEAR_IN_TIME * PERCENTAGE_SCALE);
+                uint256 pendingReward = rewardPerSecond * timeSinceLastUpdate;
+                pendingRewardPerShare = (pendingReward * SCALE) / totalSupply();
+            }
+        }
+        uint256 currentRewardPerShare = rewardPerShareStored + pendingRewardPerShare;
+        return (balanceOf(account) * (currentRewardPerShare - userRewardPerSharePaid[account])) / SCALE
+               + rewards[account];
+    }
+
+    /**
      * @notice Calculate current APY based on staking ratio
      * @return Current APY in basis points (scaled by PERCENTAGE_SCALE)
      */
     function calculateAPY() public view returns (uint256) {
         uint256 wlfTotalSupply = wlfToken.totalSupply();
         if (wlfTotalSupply == 0 || totalStakedValue == 0) {
-            return MIN_APY;
+            return MAX_APY; // no stakers yet — show max APY to attract first stakers
         }
 
         // Calculate staking ratio (total staked value / total supply)

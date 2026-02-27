@@ -57,7 +57,7 @@ contract Deploy is Script {
         founder = vm.addr(netConfig.deployerPrivateKey); //Note this might need to be changed
 
         // Deploy UniswapHelper
-        uniswapHelper = new UniswapHelper(founder);
+        uniswapHelper = new UniswapHelper(netConfig.positionManager);
 
         // Deploy Treasury
         _deployTreasury();
@@ -89,6 +89,7 @@ contract Deploy is Script {
 
         // Set TokenSale contract in LPStaking (can only be set once)
         lpStaking.setTokenSaleContract(address(tokenSale));
+        lpStaking.transferOwnership(address(timelock));
 
         // Deploy CompaniesHouseV1
         _deployCompaniesHouse();
@@ -114,7 +115,7 @@ contract Deploy is Script {
 
     function _setTimelockAdmin() internal {
         bytes memory callData = abi.encode(address(dao));
-        adminEta = block.timestamp + timelock.delay();
+        adminEta = block.timestamp + timelock.delay() + 60; // +60s buffer for broadcast lag
 
         timelock.queueTransaction(
             address(timelock),
@@ -213,7 +214,7 @@ contract Deploy is Script {
             LPStaking.initialize.selector,
             address(werewolfToken),         // WLF token
             netConfig.usdt,                  // USDT token
-            address(timelock),               // Owner
+            founder,                          // Owner (transferred to timelock after setTokenSaleContract)
             address(treasury),               // Reward source
             netConfig.positionManager        // Uniswap v3 NFT manager
         );
@@ -253,14 +254,15 @@ contract Deploy is Script {
             netConfig.usdt,
             address(staking),
             address(lpStaking),
-            address(uniswapHelper)
+            address(uniswapHelper),
+            netConfig.weth
         );
         TransparentUpgradeableProxy tokenSaleProxy = new TransparentUpgradeableProxy(
                 address(tokenSaleImpl),
                 netConfig.multiSig,
                 initDataTokenSale
             );
-        tokenSale = TokenSale(address(tokenSaleProxy));
+        tokenSale = TokenSale(payable(address(tokenSaleProxy)));
     }
 
     function _writeDeploymentData() internal {

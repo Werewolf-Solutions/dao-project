@@ -195,7 +195,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
     ) public initializer {
         werewolfToken = WerewolfTokenV1(_token);
         dao = DAO(_daoAddress);
-        tokenSale = TokenSale(tokenSaleAddress);
+        tokenSale = TokenSale(payable(tokenSaleAddress));
         treasury = Treasury(treasuryAddress);
         treasuryAddress = _treasuryAddress;
 

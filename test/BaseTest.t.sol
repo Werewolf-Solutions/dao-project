@@ -114,10 +114,11 @@ contract BaseTest is Test {
             address(mockUSDT),
             address(staking),
             address(lpStaking),
-            address(uniswapHelper)
+            address(uniswapHelper),
+            address(0) // wethAddress — not needed for local tests
         );
         address tokenSaleAddress = address(new TransparentUpgradeableProxy(tokenSaleImpl, multiSig, initDataTokenSale));
-        tokenSale = TokenSale(tokenSaleAddress);
+        tokenSale = TokenSale(payable(tokenSaleAddress));
 
         // Configure LPStaking
         vm.prank(founder);

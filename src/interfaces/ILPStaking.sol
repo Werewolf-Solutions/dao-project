@@ -7,17 +7,35 @@ pragma solidity ^0.8.28;
  */
 interface ILPStaking {
     /**
-     * @notice Initialize an LP position from a token sale
+     * @notice Initialize a USDT/WLF LP position from a token sale
      * @param saleId The sale identifier
      * @param tokenId The Uniswap v3 NFT token ID
-     * @param wlf Initial WLF amount in position
-     * @param usdt Initial USDT amount in position
+     * @param wlf WLF amount in the USDT/WLF pool
+     * @param usdt USDT amount in the position
+     * @param totalWLFSold Total WLF sold across all payment methods in this sale
      */
     function initializeLPPosition(
         uint256 saleId,
         uint256 tokenId,
         uint256 wlf,
-        uint256 usdt
+        uint256 usdt,
+        uint256 totalWLFSold
+    ) external;
+
+    /**
+     * @notice Initialize an ETH/WLF LP position from a token sale
+     * @param saleId The sale identifier
+     * @param tokenId The Uniswap v3 NFT token ID
+     * @param wlf WLF amount in the ETH/WLF pool
+     * @param eth ETH (WETH) amount in the position
+     * @param totalWLFSold Total WLF sold across all payment methods in this sale
+     */
+    function initializeETHLPPosition(
+        uint256 saleId,
+        uint256 tokenId,
+        uint256 wlf,
+        uint256 eth,
+        uint256 totalWLFSold
     ) external;
 
     /**
@@ -25,7 +43,7 @@ interface ILPStaking {
      * @param user The user claiming shares
      * @param saleId The sale to claim from
      * @param purchaseAmount The amount of WLF the user purchased
-     * @param fixedDuration True to lock for 30 days with bonus APY
+     * @param fixedDuration True to lock for 5 years
      */
     function claimShares(
         address user,
@@ -35,7 +53,7 @@ interface ILPStaking {
     ) external;
 
     /**
-     * @notice Get the value of an LP position
+     * @notice Get the value of a USDT/WLF LP position
      * @param saleId The sale ID to query
      * @return wlf WLF amount in position
      * @return usdt USDT amount in position
@@ -46,7 +64,7 @@ interface ILPStaking {
         returns (uint256 wlf, uint256 usdt);
 
     /**
-     * @notice Withdraw staked LP shares and receive proportional tokens
+     * @notice Withdraw staked LP shares (5-year hard lock enforced)
      * @param shares Amount of shares to burn
      */
     function withdraw(uint256 shares) external;
@@ -63,6 +81,13 @@ interface ILPStaking {
     function claimRewards() external;
 
     /**
+     * @notice Calculate current earned WLF rewards including accrual since last update
+     * @param account The user address
+     * @return Current claimable WLF amount
+     */
+    function earned(address account) external view returns (uint256);
+
+    /**
      * @notice Calculate current APY based on staking ratio
      * @return Current APY in basis points
      */
@@ -76,6 +101,7 @@ interface ILPStaking {
 
     // Events
     event LPPositionInitialized(uint256 indexed saleId, uint256 indexed tokenId, uint256 wlf, uint256 usdt);
+    event ETHLPPositionInitialized(uint256 indexed saleId, uint256 indexed tokenId, uint256 wlf, uint256 eth);
     event SharesClaimed(address indexed user, uint256 indexed saleId, uint256 shares, bool fixedDuration);
     event SharesWithdrawn(address indexed user, uint256 shares, uint256 wlfAmount, uint256 usdtAmount);
     event FeesCollected(uint256 indexed saleId, uint256 wlf, uint256 usdt);

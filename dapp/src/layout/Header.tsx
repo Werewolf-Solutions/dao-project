@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { useAccount, useConnect, useDisconnect } from 'wagmi';
+import { useAccount, useConnect, useDisconnect, useSwitchChain } from 'wagmi';
+import { sepolia, foundry, localhost } from 'wagmi/chains';
 import { theme } from '@/contexts/ThemeContext';
+
+const SUPPORTED_CHAINS = new Set([sepolia.id, foundry.id, localhost.id]);
 
 const NAV_LINKS = [
   { to: '/', label: 'Home' },
@@ -15,8 +18,12 @@ export default function Header() {
   const account = useAccount();
   const { connectors, connect, status, error } = useConnect();
   const { disconnect } = useDisconnect();
+  const { switchChain } = useSwitchChain();
   const [isPopupOpen, setIsPopupOpen] = useState(false);
   const location = useLocation();
+
+  const isConnected = account.status === 'connected';
+  const isSupported = !account.chainId || SUPPORTED_CHAINS.has(account.chainId as (typeof sepolia.id | typeof foundry.id | typeof localhost.id));
 
   useEffect(() => {
     if (status === 'success') setIsPopupOpen(false);
@@ -51,8 +58,23 @@ export default function Header() {
             })}
           </nav>
 
-          {/* Wallet button */}
-          <div className="flex items-center">
+          {/* Network badge + Wallet button */}
+          <div className="flex items-center gap-2">
+            {isConnected && (
+              isSupported ? (
+                <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-green-900/40 text-green-300 border border-green-700/40">
+                  ● {account.chain?.name ?? `Chain ${account.chainId}`}
+                </span>
+              ) : (
+                <button
+                  onClick={() => switchChain({ chainId: sepolia.id })}
+                  className="px-2.5 py-1 rounded-full text-xs font-medium bg-red-900/40 text-red-300 border border-red-700/40 hover:bg-red-800/60 transition-colors"
+                  title="Click to switch to Sepolia"
+                >
+                  ⚠ Wrong Network
+                </button>
+              )
+            )}
             {account.status === 'connected' ? (
               <button
                 className={`${theme.btnSecondary} px-3 py-1.5 text-sm font-mono`}

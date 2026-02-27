@@ -150,7 +150,7 @@ contract LPStakingTest is Test {
         vm.expectEmit(true, true, false, true);
         emit LPPositionInitialized(SALE_ID_1, TOKEN_ID_1, WLF_AMOUNT, USDT_AMOUNT);
 
-        lpStaking.initializeLPPosition(SALE_ID_1, TOKEN_ID_1, WLF_AMOUNT, USDT_AMOUNT);
+        lpStaking.initializeLPPosition(SALE_ID_1, TOKEN_ID_1, WLF_AMOUNT, USDT_AMOUNT, WLF_AMOUNT);
 
         (uint256 tokenId, uint256 totalWLF, uint256 totalUSDT, uint128 liq, bool initialized) =
             lpStaking.lpPositions(SALE_ID_1);
@@ -164,7 +164,7 @@ contract LPStakingTest is Test {
 
     function test_InitializeLPPosition_OnlyTokenSale() public {
         vm.expectRevert("LPStaking: Only TokenSale can call");
-        lpStaking.initializeLPPosition(SALE_ID_1, TOKEN_ID_1, WLF_AMOUNT, USDT_AMOUNT);
+        lpStaking.initializeLPPosition(SALE_ID_1, TOKEN_ID_1, WLF_AMOUNT, USDT_AMOUNT, WLF_AMOUNT);
     }
 
     function test_InitializeLPPosition_AlreadyInitialized() public {
@@ -174,7 +174,7 @@ contract LPStakingTest is Test {
         // Try to initialize again
         vm.prank(tokenSale);
         vm.expectRevert("LPStaking: Position already initialized");
-        lpStaking.initializeLPPosition(SALE_ID_1, TOKEN_ID_1, WLF_AMOUNT, USDT_AMOUNT);
+        lpStaking.initializeLPPosition(SALE_ID_1, TOKEN_ID_1, WLF_AMOUNT, USDT_AMOUNT, WLF_AMOUNT);
     }
 
     function test_ClaimShares_FlexibleDuration() public {
@@ -206,9 +206,9 @@ contract LPStakingTest is Test {
         uint256 userBalance = lpStaking.balanceOf(user1);
         assertGt(userBalance, 0, "User should have shares");
 
-        // Check that user has locked epochs
-        uint256 epochCount = lpStaking.userToLockedEpochs(user1, 0);
-        assertEq(epochCount, 0, "User should have locked stake in epoch 0");
+        // Check that user has 5-year hard lock set
+        uint256 unlockTime = lpStaking.fixedLockUnlockTime(user1);
+        assertApproxEqAbs(unlockTime, block.timestamp + 5 * 365 days, 5, "5-year lock should be set");
     }
 
     function test_ClaimShares_MultipleUsers() public {
@@ -322,6 +322,6 @@ contract LPStakingTest is Test {
         );
 
         vm.prank(tokenSale);
-        lpStaking.initializeLPPosition(saleId, tokenId, wlf, usdt);
+        lpStaking.initializeLPPosition(saleId, tokenId, wlf, usdt, wlf);
     }
 }

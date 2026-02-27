@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { WagmiProvider } from "wagmi";
+import { reconnect } from "wagmi/actions";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { config } from "@/config/wagmi";
 import { ChainProvider } from "@/contexts/ChainContext";
@@ -14,6 +15,8 @@ import Staking from "@/pages/Staking";
 import Account from "@/pages/Account";
 import ErrorPage from "@/pages/ErrorPage";
 import "./index.css";
+
+reconnect(config);
 
 const queryClient = new QueryClient();
 
