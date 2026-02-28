@@ -137,23 +137,6 @@ export default function DAO() {
     setIsModalOpen(false);
   };
 
-  const handleAction = (type: 'approve' | 'vote' | 'queue' | 'execute', id: number, support?: boolean) => {
-    if (!daoAddress) return;
-    if (type === 'approve') {
-      setLastAction('approve');
-      writeContract({ address: daoAddress, abi: daoABI, functionName: 'approveProposal', args: [BigInt(id)] });
-    } else if (type === 'vote') {
-      setLastAction('vote');
-      writeContract({ address: daoAddress, abi: daoABI, functionName: 'vote', args: [BigInt(id), support!] });
-    } else if (type === 'queue') {
-      setLastAction('queue');
-      writeContract({ address: daoAddress, abi: daoABI, functionName: 'queueProposal', args: [BigInt(id)] });
-    } else if (type === 'execute') {
-      setLastAction('execute');
-      writeContract({ address: daoAddress, abi: daoABI, functionName: 'executeProposal', args: [BigInt(id)] });
-    }
-  };
-
   // ── Guards ─────────────────────────────────────────────────────────────────
 
   if (!address) {
@@ -250,7 +233,6 @@ export default function DAO() {
               daoAddress={daoAddress}
               isGuardian={isGuardian}
               visibleStates={visibleStates}
-              onAction={handleAction}
             />
           ))}
         </div>

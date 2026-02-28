@@ -115,6 +115,7 @@ contract DAO is Initializable {
     event ProposalCreated(uint256 proposalId, address proposer);
     event ProposalQueued(uint256 id, uint256 eta);
     event ProposalExecuted(uint256 proposalId);
+    event ProposalCanceled(uint256 proposalId);
     event Voted(uint256 proposalId, address voter, bool support, uint256 votes);
     ///////////////////////////////////////
     //           Modifiers               //
@@ -343,6 +344,19 @@ contract DAO is Initializable {
         //set the proposal deadlines
         // s_proposal.startTime = block.timestamp;
         // s_proposal.endTime = block.timestamp + votingPeriod();
+    }
+
+    function cancelProposal(uint256 _proposalId) public onlyGuardian {
+        Proposal storage proposal = proposals[_proposalId];
+        require(
+            proposal.state == ProposalState.Pending ||
+            proposal.state == ProposalState.Active  ||
+            proposal.state == ProposalState.Succeeded ||
+            proposal.state == ProposalState.Queued,
+            "DAO::cancelProposal: proposal is not cancellable"
+        );
+        proposal.state = ProposalState.Canceled;
+        emit ProposalCanceled(_proposalId);
     }
 
     function getAdmin() public view returns (address _admin) {

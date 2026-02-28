@@ -564,4 +564,36 @@ contract DaoTest is Test {
         dao.queueProposal(proposalId);
         assertEq(dao.getProposalState(proposalId), "Defeated", "Should be Defeated when against >= for");
     }
+
+    function test_guardian_can_cancel_proposal() public {
+        uint256 proposalId = _createProposal();
+
+        // Cancel while Pending
+        vm.prank(founder);
+        dao.cancelProposal(proposalId);
+        assertEq(dao.getProposalState(proposalId), "Canceled", "Should be Canceled after guardian cancels");
+
+        // Cannot cancel again (already Canceled)
+        vm.prank(founder);
+        vm.expectRevert("DAO::cancelProposal: proposal is not cancellable");
+        dao.cancelProposal(proposalId);
+    }
+
+    function test_guardian_can_cancel_active_proposal() public {
+        uint256 proposalId = _createProposal();
+        _voteFor(proposalId);
+
+        // Cancel while Active (voting in progress)
+        vm.prank(founder);
+        dao.cancelProposal(proposalId);
+        assertEq(dao.getProposalState(proposalId), "Canceled", "Should be Canceled after guardian cancels active proposal");
+    }
+
+    function test_non_guardian_cannot_cancel() public {
+        uint256 proposalId = _createProposal();
+
+        vm.prank(addr1);
+        vm.expectRevert("Only guardian");
+        dao.cancelProposal(proposalId);
+    }
 }

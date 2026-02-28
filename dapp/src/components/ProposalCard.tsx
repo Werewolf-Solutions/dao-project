@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useAccount, useReadContract } from 'wagmi';
+import { useState, useEffect } from 'react';
+import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { formatUnits } from 'viem';
 import { daoABI } from '@/contracts';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -59,29 +59,31 @@ interface ProposalCardProps {
   daoAddress: `0x${string}`;
   isGuardian: boolean;
   visibleStates: Set<string>;
-  onAction: (type: 'approve' | 'vote' | 'queue' | 'execute', id: number, support?: boolean) => void;
 }
 
-export function ProposalCard({ id, daoAddress, isGuardian, visibleStates, onAction }: ProposalCardProps) {
+export function ProposalCard({ id, daoAddress, isGuardian, visibleStates }: ProposalCardProps) {
   const { address } = useAccount();
   const { theme } = useTheme();
   const [showDetails, setShowDetails] = useState(false);
+  const [lastAction, setLastAction] = useState('');
 
-  const { data: raw } = useReadContract({
+  // ── Reads ──────────────────────────────────────────────────────────────────
+
+  const { data: raw, refetch: refetchRaw } = useReadContract({
     address: daoAddress,
     abi: daoABI,
     functionName: 'proposals',
     args: [BigInt(id)],
   });
 
-  const { data: stateStr } = useReadContract({
+  const { data: stateStr, refetch: refetchStateStr } = useReadContract({
     address: daoAddress,
     abi: daoABI,
     functionName: 'getProposalState',
     args: [BigInt(id)],
   });
 
-  const { data: receipt } = useReadContract({
+  const { data: receipt, refetch: refetchReceipt } = useReadContract({
     address: daoAddress,
     abi: daoABI,
     functionName: 'proposalReceipts',
@@ -95,6 +97,62 @@ export function ProposalCard({ id, daoAddress, isGuardian, visibleStates, onActi
     functionName: 'getProposalActions',
     args: [BigInt(id)],
   });
+
+  // ── Writes ─────────────────────────────────────────────────────────────────
+
+  const { writeContract, data: txHash, isPending } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash: txHash });
+
+  useEffect(() => {
+    if (isConfirmed) {
+      void refetchRaw();
+      void refetchStateStr();
+      void refetchReceipt();
+      setLastAction('');
+    }
+  }, [isConfirmed, refetchRaw, refetchStateStr, refetchReceipt]);
+
+  // ── Handlers ───────────────────────────────────────────────────────────────
+
+  const handleApprove = () => {
+    setLastAction('approve');
+    writeContract({ address: daoAddress, abi: daoABI, functionName: 'approveProposal', args: [BigInt(id)] });
+  };
+
+  const handleVote = (support: boolean) => {
+    setLastAction(support ? 'vote-for' : 'vote-against');
+    writeContract({ address: daoAddress, abi: daoABI, functionName: 'vote', args: [BigInt(id), support] });
+  };
+
+  const handleQueue = () => {
+    setLastAction('queue');
+    writeContract({ address: daoAddress, abi: daoABI, functionName: 'queueProposal', args: [BigInt(id)] });
+  };
+
+  const handleExecute = () => {
+    setLastAction('execute');
+    writeContract({ address: daoAddress, abi: daoABI, functionName: 'executeProposal', args: [BigInt(id)] });
+  };
+
+  const handleCancel = () => {
+    setLastAction('cancel');
+    writeContract({ address: daoAddress, abi: daoABI, functionName: 'cancelProposal', args: [BigInt(id)] });
+  };
+
+  const anyLoading = isPending || isConfirming;
+
+  // ── Ticking clock (updates every 5 s so countdown stays fresh) ────────────
+
+  const [nowTs, setNowTs] = useState(() => BigInt(Math.floor(Date.now() / 1000)));
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNowTs(BigInt(Math.floor(Date.now() / 1000)));
+    }, 5_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // ── Guard ──────────────────────────────────────────────────────────────────
 
   if (!raw) return null;
 
@@ -113,8 +171,6 @@ export function ProposalCard({ id, daoAddress, isGuardian, visibleStates, onActi
 
   const hasVoted = receipt?.[0] ?? false;
   const votedFor = receipt?.[1] ?? false;
-
-  const nowTs = BigInt(Math.floor(Date.now() / 1000));
   const readyToExecute = label === 'Queued' && eta > 0n && nowTs >= eta;
 
   // Voting period progress (0–100)
@@ -243,7 +299,13 @@ export function ProposalCard({ id, daoAddress, isGuardian, visibleStates, onActi
       {/* ── Action buttons ── */}
       <div className="flex flex-wrap gap-2 items-center">
         {label === 'Pending' && isGuardian && (
-          <Button size="sm" variant="info" onClick={() => onAction('approve', id)}>
+          <Button
+            size="sm"
+            variant="info"
+            onClick={handleApprove}
+            loading={lastAction === 'approve' && anyLoading}
+            disabled={anyLoading}
+          >
             Approve (guardian)
           </Button>
         )}
@@ -259,8 +321,24 @@ export function ProposalCard({ id, daoAddress, isGuardian, visibleStates, onActi
 
         {label === 'Active' && !votingClosed && !hasVoted && (
           <>
-            <Button size="sm" variant="success" onClick={() => onAction('vote', id, true)}>Vote For</Button>
-            <Button size="sm" variant="danger"  onClick={() => onAction('vote', id, false)}>Vote Against</Button>
+            <Button
+              size="sm"
+              variant="success"
+              onClick={() => handleVote(true)}
+              loading={lastAction === 'vote-for' && anyLoading}
+              disabled={anyLoading}
+            >
+              Vote For
+            </Button>
+            <Button
+              size="sm"
+              variant="danger"
+              onClick={() => handleVote(false)}
+              loading={lastAction === 'vote-against' && anyLoading}
+              disabled={anyLoading}
+            >
+              Vote Against
+            </Button>
           </>
         )}
         {label === 'Active' && !votingClosed && hasVoted && (
@@ -270,7 +348,13 @@ export function ProposalCard({ id, daoAddress, isGuardian, visibleStates, onActi
         )}
         {label === 'Active' && votingClosed && (
           totalVotes > 0n && forPct > 50 ? (
-            <Button size="sm" variant="info" onClick={() => onAction('queue', id)}>
+            <Button
+              size="sm"
+              variant="info"
+              onClick={handleQueue}
+              loading={lastAction === 'queue' && anyLoading}
+              disabled={anyLoading}
+            >
               Queue (voting ended)
             </Button>
           ) : (
@@ -283,10 +367,38 @@ export function ProposalCard({ id, daoAddress, isGuardian, visibleStates, onActi
         )}
 
         {label === 'Succeeded' && (
-          <Button size="sm" variant="info" onClick={() => onAction('queue', id)}>Queue</Button>
+          <Button
+            size="sm"
+            variant="info"
+            onClick={handleQueue}
+            loading={lastAction === 'queue' && anyLoading}
+            disabled={anyLoading}
+          >
+            Queue
+          </Button>
         )}
         {label === 'Queued' && (
-          <Button size="sm" variant="primary" onClick={() => onAction('execute', id)}>Execute</Button>
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={handleExecute}
+            loading={lastAction === 'execute' && anyLoading}
+            disabled={anyLoading}
+          >
+            Execute
+          </Button>
+        )}
+
+        {isGuardian && (label === 'Pending' || label === 'Active' || label === 'Succeeded' || label === 'Queued') && (
+          <Button
+            size="sm"
+            variant="danger"
+            onClick={handleCancel}
+            loading={lastAction === 'cancel' && anyLoading}
+            disabled={anyLoading}
+          >
+            Cancel (guardian)
+          </Button>
         )}
       </div>
 
