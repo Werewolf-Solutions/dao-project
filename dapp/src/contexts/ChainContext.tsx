@@ -159,23 +159,17 @@ export function ChainProvider({ children }: { children: ReactNode }) {
 
 				for (let id = 0n; id <= saleId; id++) {
 					console.group(`  Sale #${id}`);
-					const [wlfCollected, usdtCollected, ethCollected, usdtWlf,
-						lpCreated, ethLpCreated, lpTokenId, ethLpTokenId] = await Promise.all([
+					const [wlfCollected, usdtCollected, usdtWlf, lpCreated, lpTokenId] = await Promise.all([
 						readContract(config, { abi: tokenSaleABI, address: tokenSaleAddress, functionName: 'saleWLFCollected',     args: [id], chainId: chainIdArg }),
 						readContract(config, { abi: tokenSaleABI, address: tokenSaleAddress, functionName: 'saleUSDTCollected',    args: [id], chainId: chainIdArg }),
-						readContract(config, { abi: tokenSaleABI, address: tokenSaleAddress, functionName: 'saleETHCollected',     args: [id], chainId: chainIdArg }),
 						readContract(config, { abi: tokenSaleABI, address: tokenSaleAddress, functionName: 'saleUSDTWLFCollected', args: [id], chainId: chainIdArg }),
 						readContract(config, { abi: tokenSaleABI, address: tokenSaleAddress, functionName: 'saleLPCreated',        args: [id], chainId: chainIdArg }),
-						readContract(config, { abi: tokenSaleABI, address: tokenSaleAddress, functionName: 'saleLPETHCreated',     args: [id], chainId: chainIdArg }),
 						readContract(config, { abi: tokenSaleABI, address: tokenSaleAddress, functionName: 'saleLPTokenId',        args: [id], chainId: chainIdArg }),
-						readContract(config, { abi: tokenSaleABI, address: tokenSaleAddress, functionName: 'saleLPTokenIdETH',     args: [id], chainId: chainIdArg }),
 					]);
 					console.log('WLF collected    :', formatTokenAmount(wlfCollected, 18));
 					console.log('USDT collected   :', formatTokenAmount(usdtCollected, 6));
-					console.log('ETH collected    :', formatTokenAmount(ethCollected, 18));
 					console.log('WLF paired w/USDT:', formatTokenAmount(usdtWlf, 18));
-					console.log('USDT LP created  :', lpCreated,    '→ NFT #' + lpTokenId.toString());
-					console.log('ETH  LP created  :', ethLpCreated, '→ NFT #' + ethLpTokenId.toString());
+					console.log('USDT LP created  :', lpCreated, '→ NFT #' + lpTokenId.toString());
 					if (account.address) {
 						const purchase = await readContract(config, {
 							abi: tokenSaleABI, address: tokenSaleAddress,
@@ -209,15 +203,13 @@ export function ChainProvider({ children }: { children: ReactNode }) {
 
 				for (let id = 0n; id <= saleId; id++) {
 					console.group(`  Sale #${id} LP positions`);
-					const [usdtPos, ethPos, shares, totalWlf] = await Promise.all([
-						readContract(config, { abi: lpStakingABI, address: lpStakingAddress, functionName: 'lpPositions',    args: [id], chainId: chainIdArg }),
-						readContract(config, { abi: lpStakingABI, address: lpStakingAddress, functionName: 'ethLPPositions', args: [id], chainId: chainIdArg }),
-						readContract(config, { abi: lpStakingABI, address: lpStakingAddress, functionName: 'saleShares',     args: [id], chainId: chainIdArg }),
-						readContract(config, { abi: lpStakingABI, address: lpStakingAddress, functionName: 'saleTotalWLF',   args: [id], chainId: chainIdArg }),
+					const [usdtPos, shares, totalWlf] = await Promise.all([
+						readContract(config, { abi: lpStakingABI, address: lpStakingAddress, functionName: 'lpPositions', args: [id], chainId: chainIdArg }),
+						readContract(config, { abi: lpStakingABI, address: lpStakingAddress, functionName: 'saleShares',  args: [id], chainId: chainIdArg }),
+						readContract(config, { abi: lpStakingABI, address: lpStakingAddress, functionName: 'saleTotalWLF', args: [id], chainId: chainIdArg }),
 					]);
 					// Access by index — named tuple labels are unreliable in this wagmi version
-					console.log('USDT/WLF pool — tokenId:', usdtPos[0].toString(), '| wlf:', formatTokenAmount(usdtPos[1], 18), '| usdt:', formatTokenAmount(usdtPos[2], 6),  '| liquidity:', usdtPos[3].toString(), '| initialized:', usdtPos[4]);
-					console.log('ETH/WLF  pool — tokenId:', ethPos[0].toString(),  '| wlf:', formatTokenAmount(ethPos[1],  18), '| eth:',  formatTokenAmount(ethPos[2],  18), '| liquidity:', ethPos[3].toString(),  '| initialized:', ethPos[4]);
+					console.log('USDT/WLF pool — tokenId:', usdtPos[0].toString(), '| wlf:', formatTokenAmount(usdtPos[1], 18), '| usdt:', formatTokenAmount(usdtPos[2], 6), '| liquidity:', usdtPos[3].toString(), '| initialized:', usdtPos[4]);
 					console.log('saleShares   :', shares.toString());
 					console.log('saleTotalWLF :', formatTokenAmount(totalWlf, 18));
 					console.groupEnd();

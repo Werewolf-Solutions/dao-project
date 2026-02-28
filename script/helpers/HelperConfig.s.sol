@@ -18,6 +18,7 @@ contract HelperConfig is Script, Constants {
         address usdt;
         address positionManager;  // Uniswap v3 NonfungiblePositionManager
         address weth;             // WETH9 / Wrapped Ether
+        uint256 timelockDelay;    // 0 for local/testnet; 2 days for mainnet
     }
     ///////////////////////////////////////
     //           State Variables         //
@@ -71,7 +72,8 @@ contract HelperConfig is Script, Constants {
             deployerPrivateKey: deployerPrivateKey,
             multiSig: multiSig,
             positionManager: positionManager,
-            weth: weth
+            weth: weth,
+            timelockDelay: 0
         });
     }
 
@@ -92,7 +94,8 @@ contract HelperConfig is Script, Constants {
             multiSig: multiSig,
             usdt: mockUsdt,
             positionManager: positionManager,
-            weth: weth
+            weth: weth,
+            timelockDelay: 0
         });
     }
 }

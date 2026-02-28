@@ -6,10 +6,6 @@ export const tokenSaleABI = [
     "stateMutability": "nonpayable"
   },
   {
-    "type": "receive",
-    "stateMutability": "payable"
-  },
-  {
     "type": "function",
     "name": "buyTokens",
     "inputs": [
@@ -31,19 +27,6 @@ export const tokenSaleABI = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "buyTokensWithEth",
-    "inputs": [
-      {
-        "name": "_amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "payable"
   },
   {
     "type": "function",
@@ -111,11 +94,6 @@ export const tokenSaleABI = [
       },
       {
         "name": "_uniswapHelper",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "_wethAddress",
         "type": "address",
         "internalType": "address"
       }
@@ -258,25 +236,6 @@ export const tokenSaleABI = [
   },
   {
     "type": "function",
-    "name": "saleETHCollected",
-    "inputs": [
-      {
-        "name": "saleId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "totalETHCollected",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "saleIdCounter",
     "inputs": [],
     "outputs": [
@@ -309,45 +268,7 @@ export const tokenSaleABI = [
   },
   {
     "type": "function",
-    "name": "saleLPETHCreated",
-    "inputs": [
-      {
-        "name": "saleId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "lpCreated",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "saleLPTokenId",
-    "inputs": [
-      {
-        "name": "saleId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "lpTokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "saleLPTokenIdETH",
     "inputs": [
       {
         "name": "saleId",
@@ -638,37 +559,6 @@ export const tokenSaleABI = [
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "wethAddress",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "withdrawETH",
-    "inputs": [
-      {
-        "name": "to",
-        "type": "address",
-        "internalType": "address payable"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "event",

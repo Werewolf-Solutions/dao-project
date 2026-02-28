@@ -12,9 +12,7 @@ interface ITokenSaleDebug {
     function saleIdCounter() external view returns (uint256);
     function saleWLFCollected(uint256) external view returns (uint256);
     function saleUSDTCollected(uint256) external view returns (uint256);
-    function saleETHCollected(uint256) external view returns (uint256);
     function saleLPCreated(uint256) external view returns (bool);
-    function saleLPETHCreated(uint256) external view returns (bool);
     function owner() external view returns (address);
     function uniswapHelper() external view returns (address);
     function tickLower() external view returns (int24);
@@ -65,9 +63,7 @@ contract ForkDebugTest is Test {
         console.log("saleId         :", saleId);
         console.log("wlfCollected   :", tokenSale.saleWLFCollected(saleId));
         console.log("usdtCollected  :", tokenSale.saleUSDTCollected(saleId));
-        console.log("ethCollected   :", tokenSale.saleETHCollected(saleId));
         console.log("lpCreated      :", tokenSale.saleLPCreated(saleId));
-        console.log("lpETHCreated   :", tokenSale.saleLPETHCreated(saleId));
         console.log("tickLower      :", tokenSale.tickLower());
         console.log("tickUpper      :", tokenSale.tickUpper());
         console.log("poolFee        :", tokenSale.poolFee());

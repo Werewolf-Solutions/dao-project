@@ -170,8 +170,7 @@ contract DaoTest is Test {
             address(mockUSDT),
             address(staking),
             address(lpStaking),
-            address(uniswapHelper),
-            address(0) // wethAddress — not needed for local tests
+            address(uniswapHelper)
         );
         address tokenSaleAddress = address(
             new TransparentUpgradeableProxy(
@@ -443,8 +442,8 @@ contract DaoTest is Test {
         _voteFor(proposalId);
         _advancePastVotingPeriod();
 
-        // Before queueProposal, stored state is still Active
-        assertEq(dao.getProposalState(proposalId), "Active", "Should still be Active before queueProposal");
+        // Past endTime: getProposalState dynamically returns Succeeded (votes for > against)
+        assertEq(dao.getProposalState(proposalId), "Succeeded", "Should show Succeeded dynamically after voting ends");
 
         dao.queueProposal(proposalId);
 
@@ -475,13 +474,11 @@ contract DaoTest is Test {
         _voteAgainst(proposalId);
         _advancePastVotingPeriod();
 
-        // votesAgainst > votesFor → _calculateResult sets Defeated → require(Succeeded) reverts
-        // The entire tx reverts so storage is rolled back and state remains Active
-        vm.expectRevert("DAO::queueProposal: proposal did not succeed");
+        // votesAgainst > votesFor → _calculateResult sets Defeated → early return (no revert)
         dao.queueProposal(proposalId);
 
-        // State is rolled back to Active (storage write from _calculateResult is reverted)
-        assertEq(dao.getProposalState(proposalId), "Active", "State should remain Active after failed queue");
+        // State is persisted as Defeated (no revert rollback)
+        assertEq(dao.getProposalState(proposalId), "Defeated", "State should be Defeated after queue on failed proposal");
     }
 
     function test_cannot_execute_without_queuing() public {
@@ -563,8 +560,8 @@ contract DaoTest is Test {
 
         _advancePastVotingPeriod();
 
-        // votesAgainst (1000e18) > votesFor (990e18) → Defeated
-        vm.expectRevert("DAO::queueProposal: proposal did not succeed");
+        // votesAgainst (1000e18) > votesFor (990e18) → Defeated (early return, no revert)
         dao.queueProposal(proposalId);
+        assertEq(dao.getProposalState(proposalId), "Defeated", "Should be Defeated when against >= for");
     }
 }

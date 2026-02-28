@@ -116,8 +116,7 @@ contract TokenSaleWithLPTest is Test {
             address(usdtToken),
             address(0), // staking contract (old system)
             address(lpStaking),
-            address(uniswapHelper),
-            address(0) // wethAddress — not needed for local tests
+            address(uniswapHelper)
         );
         TransparentUpgradeableProxy tokenSaleProxy = new TransparentUpgradeableProxy(
             address(tokenSaleImpl),

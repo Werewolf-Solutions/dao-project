@@ -114,8 +114,7 @@ contract BaseTest is Test {
             address(mockUSDT),
             address(staking),
             address(lpStaking),
-            address(uniswapHelper),
-            address(0) // wethAddress — not needed for local tests
+            address(uniswapHelper)
         );
         address tokenSaleAddress = address(new TransparentUpgradeableProxy(tokenSaleImpl, multiSig, initDataTokenSale));
         tokenSale = TokenSale(payable(tokenSaleAddress));

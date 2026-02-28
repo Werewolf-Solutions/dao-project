@@ -23,22 +23,6 @@ interface ILPStaking {
     ) external;
 
     /**
-     * @notice Initialize an ETH/WLF LP position from a token sale
-     * @param saleId The sale identifier
-     * @param tokenId The Uniswap v3 NFT token ID
-     * @param wlf WLF amount in the ETH/WLF pool
-     * @param eth ETH (WETH) amount in the position
-     * @param totalWLFSold Total WLF sold across all payment methods in this sale
-     */
-    function initializeETHLPPosition(
-        uint256 saleId,
-        uint256 tokenId,
-        uint256 wlf,
-        uint256 eth,
-        uint256 totalWLFSold
-    ) external;
-
-    /**
      * @notice Claim LP shares after a token sale ends
      * @param user The user claiming shares
      * @param saleId The sale to claim from
@@ -101,7 +85,6 @@ interface ILPStaking {
 
     // Events
     event LPPositionInitialized(uint256 indexed saleId, uint256 indexed tokenId, uint256 wlf, uint256 usdt);
-    event ETHLPPositionInitialized(uint256 indexed saleId, uint256 indexed tokenId, uint256 wlf, uint256 eth);
     event SharesClaimed(address indexed user, uint256 indexed saleId, uint256 shares, bool fixedDuration);
     event SharesWithdrawn(address indexed user, uint256 shares, uint256 wlfAmount, uint256 usdtAmount);
     event FeesCollected(uint256 indexed saleId, uint256 wlf, uint256 usdt);

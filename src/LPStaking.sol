@@ -132,7 +132,6 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
 
     // LP Position tracking per sale
     mapping(uint256 saleId => LPPosition) public lpPositions;
-    mapping(uint256 saleId => LPPosition) public ethLPPositions;      // ETH/WLF LP pool
     mapping(uint256 saleId => uint256 totalShares) public saleShares;
     mapping(uint256 saleId => uint256 totalWLF) public saleTotalWLF;  // Total WLF across all pools
 
@@ -158,7 +157,6 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
     ///////////////////////////////////////
 
     event LPPositionInitialized(uint256 indexed saleId, uint256 indexed tokenId, uint256 wlf, uint256 usdt);
-    event ETHLPPositionInitialized(uint256 indexed saleId, uint256 indexed tokenId, uint256 wlf, uint256 eth);
     event SharesClaimed(address indexed user, uint256 indexed saleId, uint256 shares, bool fixedDuration);
     event SharesWithdrawn(address indexed user, uint256 shares, uint256 wlfAmount, uint256 usdtAmount);
     event FeesCollected(uint256 indexed saleId, uint256 wlf, uint256 usdt);
@@ -276,46 +274,6 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
     }
 
     /**
-     * @notice Initialize an ETH/WLF LP position from a token sale
-     * @param saleId The sale identifier
-     * @param tokenId The Uniswap v3 NFT token ID
-     * @param wlf WLF amount in the ETH/WLF pool
-     * @param eth ETH (WETH) amount in the position
-     * @param totalWLFSold Total WLF sold in this sale (used as share denominator)
-     */
-    function initializeETHLPPosition(
-        uint256 saleId,
-        uint256 tokenId,
-        uint256 wlf,
-        uint256 eth,
-        uint256 totalWLFSold
-    ) external onlyTokenSale {
-        require(!ethLPPositions[saleId].initialized, "LPStaking: ETH position already initialized");
-        require(tokenId > 0, "LPStaking: Invalid token ID");
-        require(
-            positionManager.ownerOf(tokenId) == address(this),
-            "LPStaking: Contract doesn't own ETH NFT"
-        );
-
-        (,,,,,,,uint128 liquidity,,,,) = positionManager.positions(tokenId);
-
-        ethLPPositions[saleId] = LPPosition({
-            tokenId: tokenId,
-            totalWLF: wlf,
-            totalUSDT: eth,  // field reused for ETH amount
-            liquidity: liquidity,
-            initialized: true
-        });
-
-        // Only set if not already set by initializeLPPosition
-        if (saleTotalWLF[saleId] == 0) {
-            saleTotalWLF[saleId] = totalWLFSold;
-        }
-
-        emit ETHLPPositionInitialized(saleId, tokenId, wlf, eth);
-    }
-
-    /**
      * @notice Claim LP shares after a token sale ends
      * @param user The user claiming shares
      * @param saleId The sale to claim from
@@ -329,7 +287,7 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
         bool fixedDuration
     ) external onlyTokenSale updateReward(user) {
         require(
-            lpPositions[saleId].initialized || ethLPPositions[saleId].initialized,
+            lpPositions[saleId].initialized,
             "LPStaking: Sale LP not initialized"
         );
         require(saleTotalWLF[saleId] > 0, "LPStaking: Total WLF not set");

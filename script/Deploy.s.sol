@@ -21,8 +21,8 @@ contract Deploy is Script {
     HelperConfig.NetworkConfig netConfig;
 
     // Constants
-    uint256 constant votingPeriod = 2 days;
-    uint256 constant delay = 2 days;
+    // votingPeriod is hardcoded in DAO.sol::votingPeriod() — 1 hour for testnet
+    // timelockDelay comes from netConfig (0 for local/Sepolia, 2 days for mainnet)
     uint256 constant tokenSaleAirdrop = 5_000_000 ether;
     uint256 constant tokenPrice = 0.001 ether;
 
@@ -41,8 +41,6 @@ contract Deploy is Script {
     UniswapHelper uniswapHelper;
     CompaniesHouseV1 companiesHouse;
 
-    // Admin transfer tracking
-    uint256 adminEta;
 
     function run() external {
         // setting up a helper contract that will handle mocks and mainnet address's etc
@@ -105,6 +103,10 @@ contract Deploy is Script {
         treasury.transferOwnership(address(timelock));
         tokenSale.transferOwnership(address(timelock));
 
+        // Wire Staking.treasury while founder is still Timelock admin
+        _setStakingTreasury();
+
+        // Transfer Timelock admin to DAO (must be last action as founder)
         _setTimelockAdmin();
 
         vm.stopBroadcast();
@@ -113,19 +115,36 @@ contract Deploy is Script {
         _writeDeploymentData();
     }
 
+    /**
+     * @dev Atomically transfers Timelock admin to DAO.
+     *      Requires delay = 0 (queue and execute in the same block).
+     *      Must be called LAST — after this, founder is no longer Timelock admin.
+     */
     function _setTimelockAdmin() internal {
         bytes memory callData = abi.encode(address(dao));
-        adminEta = block.timestamp + timelock.delay() + 60; // +60s buffer for broadcast lag
+        uint256 eta = block.timestamp; // delay = 0 → immediately executable
 
-        timelock.queueTransaction(
-            address(timelock),
-            "setPendingAdmin(address)",
-            callData,
-            adminEta
-        );
+        timelock.queueTransaction(address(timelock), "setPendingAdmin(address)", callData, eta);
+        timelock.executeTransaction(address(timelock), "setPendingAdmin(address)", callData, eta);
 
-        console.log("Timelock admin transfer queued. ETA:", adminEta);
-        console.log("Run `make accept-admin-*` after the timelock delay passes.");
+        // DAO is now pendingAdmin; guardian (founder) calls acceptAdmin via DAO
+        dao.__acceptAdmin();
+
+        console.log("Timelock admin transferred to DAO. Timelock.delay =", timelock.delay());
+    }
+
+    /**
+     * @dev Wires up Staking.treasury via Timelock (Staking.owner = Timelock).
+     *      Must be called BEFORE _setTimelockAdmin() while founder is still admin.
+     */
+    function _setStakingTreasury() internal {
+        bytes memory callData = abi.encode(address(treasury));
+        uint256 eta = block.timestamp;
+
+        timelock.queueTransaction(address(staking), "setTreasury(address)", callData, eta);
+        timelock.executeTransaction(address(staking), "setTreasury(address)", callData, eta);
+
+        console.log("Staking.treasury set to:", address(treasury));
     }
 
     function _deployTreasury() internal {
@@ -148,7 +167,7 @@ contract Deploy is Script {
         bytes memory initDataTimelock = abi.encodeWithSelector(
             Timelock.initialize.selector,
             founder,
-            delay
+            netConfig.timelockDelay
         );
         TransparentUpgradeableProxy timelockProxy = new TransparentUpgradeableProxy(
                 address(timelockImpl),
@@ -254,8 +273,7 @@ contract Deploy is Script {
             netConfig.usdt,
             address(staking),
             address(lpStaking),
-            address(uniswapHelper),
-            netConfig.weth
+            address(uniswapHelper)
         );
         TransparentUpgradeableProxy tokenSaleProxy = new TransparentUpgradeableProxy(
                 address(tokenSaleImpl),
@@ -327,10 +345,5 @@ contract Deploy is Script {
             vm.toString(address(companiesHouse))
         );
         vm.writeLine(path, companiesHouseStr);
-
-        vm.writeLine(
-            path,
-            string.concat("AdminEta:", vm.toString(adminEta))
-        );
     }
 }

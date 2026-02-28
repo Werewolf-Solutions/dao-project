@@ -8,12 +8,25 @@ deploy-local-dry:
 deploy-local:
 	forge script script/Deploy.s.sol:Deploy --fork-url http://localhost:8545 --broadcast && node scripts/sync-dapp.mjs
 
-# Run after advancing Anvil time past the timelock delay:
-#   cast rpc evm_increaseTime 172860 && cast rpc evm_mine 1
+# ─── Test Proposal: Start Sale #1 (local) ────────────────────────────────────
 # Set env vars from script/output/deployed-addresses.txt before running:
-#   export TIMELOCK_ADDRESS=0x... DAO_ADDRESS=0x... ADMIN_ETA=...
-accept-admin-local:
-	forge script script/AcceptTimelockAdmin.s.sol:AcceptTimelockAdmin \
+#   export DAO_ADDRESS=0x... WEREWOLF_TOKEN_ADDRESS=0x... TOKEN_SALE_ADDRESS=0x...
+# For approve/queue/execute also set: export PROPOSAL_ID=0
+
+propose-local:
+	STEP=create forge script script/TestProposal_StartSale1.s.sol:TestProposalStartSale1 \
+		--fork-url http://localhost:8545 --broadcast
+
+approve-proposal-local:
+	STEP=approve forge script script/TestProposal_StartSale1.s.sol:TestProposalStartSale1 \
+		--fork-url http://localhost:8545 --broadcast
+
+queue-proposal-local:
+	STEP=queue forge script script/TestProposal_StartSale1.s.sol:TestProposalStartSale1 \
+		--fork-url http://localhost:8545 --broadcast
+
+execute-proposal-local:
+	STEP=execute forge script script/TestProposal_StartSale1.s.sol:TestProposalStartSale1 \
 		--fork-url http://localhost:8545 --broadcast
 
 # ─── Sepolia ──────────────────────────────────────────────────────────────────
@@ -31,12 +44,26 @@ deploy-sepolia:
 		--verify --etherscan-api-key $(ETHERSCAN_API_KEY) \
 		--resume --private-key $(PRIVATE_KEY)
 
-# Run 2 days after deploy-sepolia.
+# ─── Test Proposal: Start Sale #1 (Sepolia) ──────────────────────────────────
 # Set env vars from script/output/deployed-addresses.txt before running:
-#   export TIMELOCK_ADDRESS=0x... DAO_ADDRESS=0x... ADMIN_ETA=...
-accept-admin-sepolia:
-	forge script script/AcceptTimelockAdmin.s.sol:AcceptTimelockAdmin \
-		--rpc-url $(SEPOLIA_RPC_URL) --broadcast
+#   export DAO_ADDRESS=0x... WEREWOLF_TOKEN_ADDRESS=0x... TOKEN_SALE_ADDRESS=0x...
+# For approve/queue/execute also set: export PROPOSAL_ID=0
+
+propose-sepolia:
+	STEP=create forge script script/TestProposal_StartSale1.s.sol:TestProposalStartSale1 \
+		--rpc-url $(SEPOLIA_RPC_URL) --broadcast --private-key $(PRIVATE_KEY)
+
+approve-proposal-sepolia:
+	STEP=approve forge script script/TestProposal_StartSale1.s.sol:TestProposalStartSale1 \
+		--rpc-url $(SEPOLIA_RPC_URL) --broadcast --private-key $(PRIVATE_KEY)
+
+queue-proposal-sepolia:
+	STEP=queue forge script script/TestProposal_StartSale1.s.sol:TestProposalStartSale1 \
+		--rpc-url $(SEPOLIA_RPC_URL) --broadcast --private-key $(PRIVATE_KEY)
+
+execute-proposal-sepolia:
+	STEP=execute forge script script/TestProposal_StartSale1.s.sol:TestProposalStartSale1 \
+		--rpc-url $(SEPOLIA_RPC_URL) --broadcast --private-key $(PRIVATE_KEY)
 
 # ─── Debug / Diagnose ─────────────────────────────────────────────────────────
 # Run with: make fork-debug

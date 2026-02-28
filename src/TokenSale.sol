@@ -10,11 +10,6 @@ import "./Staking.sol";
 import "./interfaces/ILPStaking.sol";
 import "@uniswap/v3-periphery/contracts/interfaces/INonfungiblePositionManager.sol";
 
-interface IWETH9 {
-    function deposit() external payable;
-    function withdraw(uint256 wad) external;
-}
-
 // Define an interface for UniswapHelper to interact with it
 interface ILiquidityExamples {
     function addLiquidity(
@@ -60,19 +55,13 @@ contract TokenSale is OwnableUpgradeable {
     mapping(uint256 saleId => mapping(address buyer => uint256 wlfAmount)) public purchases;
     mapping(uint256 saleId => uint256 totalWLFCollected) public saleWLFCollected;
     mapping(uint256 saleId => uint256 totalUSDTCollected) public saleUSDTCollected;
-    mapping(uint256 saleId => uint256 totalETHCollected) public saleETHCollected;
     mapping(uint256 saleId => uint256 wlfFromUSDT) public saleUSDTWLFCollected; // WLF paired with USDT
     mapping(uint256 saleId => uint256 lpTokenId) public saleLPTokenId;
     mapping(uint256 saleId => bool lpCreated) public saleLPCreated;
-    mapping(uint256 saleId => uint256 lpTokenId) public saleLPTokenIdETH;  // ETH/WLF LP NFT
-    mapping(uint256 saleId => bool lpCreated) public saleLPETHCreated;
 
     // Buyer tracking for auto-distribution in endSale()
     mapping(uint256 saleId => address[]) public saleBuyers;
     mapping(uint256 saleId => mapping(address => bool)) private _buyerTracked;
-
-    // WETH address for ETH/WLF LP creation
-    address public wethAddress;
 
     // Uniswap parameters
     int24 public tickLower = -887270;  // Full range for fee 500 (tickSpacing=10): must be multiple of 10
@@ -98,26 +87,7 @@ contract TokenSale is OwnableUpgradeable {
     event LPCreated(uint256 indexed saleId, uint256 tokenId, uint256 wlf, uint256 usdt);
     event LPSharesClaimed(address indexed user, uint256 indexed saleId, uint256 amount, bool fixedDuration);
 
-    // BUG: remove address _uniswapHelper
-    constructor()
-    /* address _token,
-        address _treasury,
-        address _timelock,
-        address _usdtTokenAddress,
-        address _stakingAddress,
-        address _uniswapHelper */
-    {
-        /*      require(_usdtTokenAddress != address(0), "USDT address cannot be zero");
-        usdtTokenAddress = _usdtTokenAddress;
-        usdtToken = IERC20(_usdtTokenAddress);
-        werewolfToken = WerewolfTokenV1(_token);
-        stakingContract = Staking(_stakingAddress);
-        treasury = Treasury(_treasury);
-        uniswapHelper = IUniswapHelper(_uniswapHelper);
-        // Set floor price for token sales
-        price = 0.001 * 10 ** 18; */
-
-        //disable initializer
+    constructor() {
         _disableInitializers();
     }
 
@@ -129,8 +99,7 @@ contract TokenSale is OwnableUpgradeable {
         address _usdtTokenAddress,
         address _stakingAddress,
         address _lpStakingAddress,
-        address _uniswapHelper,
-        address _wethAddress
+        address _uniswapHelper
     ) public initializer {
         __Ownable_init(newOwner); //we do not want the msg.sender to be the owner since that will be the proxyAdmin
         require(_usdtTokenAddress != address(0), "USDT address cannot be zero");
@@ -141,7 +110,6 @@ contract TokenSale is OwnableUpgradeable {
         treasury = Treasury(_treasury);
         lpStaking = ILPStaking(_lpStakingAddress);
         uniswapHelper = IUniswapHelper(_uniswapHelper);
-        wethAddress = _wethAddress;
         // Set floor price for token sales
         price = 0.001 * 10 ** 18;
         // Set Uniswap LP parameters in proxy storage
@@ -260,47 +228,6 @@ contract TokenSale is OwnableUpgradeable {
         }
     }
 
-    function buyTokensWithEth(uint256 _amount) external payable {
-        require(saleActive, "Sale is not active");
-        Sale storage currentSale = sales[saleIdCounter];
-        require(currentSale.tokensAvailable >= _amount, "Not enough tokens available for sale");
-
-        uint256 ethRequired = (_amount * price) / 10 ** 18;
-        require(msg.value >= ethRequired, "Insufficient ETH sent");
-
-        // Refund excess ETH
-        if (msg.value > ethRequired) {
-            payable(msg.sender).transfer(msg.value - ethRequired);
-        }
-
-        currentSale.tokensAvailable -= _amount;
-        purchases[saleIdCounter][msg.sender] += _amount;
-        saleWLFCollected[saleIdCounter] += _amount;
-        saleETHCollected[saleIdCounter] += ethRequired;
-
-        // Track unique buyers for auto-distribution in endSale()
-        if (!_buyerTracked[saleIdCounter][msg.sender]) {
-            _buyerTracked[saleIdCounter][msg.sender] = true;
-            saleBuyers[saleIdCounter].push(msg.sender);
-        }
-
-        emit TokensPurchased(msg.sender, _amount, saleIdCounter);
-
-        // Auto-close sale when last token is sold (LP creation is a separate tx via endSale())
-        if (currentSale.tokensAvailable == 0) {
-            currentSale.active = false;
-            saleActive = false;
-            emit SaleEnded(saleIdCounter);
-        }
-    }
-
-    function withdrawETH(address payable to, uint256 amount) external onlyOwner {
-        require(address(this).balance >= amount, "Insufficient ETH balance");
-        to.transfer(amount);
-    }
-
-    receive() external payable {}
-
     function _endSale() internal {
         uint256 currentSale = saleIdCounter;
         Sale storage sale = sales[currentSale];
@@ -314,9 +241,7 @@ contract TokenSale is OwnableUpgradeable {
 
         uint256 totalWLFSold = saleWLFCollected[currentSale];
         uint256 wlfForUSDT   = saleUSDTWLFCollected[currentSale];
-        uint256 wlfForETH    = totalWLFSold - wlfForUSDT;
         uint256 totalUSDT    = saleUSDTCollected[currentSale];
-        uint256 totalETH     = saleETHCollected[currentSale];
 
         // Handle case where no purchases were made
         if (totalWLFSold == 0) return;
@@ -360,43 +285,6 @@ contract TokenSale is OwnableUpgradeable {
             emit LPCreated(currentSale, usdtTokenId, wlfForUSDT, totalUSDT);
         }
 
-        // ── ETH/WLF LP ──
-        if (wlfForETH > 0 && totalETH > 0) {
-            // Wrap ETH → WETH
-            IWETH9(wethAddress).deposit{value: totalETH}();
-
-            werewolfToken.approve(address(uniswapHelper), wlfForETH);
-            IERC20(wethAddress).approve(address(uniswapHelper), totalETH);
-
-            uint256 ethTokenId = uniswapHelper.addLiquidity(
-                address(werewolfToken),
-                wethAddress,
-                poolFee,
-                tickLower,
-                tickUpper,
-                wlfForETH,
-                totalETH
-            );
-
-            INonfungiblePositionManager(positionManagerAddr).transferFrom(
-                address(this),
-                address(lpStaking),
-                ethTokenId
-            );
-
-            lpStaking.initializeETHLPPosition(
-                currentSale,
-                ethTokenId,
-                wlfForETH,
-                totalETH,
-                totalWLFSold
-            );
-
-            saleLPTokenIdETH[currentSale] = ethTokenId;
-            saleLPETHCreated[currentSale] = true;
-            emit LPCreated(currentSale, ethTokenId, wlfForETH, totalETH);
-        }
-
         // ── Auto-distribute LP shares to all buyers (5-year lock) ──
         address[] storage buyers = saleBuyers[currentSale];
         for (uint256 i = 0; i < buyers.length; i++) {
@@ -422,7 +310,7 @@ contract TokenSale is OwnableUpgradeable {
      */
     function claimLPShares(uint256 saleId, bool fixedDuration) external {
         require(!sales[saleId].active, "Sale still active");
-        require(saleLPCreated[saleId] || saleLPETHCreated[saleId], "LP not created yet");
+        require(saleLPCreated[saleId], "LP not created yet");
 
         uint256 purchaseAmount = purchases[saleId][msg.sender];
         require(purchaseAmount > 0, "No purchase to claim");

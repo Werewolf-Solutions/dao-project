@@ -321,45 +321,6 @@ export const lpStakingABI = [
   },
   {
     "type": "function",
-    "name": "ethLPPositions",
-    "inputs": [
-      {
-        "name": "saleId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "totalWLF",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "totalUSDT",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "liquidity",
-        "type": "uint128",
-        "internalType": "uint128"
-      },
-      {
-        "name": "initialized",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "fixedLockUnlockTime",
     "inputs": [
       {
@@ -429,39 +390,6 @@ export const lpStakingABI = [
         "name": "_positionManager",
         "type": "address",
         "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "initializeETHLPPosition",
-    "inputs": [
-      {
-        "name": "saleId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "wlf",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "eth",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "totalWLFSold",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -983,37 +911,6 @@ export const lpStakingABI = [
       },
       {
         "name": "value",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ETHLPPositionInitialized",
-    "inputs": [
-      {
-        "name": "saleId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "wlf",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "eth",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

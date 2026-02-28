@@ -356,10 +356,7 @@ contract DAO is Initializable {
             "DAO::queueProposal: voting period has not ended"
         );
         _calculateResult(proposal);
-        require(
-            proposal.state == ProposalState.Succeeded,
-            "DAO::queueProposal: proposal did not succeed"
-        );
+        if (proposal.state != ProposalState.Succeeded) return;
         uint256 eta = block.timestamp + timelock.delay();
         for (uint256 i = 0; i < proposal.targets.length; i++) {
             _queueOrRevert(
@@ -394,7 +391,7 @@ contract DAO is Initializable {
     } // 10 actions
 
     function votingPeriod() public pure returns (uint256) {
-        return 3 days;
+        return 1 hours; // short for testnet; raise to 3+ days on mainnet via redeployment
     }
 
     function quorumVotes() public pure returns (uint256) {
@@ -408,19 +405,39 @@ contract DAO is Initializable {
     function getProposalState(
         uint256 _proposalId
     ) public view returns (string memory status) {
-        Proposal storage proposal = proposals[_proposalId];
+        Proposal storage p = proposals[_proposalId];
 
-        // Convert enum to a string
-        if (proposal.state == ProposalState.Pending) return "Pending";
-        if (proposal.state == ProposalState.Active) return "Active";
-        if (proposal.state == ProposalState.Canceled) return "Canceled";
-        if (proposal.state == ProposalState.Defeated) return "Defeated";
-        if (proposal.state == ProposalState.Succeeded) return "Succeeded";
-        if (proposal.state == ProposalState.Queued) return "Queued";
-        if (proposal.state == ProposalState.Expired) return "Expired";
-        if (proposal.state == ProposalState.Executed) return "Executed";
+        // Dynamically compute result for Active proposals past voting deadline
+        if (p.state == ProposalState.Active && block.timestamp >= p.endTime) {
+            uint256 totalVotes = p.votesFor + p.votesAgainst;
+            if (totalVotes < minVotesRequired) return "Canceled";
+            if (p.votesAgainst >= p.votesFor) return "Defeated";
+            return "Succeeded";
+        }
+
+        if (p.state == ProposalState.Pending)   return "Pending";
+        if (p.state == ProposalState.Active)    return "Active";
+        if (p.state == ProposalState.Canceled)  return "Canceled";
+        if (p.state == ProposalState.Defeated)  return "Defeated";
+        if (p.state == ProposalState.Succeeded) return "Succeeded";
+        if (p.state == ProposalState.Queued)    return "Queued";
+        if (p.state == ProposalState.Expired)   return "Expired";
+        if (p.state == ProposalState.Executed)  return "Executed";
 
         return "Unknown"; // Fallback case (should never be hit)
+    }
+
+    function getProposalActions(uint256 _proposalId)
+        external
+        view
+        returns (
+            address[] memory targets,
+            string[] memory signatures,
+            bytes[] memory datas
+        )
+    {
+        Proposal storage p = proposals[_proposalId];
+        return (p.targets, p.signatures, p.datas);
     }
 
     ///////////////////////////////////////
