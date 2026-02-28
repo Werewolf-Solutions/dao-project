@@ -24,6 +24,7 @@ interface IStaking {
     function stakeFixedDuration(address _owner, uint256 _amount, uint256 _duration) external;
     function stakeFlexibleDuration(address _owner, uint256 _amount) external;
     function stakedBalance() external view returns (uint256);
+    function getStakedWLF(address user) external view returns (uint256);
     function stakes(address) external view returns (uint256 amount, uint256 lastStakeTime, uint256 endStakeTime);
     function stakingRewards() external view returns (uint256);
     function stakingToken() external view returns (address);

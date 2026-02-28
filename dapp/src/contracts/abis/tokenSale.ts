@@ -7,6 +7,19 @@ export const tokenSaleABI = [
   },
   {
     "type": "function",
+    "name": "applyDelegations",
+    "inputs": [
+      {
+        "name": "saleId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "buyTokens",
     "inputs": [
       {
@@ -48,10 +61,36 @@ export const tokenSaleABI = [
   },
   {
     "type": "function",
+    "name": "daoContract",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "endSale",
     "inputs": [],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "founder",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -73,7 +112,7 @@ export const tokenSaleABI = [
         "internalType": "address"
       },
       {
-        "name": "_timelock",
+        "name": "",
         "type": "address",
         "internalType": "address"
       },
@@ -375,6 +414,19 @@ export const tokenSaleABI = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "setDaoContract",
+    "inputs": [
+      {
+        "name": "_dao",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",

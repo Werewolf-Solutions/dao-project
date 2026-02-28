@@ -138,6 +138,9 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
     // 5-year hard lock per user
     mapping(address user => uint256 unlockTimestamp) public fixedLockUnlockTime;
 
+    // WLF contributed to LP by each user (used for voting power)
+    mapping(address user => uint256 wlfAmount) public userWLFStaked;
+
     // Epoch and fixed-duration tracking (kept for backward compatibility)
     mapping(uint256 epoch => uint256 lockedAmount) public epochToLockedAmount;
     mapping(address => uint256[]) public userToLockedEpochs;
@@ -299,6 +302,7 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
         _mint(user, sharesToMint);
         saleShares[saleId] += sharesToMint;
         totalStakedValue += sharesToMint;
+        userWLFStaked[user] += purchaseAmount;
 
         // 5-year hard lock: extend unlock time if needed
         if (fixedDuration) {
@@ -326,6 +330,11 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
             "LPStaking: 5-year lock active"
         );
 
+        uint256 userBalance = balanceOf(msg.sender);
+        if (userBalance > 0) {
+            uint256 wlfReduction = (userWLFStaked[msg.sender] * shares) / userBalance;
+            userWLFStaked[msg.sender] -= wlfReduction;
+        }
         _burn(msg.sender, shares);
         totalStakedValue -= shares;
 
@@ -439,6 +448,10 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
         uint256 currentApy = SCALE * MIN_APY + ((MAX_APY - MIN_APY) * SCALE) / (2 ** exponent);
 
         return currentApy / SCALE;
+    }
+
+    function getWLFVotingPower(address user) external view returns (uint256) {
+        return userWLFStaked[user];
     }
 
     /**

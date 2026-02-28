@@ -10,6 +10,10 @@ import "./Staking.sol";
 import "./interfaces/ILPStaking.sol";
 import "@uniswap/v3-periphery/contracts/interfaces/INonfungiblePositionManager.sol";
 
+interface IDAODelegation {
+    function autoDelegate(address user, address delegatee) external;
+}
+
 // Define an interface for UniswapHelper to interact with it
 interface ILiquidityExamples {
     function addLiquidity(
@@ -46,6 +50,8 @@ contract TokenSale is OwnableUpgradeable {
     ILiquidityExamples public liquidityExamplesContract;
     ILPStaking public lpStaking;
     IUniswapHelper public uniswapHelper;
+    address public daoContract;
+    address public founder; // deployer address — persists after ownership transfer to Timelock
 
     uint256 public price;
     uint256 public saleIdCounter = 0;
@@ -95,13 +101,14 @@ contract TokenSale is OwnableUpgradeable {
         address newOwner,
         address _token,
         address _treasury,
-        address _timelock,
+        address /* _timelock */,
         address _usdtTokenAddress,
         address _stakingAddress,
         address _lpStakingAddress,
         address _uniswapHelper
     ) public initializer {
         __Ownable_init(newOwner); //we do not want the msg.sender to be the owner since that will be the proxyAdmin
+        founder = newOwner; // persists after ownership is transferred to Timelock
         require(_usdtTokenAddress != address(0), "USDT address cannot be zero");
         usdtTokenAddress = _usdtTokenAddress;
         usdtToken = IERC20(_usdtTokenAddress);
@@ -110,8 +117,8 @@ contract TokenSale is OwnableUpgradeable {
         treasury = Treasury(_treasury);
         lpStaking = ILPStaking(_lpStakingAddress);
         uniswapHelper = IUniswapHelper(_uniswapHelper);
-        // Set floor price for token sales
-        price = 0.001 * 10 ** 18;
+        // Set floor price for token sales (Sale #0 price)
+        price = 0.0004 * 10 ** 18;
         // Set Uniswap LP parameters in proxy storage
         // (declaration-time defaults don't apply to proxy storage in upgradeable contracts)
         tickLower = -887270;  // full-range for fee 500 (tickSpacing = 10)
@@ -123,6 +130,10 @@ contract TokenSale is OwnableUpgradeable {
         require(_usdtTokenAddress != address(0), "USDT address cannot be zero");
         usdtTokenAddress = _usdtTokenAddress;
         usdtToken = IERC20(_usdtTokenAddress);
+    }
+
+    function setDaoContract(address _dao) external onlyOwner {
+        daoContract = _dao;
     }
 
     function setUniswapHelper(address _uniswapHelper) external onlyOwner {
@@ -253,6 +264,12 @@ contract TokenSale is OwnableUpgradeable {
 
         // ── USDT/WLF LP ──
         if (wlfForUSDT > 0 && totalUSDT > 0) {
+            // Snapshot balances before LP creation so we know the actual amounts used.
+            // UniswapHelper deposits tokens at the CURRENT POOL PRICE ratio and returns
+            // any excess back to this contract — so desired amounts may not all be used.
+            uint256 wlfBefore  = werewolfToken.balanceOf(address(this));
+            uint256 usdtBefore = usdtToken.balanceOf(address(this));
+
             werewolfToken.approve(address(uniswapHelper), wlfForUSDT);
             usdtToken.approve(address(uniswapHelper), totalUSDT);
 
@@ -266,23 +283,36 @@ contract TokenSale is OwnableUpgradeable {
                 totalUSDT
             );
 
+            // Actual amounts consumed by Uniswap (desired minus what was returned as excess)
+            uint256 wlfUsed  = wlfBefore  - werewolfToken.balanceOf(address(this));
+            uint256 usdtUsed = usdtBefore - usdtToken.balanceOf(address(this));
+
             INonfungiblePositionManager(positionManagerAddr).transferFrom(
                 address(this),
                 address(lpStaking),
                 usdtTokenId
             );
 
+            // Record actual amounts — not desired — so position value is accurate
             lpStaking.initializeLPPosition(
                 currentSale,
                 usdtTokenId,
-                wlfForUSDT,
-                totalUSDT,
+                wlfUsed,
+                usdtUsed,
                 totalWLFSold
             );
 
             saleLPTokenId[currentSale] = usdtTokenId;
             saleLPCreated[currentSale] = true;
-            emit LPCreated(currentSale, usdtTokenId, wlfForUSDT, totalUSDT);
+            emit LPCreated(currentSale, usdtTokenId, wlfUsed, usdtUsed);
+
+            // Forward any excess tokens (caused by price mismatch between sales) to treasury.
+            // At sale #1 the pool price may still reflect sale #0's lower price; Uniswap
+            // accepts fewer tokens than desired and returns the remainder here.
+            uint256 excessWlf  = wlfForUSDT - wlfUsed;
+            uint256 excessUsdt = totalUSDT  - usdtUsed;
+            if (excessWlf  > 0) werewolfToken.transfer(address(treasury), excessWlf);
+            if (excessUsdt > 0) usdtToken.transfer(address(treasury), excessUsdt);
         }
 
         // ── Auto-distribute LP shares to all buyers (5-year lock) ──
@@ -293,6 +323,10 @@ contract TokenSale is OwnableUpgradeable {
             if (amt == 0) continue;
             purchases[currentSale][buyer] = 0;
             lpStaking.claimShares(buyer, currentSale, amt, true);
+            // Auto-delegate ALL voting power from early sales (#0, #1) to founder for 2 years
+            if (daoContract != address(0) && currentSale <= 1) {
+                IDAODelegation(daoContract).autoDelegate(buyer, founder);
+            }
             emit LPSharesClaimed(buyer, currentSale, amt, true);
         }
     }
@@ -301,6 +335,24 @@ contract TokenSale is OwnableUpgradeable {
         // Owner can force-end at any time; anyone can create LP after sale auto-closes
         require(!saleActive || msg.sender == owner(), "Only owner can end an active sale");
         _endSale();
+    }
+
+    /**
+     * @notice Apply voting delegations to the founder for all buyers in an early sale (#0 or #1).
+     *         Callable by anyone — useful if daoContract was set after endSale() ran, or to
+     *         re-apply delegations for buyers who were missed.
+     * @param saleId The sale to apply delegations for (must be <= 1)
+     */
+    function applyDelegations(uint256 saleId) external {
+        require(saleId <= 1, "Only early sales #0 and #1 require delegation");
+        require(!sales[saleId].active, "Sale still active");
+        require(saleLPCreated[saleId], "LP not created yet, call endSale() first");
+        require(daoContract != address(0), "DAO contract not set");
+
+        address[] storage buyers = saleBuyers[saleId];
+        for (uint256 i = 0; i < buyers.length; i++) {
+            IDAODelegation(daoContract).autoDelegate(buyers[i], founder);
+        }
     }
 
     /**

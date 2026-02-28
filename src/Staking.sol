@@ -255,6 +255,10 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
         return stakePositions[_user].length;
     }
 
+    function getStakedWLF(address user) external view returns (uint256) {
+        return convertToAssets(balanceOf(user));
+    }
+
     /**
      * @notice Add WLF to the staking rewards reserve.
      */

@@ -5,6 +5,8 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./WerewolfTokenV1.sol";
 import "./Treasury.sol";
 import "./Timelock.sol";
+import {ILPStaking} from "./interfaces/ILPStaking.sol";
+import {IStaking} from "./interfaces/IStaking.sol";
 
 //For merkle proofs
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
@@ -99,6 +101,21 @@ contract DAO is Initializable {
     uint256 minVotesRequired; //minimum votes require to enforce participation
     uint256 public proposalCount;
     uint256 public proposalCost; // cost to create a proposal in WLF tokens
+    uint256 public votingPeriodDuration;
+    uint256 public votingDelayDuration;
+
+    address public stakingContract;
+    address public lpStakingContract;
+
+    // ── Delegation ────────────────────────────────────────────────────────────
+    uint256 public constant VALIDATOR_THRESHOLD = 5_000_000 ether;
+    address public tokenSaleContract;
+    uint256 public delegateLockDuration;   // lock applied to auto-delegations (sales #0 and #1)
+    uint256 public delegationCooldown;     // cooldown applied after every manual delegate/undelegate
+    mapping(address delegator => address delegate) public voteDelegate;
+    mapping(address delegator => uint256 expiry) public voteDelegateLockExpiry;
+    mapping(address delegatee => uint256 total) public delegatedVotingPower;
+    mapping(address delegator => uint256 power) public userDelegatedPower;
 
     mapping(address => bool) public authorizedCallers;
     mapping(uint256 => Proposal) public proposals;
@@ -117,6 +134,7 @@ contract DAO is Initializable {
     event ProposalExecuted(uint256 proposalId);
     event ProposalCanceled(uint256 proposalId);
     event Voted(uint256 proposalId, address voter, bool support, uint256 votes);
+    event DelegateChanged(address indexed delegator, address indexed fromDelegate, address indexed toDelegate);
     ///////////////////////////////////////
     //           Modifiers               //
     ///////////////////////////////////////
@@ -129,6 +147,11 @@ contract DAO is Initializable {
 
     modifier onlyGuardian() {
         require(msg.sender == guardian, "Only guardian");
+        _;
+    }
+
+    modifier onlyTokenSale() {
+        require(msg.sender == tokenSaleContract, "DAO: Only TokenSale");
         _;
     }
 
@@ -153,7 +176,11 @@ contract DAO is Initializable {
         werewolfTokenAddress = _token;
         guardian = _guardian;
         proposalCost = 10e18; // 10 WLF tokens
+        delegateLockDuration = 2 * 365 days;
+        delegationCooldown = 180 days; // 6 months initial cooldown; adjustable via DAO proposal
         proposalCount = 1;
+        votingPeriodDuration = 1 hours;
+        votingDelayDuration = 1;
         //guardian = msg.sender;
         // _authorizeCaller(_timelock);
     }
@@ -201,7 +228,7 @@ contract DAO is Initializable {
         receipt.hasVoted = true;
         receipt.support = _support;
 
-        uint256 _voteAmount = werewolfToken.balanceOf(msg.sender);
+        uint256 _voteAmount = _getVotingPower(msg.sender);
         receipt.votes = uint96(_voteAmount);
 
         if (_support) {
@@ -241,12 +268,73 @@ contract DAO is Initializable {
         }
     }
 
+    /**
+     * @notice Delegate all your WLF voting power to a validator.
+     * @dev Delegatee must have >= VALIDATOR_THRESHOLD WLF power.
+     *      Applies delegationCooldown so you cannot change delegation again immediately.
+     */
     function delegate(address delegatee) external {
-        // Implement delegation logic efficiently
+        require(block.timestamp >= voteDelegateLockExpiry[msg.sender], "DAO: delegation locked");
+        require(delegatee != address(0), "DAO: zero address");
+        require(isValidator(delegatee), "DAO: delegatee below threshold");
+        _applyDelegate(msg.sender, delegatee, block.timestamp + delegationCooldown);
     }
 
+    /**
+     * @notice Remove your delegation, reclaiming your own voting power.
+     *         Applies delegationCooldown so you cannot immediately redelegate.
+     */
     function undelegate() external {
-        // Implement undelegation logic efficiently
+        require(block.timestamp >= voteDelegateLockExpiry[msg.sender], "DAO: delegation locked");
+        _applyDelegate(msg.sender, address(0), block.timestamp + delegationCooldown);
+    }
+
+    /**
+     * @notice Set the cooldown applied after every manual delegate / undelegate action.
+     */
+    function setDelegationCooldown(uint256 cooldown) external onlyTimelock {
+        delegationCooldown = cooldown;
+    }
+
+    /**
+     * @notice Auto-delegate a buyer's voting power (called by TokenSale for sales #0 and #1).
+     * @dev Bypasses validator threshold. Applies 2-year lock.
+     */
+    function autoDelegate(address user, address delegatee) external onlyTokenSale {
+        _applyDelegate(user, delegatee, block.timestamp + delegateLockDuration);
+    }
+
+    /**
+     * @notice Update the lock duration applied to future auto-delegations.
+     */
+    function setDelegateLockDuration(uint256 duration) external onlyTimelock {
+        delegateLockDuration = duration;
+    }
+
+    /**
+     * @notice Set the TokenSale contract allowed to call autoDelegate.
+     */
+    function setTokenSaleContract(address _tokenSale) external onlyGuardian {
+        tokenSaleContract = _tokenSale;
+    }
+
+    /**
+     * @notice Sync a user's cached delegated power with their current raw voting power.
+     * @dev Call this after a user's staking balance changes significantly.
+     */
+    function syncDelegate(address user) external {
+        address currentDelegate = voteDelegate[user];
+        if (currentDelegate == address(0)) return;
+        uint256 oldCached = userDelegatedPower[user];
+        uint256 newPower = _getRawVotingPower(user);
+        if (newPower == oldCached) return;
+        if (oldCached <= delegatedVotingPower[currentDelegate]) {
+            delegatedVotingPower[currentDelegate] -= oldCached;
+        } else {
+            delegatedVotingPower[currentDelegate] = 0;
+        }
+        delegatedVotingPower[currentDelegate] += newPower;
+        userDelegatedPower[user] = newPower;
     }
 
     ///////////////////////////////////////
@@ -392,20 +480,35 @@ contract DAO is Initializable {
         );
         timelock.acceptAdmin();
     }
+
+    function setStakingContracts(address _staking, address _lpStaking) external onlyGuardian {
+        stakingContract = _staking;
+        lpStakingContract = _lpStaking;
+    }
+
     ///////////////////////////////////////
     //   Public View/Pure Functions      //
     ///////////////////////////////////////
 
-    function votingDelay() public pure returns (uint) {
-        return 1;
-    } // 1 block
+    function votingDelay() public view returns (uint256) {
+        return votingDelayDuration;
+    }
 
     function proposalMaxOperations() public pure returns (uint256) {
         return 10;
     } // 10 actions
 
-    function votingPeriod() public pure returns (uint256) {
-        return 1 hours; // short for testnet; raise to 3+ days on mainnet via redeployment
+    function votingPeriod() public view returns (uint256) {
+        return votingPeriodDuration;
+    }
+
+    function setVotingPeriod(uint256 _seconds) external onlyTimelock {
+        require(_seconds >= 1 hours, "DAO::setVotingPeriod: period too short");
+        votingPeriodDuration = _seconds;
+    }
+
+    function setVotingDelay(uint256 _blocks) external onlyTimelock {
+        votingDelayDuration = _blocks;
     }
 
     function quorumVotes() public pure returns (uint256) {
@@ -441,6 +544,20 @@ contract DAO is Initializable {
         return "Unknown"; // Fallback case (should never be hit)
     }
 
+    function getVotingPower(address voter) external view returns (uint256) {
+        return _getVotingPower(voter);
+    }
+
+    /**
+     * @notice Returns true if addr has enough own WLF stake to receive delegations.
+     * @dev Only counts the address's own wallet + staking + LP power.
+     *      Power delegated TO addr from others does not count toward this threshold —
+     *      receiving delegations cannot be what qualifies you to receive them.
+     */
+    function isValidator(address addr) public view returns (bool) {
+        return _getRawVotingPower(addr) >= VALIDATOR_THRESHOLD;
+    }
+
     function getProposalActions(uint256 _proposalId)
         external
         view
@@ -457,6 +574,54 @@ contract DAO is Initializable {
     ///////////////////////////////////////
     //         Internal Functions        //
     ///////////////////////////////////////
+
+    function _getVotingPower(address voter) internal view returns (uint256) {
+        // If voter has delegated their power away, they forfeit their raw power
+        uint256 own = voteDelegate[voter] == address(0) ? _getRawVotingPower(voter) : 0;
+        return own + delegatedVotingPower[voter];
+    }
+
+    function _getRawVotingPower(address voter) internal view returns (uint256) {
+        uint256 power = werewolfToken.balanceOf(voter);
+        if (stakingContract != address(0)) {
+            power += IStaking(stakingContract).getStakedWLF(voter);
+        }
+        if (lpStakingContract != address(0)) {
+            power += ILPStaking(lpStakingContract).getWLFVotingPower(voter);
+        }
+        return power;
+    }
+
+    function _applyDelegate(address user, address newDelegate, uint256 lockExpiry) internal {
+        address oldDelegate = voteDelegate[user];
+        uint256 oldCached = userDelegatedPower[user];
+        uint256 newRawPower = _getRawVotingPower(user);
+
+        // Remove contribution from old delegate
+        if (oldDelegate != address(0) && oldCached > 0) {
+            if (oldCached <= delegatedVotingPower[oldDelegate]) {
+                delegatedVotingPower[oldDelegate] -= oldCached;
+            } else {
+                delegatedVotingPower[oldDelegate] = 0;
+            }
+        }
+
+        // Add contribution to new delegate
+        if (newDelegate != address(0) && newRawPower > 0) {
+            delegatedVotingPower[newDelegate] += newRawPower;
+            userDelegatedPower[user] = newRawPower;
+        } else {
+            userDelegatedPower[user] = 0;
+        }
+
+        voteDelegate[user] = newDelegate;
+        if (lockExpiry > voteDelegateLockExpiry[user]) {
+            voteDelegateLockExpiry[user] = lockExpiry;
+        }
+
+        emit DelegateChanged(user, oldDelegate, newDelegate);
+    }
+
     function _queueOrRevert(
         address target,
         string memory signature,

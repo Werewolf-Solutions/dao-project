@@ -17,6 +17,7 @@ contract HelperConfig is Script, Constants {
         address multiSig;
         address usdt;
         address positionManager;  // Uniswap v3 NonfungiblePositionManager
+        address swapRouter;       // Uniswap v3 SwapRouter (address(0) on local)
         address weth;             // WETH9 / Wrapped Ether
         uint256 timelockDelay;    // 0 for local/testnet; 2 days for mainnet
     }
@@ -64,6 +65,9 @@ contract HelperConfig is Script, Constants {
         // Uniswap v3 NonfungiblePositionManager on Sepolia
         address positionManager = 0x1238536071E1c677A632429e3655c799b22cDA52;
 
+        // Uniswap v3 SwapRouter on Sepolia
+        address swapRouterAddr = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
+
         // WETH9 on Sepolia
         address weth = 0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14;
 
@@ -72,6 +76,7 @@ contract HelperConfig is Script, Constants {
             deployerPrivateKey: deployerPrivateKey,
             multiSig: multiSig,
             positionManager: positionManager,
+            swapRouter: swapRouterAddr,
             weth: weth,
             timelockDelay: 0
         });
@@ -94,6 +99,7 @@ contract HelperConfig is Script, Constants {
             multiSig: multiSig,
             usdt: mockUsdt,
             positionManager: positionManager,
+            swapRouter: address(0),  // No real SwapRouter on local chain
             weth: weth,
             timelockDelay: 0
         });

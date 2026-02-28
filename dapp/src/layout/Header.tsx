@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from 'wagmi';
 import { sepolia, foundry, localhost } from 'wagmi/chains';
 import { theme } from '@/contexts/ThemeContext';
+import { useWLFPrice } from '@/hooks/useWLFPrice';
 
 const SUPPORTED_CHAINS = new Set([sepolia.id, foundry.id, localhost.id]);
 
@@ -24,6 +25,12 @@ export default function Header() {
 
   const isConnected = account.status === 'connected';
   const isSupported = !account.chainId || SUPPORTED_CHAINS.has(account.chainId as (typeof sepolia.id | typeof foundry.id | typeof localhost.id));
+  const wlfPrice = useWLFPrice();
+  const priceStr = wlfPrice === null ? null
+    : wlfPrice < 0.000001 ? wlfPrice.toExponential(2)
+    : wlfPrice < 0.001 ? wlfPrice.toFixed(6)
+    : wlfPrice < 1 ? wlfPrice.toFixed(4)
+    : wlfPrice.toFixed(2);
 
   useEffect(() => {
     if (status === 'success') setIsPopupOpen(false);
@@ -60,6 +67,12 @@ export default function Header() {
 
           {/* Network badge + Wallet button */}
           <div className="flex items-center gap-2">
+            {/* WLF price */}
+            {priceStr && (
+              <span className="hidden sm:inline px-2.5 py-1 rounded-full text-xs font-mono bg-white/5 text-white/50 border border-white/10">
+                WLF ${priceStr}
+              </span>
+            )}
             {isConnected && (
               isSupported ? (
                 <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-green-900/40 text-green-300 border border-green-700/40">

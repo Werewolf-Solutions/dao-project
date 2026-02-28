@@ -8,6 +8,20 @@ import "./WerewolfTokenV1.sol";
 import "./Staking.sol";
 import "./interfaces/ILPStaking.sol";
 
+interface ISwapRouter {
+    struct ExactInputSingleParams {
+        address tokenIn;
+        address tokenOut;
+        uint24 fee;
+        address recipient;
+        uint256 deadline;
+        uint256 amountIn;
+        uint256 amountOutMinimum;
+        uint160 sqrtPriceLimitX96;
+    }
+    function exactInputSingle(ExactInputSingleParams calldata params) external payable returns (uint256 amountOut);
+}
+
 contract Treasury is OwnableUpgradeable {
     // address public werewolfToken;
     WerewolfTokenV1 private werewolfToken;
@@ -23,7 +37,13 @@ contract Treasury is OwnableUpgradeable {
     // Mapping to track reward allocations for different staking contracts
     mapping(address => uint256) public stakingRewardAllocations;
 
+    // Buyback configuration
+    address public swapRouter;
+    address public usdtToken;
+    uint24 public buybackPoolFee;
+
     event RewardsDistributed(address indexed stakingContract, uint256 amount);
+    event WLFBuyback(uint256 usdtSpent, uint256 wlfReceived);
 
     constructor( /* address _token */ ) {
         /*       require(_token != address(0), "WerewolfTokenV1 address cannot be zero");
@@ -122,5 +142,50 @@ contract Treasury is OwnableUpgradeable {
         );
 
         emit RewardsDistributed(address(lpStakingContract), allocation);
+    }
+
+    /**
+     * @notice Configure the Uniswap v3 swap router used for WLF buybacks.
+     *         Called by owner (Timelock/DAO) to set or update the router.
+     * @param _router  Uniswap v3 SwapRouter address
+     * @param _usdt    USDT token address held by treasury
+     * @param _fee     Pool fee tier (e.g. 500 for 0.05%)
+     */
+    function setSwapRouter(address _router, address _usdt, uint24 _fee) external onlyOwner {
+        require(_router != address(0), "Invalid router");
+        require(_usdt   != address(0), "Invalid USDT");
+        swapRouter    = _router;
+        usdtToken     = _usdt;
+        buybackPoolFee = _fee;
+    }
+
+    /**
+     * @notice Use treasury USDT to buy back WLF from the Uniswap pool.
+     *         Purchased WLF stays in the treasury. Callable by owner (DAO proposal).
+     * @param usdtAmount  USDT to spend (6-decimal units)
+     * @param minWLFOut   Minimum WLF to receive (slippage guard; 0 = no minimum)
+     * @return wlfReceived  Actual WLF received and now held by treasury
+     */
+    function buybackWLF(uint256 usdtAmount, uint256 minWLFOut) external onlyOwner returns (uint256 wlfReceived) {
+        require(swapRouter != address(0), "Swap router not set");
+        require(usdtAmount > 0, "Amount must be > 0");
+        require(IERC20(usdtToken).balanceOf(address(this)) >= usdtAmount, "Insufficient USDT");
+
+        IERC20(usdtToken).approve(swapRouter, usdtAmount);
+
+        wlfReceived = ISwapRouter(swapRouter).exactInputSingle(
+            ISwapRouter.ExactInputSingleParams({
+                tokenIn:           usdtToken,
+                tokenOut:          address(werewolfToken),
+                fee:               buybackPoolFee,
+                recipient:         address(this),
+                deadline:          block.timestamp + 30 minutes,
+                amountIn:          usdtAmount,
+                amountOutMinimum:  minWLFOut,
+                sqrtPriceLimitX96: 0
+            })
+        );
+
+        emit WLFBuyback(usdtAmount, wlfReceived);
     }
 }

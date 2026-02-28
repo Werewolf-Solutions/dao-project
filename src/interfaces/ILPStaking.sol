@@ -83,6 +83,12 @@ interface ILPStaking {
      */
     function setTokenSaleContract(address _tokenSale) external;
 
+    /**
+     * @notice Returns the WLF amount the user has staked via LP (raw, no delegation)
+     * @param user The user address
+     */
+    function getWLFVotingPower(address user) external view returns (uint256);
+
     // Events
     event LPPositionInitialized(uint256 indexed saleId, uint256 indexed tokenId, uint256 wlf, uint256 usdt);
     event SharesClaimed(address indexed user, uint256 indexed saleId, uint256 shares, bool fixedDuration);

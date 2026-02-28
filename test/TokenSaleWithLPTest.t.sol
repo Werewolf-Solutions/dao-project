@@ -6,9 +6,37 @@ import {WerewolfTokenV1} from "../src/WerewolfTokenV1.sol";
 import {Treasury} from "../src/Treasury.sol";
 import {TokenSale} from "../src/TokenSale.sol";
 import {LPStaking} from "../src/LPStaking.sol";
+import {DAO} from "../src/DAO.sol";
 import {UniswapHelper} from "../src/UniswapHelper.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {MockUSDT} from "./mocks/MockUSDT.sol";
+
+/**
+ * @dev A UniswapHelper mock that actually transfers tokens from the caller.
+ *      This makes balance-snapshot accounting in _endSale() work correctly in tests.
+ */
+contract MockConsumeUniswapHelper {
+    address public positionManager;
+
+    constructor(address _pm) {
+        positionManager = _pm;
+    }
+
+    function addLiquidity(
+        address token0,
+        address token1,
+        uint24,
+        int24,
+        int24,
+        uint256 amount0Desired,
+        uint256 amount1Desired
+    ) external returns (uint256 tokenId) {
+        IERC20(token0).transferFrom(msg.sender, address(this), amount0Desired);
+        IERC20(token1).transferFrom(msg.sender, address(this), amount1Desired);
+        tokenId = uint256(keccak256(abi.encodePacked(block.timestamp, amount0Desired)));
+    }
+}
 
 /**
  * @title TokenSaleWithLPTest
@@ -19,8 +47,10 @@ contract TokenSaleWithLPTest is Test {
     Treasury public treasury;
     TokenSale public tokenSale;
     LPStaking public lpStaking;
+    DAO public dao;
     MockUSDT public usdtToken;
     UniswapHelper public uniswapHelper;
+    MockConsumeUniswapHelper public mockHelper;
 
     address public owner;
     address public timelock;
@@ -31,7 +61,7 @@ contract TokenSaleWithLPTest is Test {
     address public positionManager;
 
     uint256 constant TOKENS_FOR_SALE = 10_000_000 ether; // 10M WLF
-    uint256 constant TOKEN_PRICE = 0.001 ether; // Price per WLF in USDT (18 decimals)
+    uint256 constant TOKEN_PRICE = 0.0004 ether; // Price per WLF in USDT (18 decimals)
 
     event SaleStarted(uint256 saleId, uint256 tokensAvailable, uint256 price);
     event SaleEnded(uint256 saleId);
@@ -88,6 +118,9 @@ contract TokenSaleWithLPTest is Test {
         // Deploy UniswapHelper (not upgradeable)
         uniswapHelper = new UniswapHelper(positionManager);
 
+        // Deploy consuming mock so balance snapshots in _endSale() work correctly
+        mockHelper = new MockConsumeUniswapHelper(positionManager);
+
         // Deploy LPStaking
         LPStaking lpStakingImpl = new LPStaking();
         bytes memory lpStakingInitData = abi.encodeWithSelector(
@@ -125,11 +158,36 @@ contract TokenSaleWithLPTest is Test {
         );
         tokenSale = TokenSale(payable(address(tokenSaleProxy)));
 
+        // Wire the consuming mock helper into tokenSale so balance snapshots work
+        tokenSale.setUniswapHelper(address(mockHelper));
+
         // Configure LPStaking
         lpStaking.setTokenSaleContract(address(tokenSale));
 
         // Configure Treasury
         treasury.setLPStakingContract(address(lpStaking));
+
+        // Deploy DAO (timelock is a plain address — no timelock calls in delegation tests)
+        DAO daoImpl = new DAO();
+        bytes memory daoInitData = abi.encodeWithSelector(
+            DAO.initialize.selector,
+            address(wlfToken),
+            address(treasury),
+            timelock,
+            owner // guardian
+        );
+        TransparentUpgradeableProxy daoProxy = new TransparentUpgradeableProxy(
+            address(daoImpl),
+            multiSig,
+            daoInitData
+        );
+        dao = DAO(address(daoProxy));
+
+        // Connect DAO <-> TokenSale for auto-delegation on sales #0 and #1
+        dao.setTokenSaleContract(address(tokenSale));
+        tokenSale.setDaoContract(address(dao));
+        // Register LPStaking so DAO can query LP voting power
+        dao.setStakingContracts(address(0), address(lpStaking));
 
         // Airdrop tokens to TokenSale
         wlfToken.airdrop(address(tokenSale), TOKENS_FOR_SALE);
@@ -318,36 +376,90 @@ contract TokenSaleWithLPTest is Test {
         assertGt(lpStaking.balanceOf(user2), 0, "User2 should have shares from sale 1 auto-distribution");
     }
 
-    // Helper function to mock Uniswap interactions for endSale
+    // ── Delegation tests ────────────────────────────────────────────────────────
+
+    function test_sale0_auto_delegates_to_owner() public {
+        vm.prank(owner);
+        tokenSale.startSaleZero(TOKENS_FOR_SALE, TOKEN_PRICE);
+
+        // Complete the sale: endSale auto-delegates each buyer's voting power to owner
+        _mockUniswapForEndSale(5_000_000 ether, 5_000e6);
+        _makePurchase(user1, 5_000_000 ether, 5_000e6);
+        vm.prank(owner);
+        tokenSale.endSale();
+
+        // user1's entire WLF voting power is delegated to owner via DAO
+        assertEq(dao.voteDelegate(user1), owner, "user1 should delegate to owner");
+        assertGt(dao.delegatedVotingPower(owner), 0, "owner should have delegated voting power");
+        // user1 forfeits their own voting power while delegating
+        assertEq(dao.getVotingPower(user1), 0, "user1 own voting power should be 0 (delegated away)");
+        // owner's total voting power includes user1's delegated LP power
+        assertGt(dao.getVotingPower(owner), 0, "owner voting power should include user1's delegation");
+    }
+
+    function test_delegation_lock_prevents_user_change() public {
+        // Start sale, buy, end sale → delegation locked for 2 years
+        vm.prank(owner);
+        tokenSale.startSaleZero(TOKENS_FOR_SALE, TOKEN_PRICE);
+
+        _mockUniswapForEndSale(5_000_000 ether, 5_000e6);
+        _makePurchase(user1, 5_000_000 ether, 5_000e6);
+        vm.prank(owner);
+        tokenSale.endSale();
+
+        // user1 tries to undelegate — should revert because lock has not expired
+        vm.prank(user1);
+        vm.expectRevert("DAO: delegation locked");
+        dao.undelegate();
+    }
+
+    function test_delegation_lock_expired_allows_change() public {
+        // Start sale, buy, end sale → delegation locked for 2 years
+        vm.prank(owner);
+        tokenSale.startSaleZero(TOKENS_FOR_SALE, TOKEN_PRICE);
+
+        _mockUniswapForEndSale(5_000_000 ether, 5_000e6);
+        _makePurchase(user1, 5_000_000 ether, 5_000e6);
+        vm.prank(owner);
+        tokenSale.endSale();
+
+        // Advance time past the 2-year lock
+        uint256 lockExpiry = dao.voteDelegateLockExpiry(user1);
+        vm.warp(lockExpiry + 1);
+
+        // user1 can now undelegate and reclaim their own voting power
+        vm.prank(user1);
+        dao.undelegate();
+
+        assertEq(dao.voteDelegate(user1), address(0), "user1 should have no delegate");
+        assertEq(dao.delegatedVotingPower(owner), 0, "owner should no longer have delegated power");
+        // user1's own voting power is restored
+        assertGt(dao.getVotingPower(user1), 0, "user1 should have voting power after undelegating");
+    }
+
+    // Helper function to mock Uniswap position-manager interactions for endSale.
+    // addLiquidity/positionManager() are handled by MockConsumeUniswapHelper (which
+    // actually transfers tokens so balance snapshots in _endSale() work correctly).
     function _mockUniswapForEndSale(uint256 wlfAmount, uint256 usdtAmount) internal {
+        // tokenId the consuming mock will return (must match the mock's formula)
         uint256 mockTokenId = uint256(keccak256(abi.encodePacked(block.timestamp, wlfAmount)));
         uint128 mockLiquidity = uint128(wlfAmount / 1e12);
 
-        vm.mockCall(
-            address(uniswapHelper),
-            abi.encodeWithSelector(UniswapHelper.addLiquidity.selector),
-            abi.encode(mockTokenId)
-        );
-
-        // Mock positionManager() call - it's a public getter for the state variable
-        vm.mockCall(
-            address(uniswapHelper),
-            abi.encodeWithSignature("positionManager()"),
-            abi.encode(positionManager)
-        );
-
+        // positionManager.transferFrom is called by _endSale() to move the NFT to lpStaking
         vm.mockCall(
             positionManager,
             abi.encodeWithSelector(bytes4(keccak256("transferFrom(address,address,uint256)"))),
             abi.encode()
         );
 
+        // LPStaking.initializeLPPosition() verifies it owns the NFT
         vm.mockCall(
             positionManager,
             abi.encodeWithSelector(bytes4(keccak256("ownerOf(uint256)")), mockTokenId),
             abi.encode(address(lpStaking))
         );
 
+        // LPStaking.initializeLPPosition() reads liquidity from the position
         vm.mockCall(
             positionManager,
             abi.encodeWithSelector(bytes4(keccak256("positions(uint256)")), mockTokenId),
@@ -357,5 +469,8 @@ contract TokenSaleWithLPTest is Test {
                 uint256(0), uint256(0), uint128(0), uint128(0)
             )
         );
+
+        // Suppress unused-param warning
+        usdtAmount;
     }
 }

@@ -98,6 +98,14 @@ export function ProposalCard({ id, daoAddress, isGuardian, visibleStates }: Prop
     args: [BigInt(id)],
   });
 
+  const { data: votingPower } = useReadContract({
+    address: daoAddress,
+    abi: daoABI,
+    functionName: 'getVotingPower',
+    args: [address!],
+    query: { enabled: !!address },
+  });
+
   // ── Writes ─────────────────────────────────────────────────────────────────
 
   const { writeContract, data: txHash, isPending } = useWriteContract();
@@ -321,6 +329,13 @@ export function ProposalCard({ id, daoAddress, isGuardian, visibleStates }: Prop
 
         {label === 'Active' && !votingClosed && !hasVoted && (
           <>
+            <p className={`text-xs w-full ${theme.textMuted}`}>
+              Your voting power:{' '}
+              <span className={votingPower === 0n ? 'text-red-400' : theme.textSecondary}>
+                {fmtWlf(votingPower ?? 0n)} WLF
+              </span>
+              {votingPower === 0n && <span className="text-red-400"> (no power)</span>}
+            </p>
             <Button
               size="sm"
               variant="success"

@@ -4,4 +4,5 @@ export * from './abis/tokenSale';
 export * from './abis/staking';
 export * from './abis/lpStaking';
 export * from './abis/erc20';
+export * from './abis/treasury';
 export * from './addresses';

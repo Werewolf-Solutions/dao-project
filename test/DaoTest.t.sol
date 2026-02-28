@@ -39,7 +39,7 @@ contract DaoTest is Test {
     // Constants
     uint256 constant votingPeriod = 2 days;
     uint256 constant tokenSaleAirdrop = 5_000_000 ether;
-    uint256 constant tokenPrice = 0.001 ether;
+    uint256 constant tokenPrice = 0.0004 ether;
     uint256 mintAmount = 1000 ether;
     uint256 proposalCost = 10 ether;
 
@@ -158,6 +158,10 @@ contract DaoTest is Test {
             new TransparentUpgradeableProxy(daoImpl, multiSig, initDataDAO)
         );
         dao = DAO(daoAddress);
+
+        // Wire staking contracts for voting power
+        vm.prank(founder);
+        dao.setStakingContracts(address(staking), address(lpStaking));
 
         // Deploy TokenSale
         address tokenSaleImpl = address(new TokenSale());
@@ -595,5 +599,27 @@ contract DaoTest is Test {
         vm.prank(addr1);
         vm.expectRevert("Only guardian");
         dao.cancelProposal(proposalId);
+    }
+
+    function test_voting_power_includes_staked() public {
+        // addr1 starts with 1000 WLF from token initialization
+        uint256 walletBal = werewolfToken.balanceOf(addr1);
+        assertGt(walletBal, 0, "addr1 should have initial WLF");
+
+        // Stake half the balance
+        uint256 stakeAmount = 500 ether;
+        vm.startPrank(addr1);
+        werewolfToken.approve(address(staking), stakeAmount);
+        staking.stakeFlexible(stakeAmount);
+        vm.stopPrank();
+
+        uint256 walletBalAfter = werewolfToken.balanceOf(addr1);
+        uint256 stakedWLF = staking.getStakedWLF(addr1);
+        uint256 totalPower = dao.getVotingPower(addr1);
+
+        // Voting power should be wallet balance + staked WLF
+        assertEq(totalPower, walletBalAfter + stakedWLF, "getVotingPower should equal wallet + staked");
+        assertGt(totalPower, walletBalAfter, "Staked WLF must count toward voting power");
+        assertApproxEqAbs(totalPower, walletBal, 1 ether, "Total power should approx equal original balance");
     }
 }

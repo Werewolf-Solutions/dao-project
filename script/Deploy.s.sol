@@ -24,7 +24,7 @@ contract Deploy is Script {
     // votingPeriod is hardcoded in DAO.sol::votingPeriod() — 1 hour for testnet
     // timelockDelay comes from netConfig (0 for local/Sepolia, 2 days for mainnet)
     uint256 constant tokenSaleAirdrop = 5_000_000 ether;
-    uint256 constant tokenPrice = 0.001 ether;
+    uint256 constant tokenPrice = 0.0004 ether;
 
     // Addresses
     address multiSig;
@@ -82,8 +82,17 @@ contract Deploy is Script {
         // Deploy DAO
         _deployDao();
 
+        // Wire staking contracts for voting power computation
+        dao.setStakingContracts(address(staking), address(lpStaking));
+
         // Deploy TokenSale
         _deployTokenSale();
+
+        // Wire DAO into TokenSale so endSale() can auto-delegate sale #0/#1 buyers to founder
+        tokenSale.setDaoContract(address(dao));
+
+        // Wire TokenSale into DAO so DAO.autoDelegate() accepts calls from TokenSale
+        dao.setTokenSaleContract(address(tokenSale));
 
         // Set TokenSale contract in LPStaking (can only be set once)
         lpStaking.setTokenSaleContract(address(tokenSale));
@@ -97,6 +106,11 @@ contract Deploy is Script {
 
         // Start Token Sale #0
         tokenSale.startSaleZero(tokenSaleAirdrop, tokenPrice);
+
+        // Configure Treasury swap router for DAO buyback proposals (skip on local chain)
+        if (netConfig.swapRouter != address(0)) {
+            treasury.setSwapRouter(netConfig.swapRouter, netConfig.usdt, 500);
+        }
 
         // Transfer ownership to Timelock
         werewolfToken.transferOwnership(address(timelock));

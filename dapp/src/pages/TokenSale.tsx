@@ -102,6 +102,21 @@ export default function TokenSale() {
     query: { enabled: !!tokenSaleAddress && saleIdCounter !== undefined, refetchInterval: 5_000 },
   });
 
+  const { data: wlfCollected } = useReadContract({
+    address: tokenSaleAddress,
+    abi: tokenSaleABI,
+    functionName: 'saleWLFCollected',
+    args: [saleIdCounter ?? 0n],
+    query: { enabled: !!tokenSaleAddress && saleIdCounter !== undefined, refetchInterval: 5_000 },
+  });
+
+  const { data: saleFounder } = useReadContract({
+    address: tokenSaleAddress,
+    abi: tokenSaleABI,
+    functionName: 'founder',
+    query: { enabled: !!tokenSaleAddress },
+  });
+
   // ── Writes ─────────────────────────────────────────────────────────────────
 
   const { writeContract: writeApprove, data: approveTxHash, isPending: isApprovePending } = useWriteContract();
@@ -136,6 +151,13 @@ export default function TokenSale() {
   const tokensAvailable = saleData?.[1];
   const pricePerToken = contractPrice ?? 0n;
 
+  // Progress bar: sold / total
+  const tokensSold = wlfCollected ?? 0n;
+  const totalTokens = tokensAvailable !== undefined ? tokensAvailable + tokensSold : undefined;
+  const pctSold = totalTokens !== undefined && totalTokens > 0n
+    ? Number((tokensSold * 10000n) / totalTokens) / 100  // two decimal places
+    : 0;
+
   // WLF wei amount (18 decimals) — this is what the contract's _amount param expects
   const amountWei = (() => {
     try { return parseUnits(amount || '0', 18); } catch { return 0n; }
@@ -148,6 +170,14 @@ export default function TokenSale() {
   const hasEnoughAllowance = usdtAllowance !== undefined && usdtAllowance >= usdtCost;
   const hasEnoughUsdt = usdtBalance !== undefined && usdtBalance >= usdtCost;
   const isLoading = isApprovePending || isApproveConfirming || isBuyPending || isBuyConfirming;
+
+  const isFounder = !!saleFounder && !!address && saleFounder.toLowerCase() === address.toLowerCase();
+
+  const amountError: string | null = (() => {
+    if (amountWei <= 0n) return 'Enter an amount greater than 0';
+    if (tokensAvailable !== undefined && amountWei > tokensAvailable) return 'Exceeds tokens available';
+    return null;
+  })();
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -245,10 +275,33 @@ export default function TokenSale() {
             label="Price"
             value={contractPrice === undefined ? '…' : `${formatEther(pricePerToken)} USDT / WLF`}
           />
-          <Row
-            label="Tokens available"
-            value={tokensAvailable === undefined ? '…' : `${fmt18(tokensAvailable)} WLF`}
-          />
+        </div>
+
+        {/* ── Sale progress bar ── */}
+        <div className="mb-6">
+          <div className="flex justify-between text-xs mb-1.5" style={{ color: theme.textMuted }}>
+            <span>
+              {totalTokens === undefined ? '…' : `${fmt18(tokensSold)} sold`}
+            </span>
+            <span>
+              {totalTokens === undefined ? '' : `${fmt18(tokensAvailable)} remaining`}
+            </span>
+          </div>
+          <div className="w-full h-2.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.08)' }}>
+            <div
+              className="h-full rounded-full transition-all duration-500"
+              style={{
+                width: totalTokens === undefined ? '0%' : `${pctSold}%`,
+                background: pctSold >= 90 ? '#ef4444' : pctSold >= 60 ? '#f59e0b' : '#52b788',
+              }}
+            />
+          </div>
+          <div className="text-right text-xs mt-1" style={{ color: theme.textMuted }}>
+            {totalTokens === undefined ? '' : `${pctSold.toFixed(1)}% sold`}
+            {totalTokens !== undefined && (
+              <span className="ml-2">of {fmt18(totalTokens)} WLF total</span>
+            )}
+          </div>
         </div>
 
         {/* ── Wallet balances ── */}
@@ -280,25 +333,34 @@ export default function TokenSale() {
             )}
             {!saleLPCreated ? (
               <>
-                <p className={`text-sm mb-3 ${theme.textMuted}`}>
-                  The Uniswap LP position has not been created yet. The owner triggers this step —
-                  it creates the LP and automatically locks all buyer shares for 5 years.
-                </p>
-                <Button
-                  variant="success"
-                  fullWidth
-                  onClick={handleEndSale}
-                  loading={isEndSalePending || isEndSaleConfirming}
-                >
-                  Create LP &amp; Lock All Shares
-                </Button>
+                {isFounder ? (
+                  <>
+                    <p className={`text-sm mb-3 ${theme.textMuted}`}>
+                      Create the Uniswap LP position and lock all buyer shares for 5 years.
+                    </p>
+                    <Button
+                      variant="success"
+                      fullWidth
+                      onClick={handleEndSale}
+                      loading={isEndSalePending || isEndSaleConfirming}
+                    >
+                      Create LP &amp; Lock All Shares
+                    </Button>
+                  </>
+                ) : (
+                  <p className={`text-sm ${theme.textMuted}`}>
+                    Waiting for the founder to create the Uniswap LP position and lock buyer shares…
+                  </p>
+                )}
               </>
             ) : (
-              <Link to="/staking?tab=lp">
-                <Button variant="success" fullWidth>
-                  View Staking Positions →
-                </Button>
-              </Link>
+              <>
+                <Link to="/staking?tab=lp">
+                  <Button variant="success" fullWidth>
+                    View Staking Positions →
+                  </Button>
+                </Link>
+              </>
             )}
           </div>
         ) : (
@@ -313,6 +375,9 @@ export default function TokenSale() {
                 onChange={(e) => setAmount(e.target.value)}
                 disabled={isLoading}
               />
+              {amountError && (
+                <p className="text-red-400 text-xs -mt-1">{amountError}</p>
+              )}
 
               <p className={`text-sm ${theme.textMuted}`}>
                 Total cost: <span className="font-semibold text-white">{fmt6(usdtCost)} USDT</span>
@@ -323,7 +388,7 @@ export default function TokenSale() {
                   variant="info"
                   fullWidth
                   onClick={handleApprove}
-                  disabled={amountWei <= 0n}
+                  disabled={!!amountError}
                   loading={isApprovePending || isApproveConfirming}
                 >
                   Approve USDT (one-time)
@@ -333,7 +398,7 @@ export default function TokenSale() {
                   variant="primary"
                   fullWidth
                   onClick={handleBuyUsdt}
-                  disabled={amountWei <= 0n || !hasEnoughUsdt}
+                  disabled={!!amountError || !hasEnoughUsdt}
                   loading={isBuyPending || isBuyConfirming}
                 >
                   Buy with USDT
