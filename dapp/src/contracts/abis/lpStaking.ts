@@ -753,6 +753,19 @@ export const lpStakingABI = [
   },
   {
     "type": "function",
+    "name": "totalWLFStaked",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "transfer",
     "inputs": [
       {

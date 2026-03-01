@@ -398,6 +398,12 @@ export default function Staking() {
     query: { enabled: !!address && !!lpStakingAddress },
   });
 
+  const { data: lpUserWlf } = useReadContract({
+    address: lpStakingAddress, abi: lpStakingABI, functionName: 'getWLFVotingPower',
+    args: [address!],
+    query: { enabled: !!address && !!lpStakingAddress },
+  });
+
   const { data: lpEarned, refetch: refetchLpEarned } = useReadContract({
     address: lpStakingAddress, abi: lpStakingABI, functionName: 'earned',
     args: [address!],
@@ -463,12 +469,12 @@ export default function Staking() {
   const [displayReward, setDisplayReward] = useState<bigint>(0n);
   useEffect(() => { if (lpEarned !== undefined) setDisplayReward(lpEarned); }, [lpEarned]);
   useEffect(() => {
-    if (!lpShares || !lpApy || lpShares === 0n || lpApy === 0n) return;
-    const perSecond = (lpShares * lpApy) / (31_536_000n * 100_000n);
+    if (!lpUserWlf || !lpApy || lpUserWlf === 0n || lpApy === 0n) return;
+    const perSecond = (lpUserWlf * lpApy) / (31_536_000n * 100_000n);
     if (perSecond === 0n) return;
     const id = setInterval(() => setDisplayReward((prev) => prev + perSecond), 1_000);
     return () => clearInterval(id);
-  }, [lpShares, lpApy]);
+  }, [lpUserWlf, lpApy]);
 
   // ── WLF write contract ───────────────────────────────────────────────────
 

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
-import { parseUnits, encodeAbiParameters, parseAbiParameters } from 'viem';
+import { parseUnits, encodeAbiParameters, parseAbiParameters, formatEther, formatUnits } from 'viem';
 import { daoABI, werewolfTokenABI, erc20ABI, treasuryABI, tokenSaleABI, getAddress } from '@/contracts';
 import { useTheme } from '@/contexts/ThemeContext';
 import { PageContainer } from '@/components/PageContainer';
@@ -104,6 +104,15 @@ export default function DAO() {
     args: [treasuryAddress!],
     query: { enabled: !!usdtAddress && !!treasuryAddress },
   });
+
+  const { data: treasuryWlfBalance } = useReadContract({
+    address: wlfAddress,
+    abi: erc20ABI,
+    functionName: 'balanceOf',
+    args: [treasuryAddress!],
+    query: { enabled: !!wlfAddress && !!treasuryAddress },
+  });
+
 
   // ── Writes ─────────────────────────────────────────────────────────────────
 
@@ -386,6 +395,79 @@ export default function DAO() {
       </div>
 
       <TxStatus isPending={isPending} isConfirming={isConfirming} isConfirmed={isConfirmed} txHash={txHash} label={lastAction} />
+
+      {/* ── Treasury & Governance overview ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+
+        {/* Treasury Holdings */}
+        <div className={`${theme.card} p-4 space-y-2`}>
+          <p className="text-xs font-semibold uppercase tracking-wider text-white/40">Treasury Holdings</p>
+          <div className="space-y-1.5">
+            <div className="flex justify-between items-baseline">
+              <span className={`text-sm ${theme.textMuted}`}>WLF</span>
+              <span className="text-sm font-mono text-white">
+                {treasuryWlfBalance !== undefined
+                  ? Number(formatEther(treasuryWlfBalance)).toLocaleString(undefined, { maximumFractionDigits: 0 })
+                  : '…'}
+              </span>
+            </div>
+            <div className="flex justify-between items-baseline">
+              <span className={`text-sm ${theme.textMuted}`}>USDT</span>
+              <span className="text-sm font-mono text-white">
+                {treasuryUsdtBalance !== undefined
+                  ? Number(formatUnits(treasuryUsdtBalance, 6)).toLocaleString(undefined, { maximumFractionDigits: 2 })
+                  : '…'}
+              </span>
+            </div>
+            <div className="flex justify-between items-baseline opacity-35">
+              <span className="text-sm">ETH</span>
+              <span className="text-xs italic">coming soon</span>
+            </div>
+            <div className="flex justify-between items-baseline opacity-35">
+              <span className="text-sm">WBTC</span>
+              <span className="text-xs italic">coming soon</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Governance Details */}
+        <div className={`${theme.card} p-4 space-y-2`}>
+          <p className="text-xs font-semibold uppercase tracking-wider text-white/40">Governance</p>
+          <div className="space-y-1.5">
+            <div className="flex justify-between items-baseline">
+              <span className={`text-sm ${theme.textMuted}`}>Proposals</span>
+              <span className="text-sm font-mono text-white">
+                {proposalCount !== undefined ? (Number(proposalCount) - 1).toString() : '…'}
+              </span>
+            </div>
+            <div className="flex justify-between items-baseline">
+              <span className={`text-sm ${theme.textMuted}`}>Proposal cost</span>
+              <span className="text-sm font-mono text-white">
+                {proposalCost !== undefined
+                  ? `${Number(formatEther(proposalCost)).toLocaleString(undefined, { maximumFractionDigits: 0 })} WLF`
+                  : '…'}
+              </span>
+            </div>
+            <div className="flex justify-between items-baseline">
+              <span className={`text-sm ${theme.textMuted}`}>Voting period</span>
+              <span className="text-sm font-mono text-white">
+                {currentVotingPeriod !== undefined
+                  ? `${(Number(currentVotingPeriod) / 3600).toLocaleString(undefined, { maximumFractionDigits: 1 })}h`
+                  : '…'}
+              </span>
+            </div>
+            <div className="flex justify-between items-baseline">
+              <span className={`text-sm ${theme.textMuted}`}>Voting delay</span>
+              <span className="text-sm font-mono text-white">
+                {currentVotingDelay !== undefined
+                  ? `${Number(currentVotingDelay)} block${Number(currentVotingDelay) === 1 ? '' : 's'}`
+                  : '…'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+      </div>
 
       {/* ── Token Sales Roadmap ── */}
       <div className={`mt-4 rounded-xl border border-white/10 overflow-hidden`}>

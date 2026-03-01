@@ -33,53 +33,59 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
     //           Data Types              //
     ///////////////////////////////////////
 
+    /**
+     * @notice A single salary stream within an employee's compensation package.
+     * @dev Salary is denominated in USDT with 6 decimal places (e.g., $500/month
+     *      ≈ 684_931 USDT-wei per hour). WLF amount is computed at pay time using
+     *      the TokenSale price, so the WLF payout automatically adjusts as price moves.
+     */
+    struct SalaryItem {
+        string role;
+        uint256 salaryPerHour; // USDT 6-decimal wei per hour
+        uint256 lastPayDate;
+    }
+
     struct CreateCompany {
         string name;
         string industry;
         string domain;
         string[] roles;
         string[] powerRoles;
-        address owner;
-        string currency;
-        uint256 ownerSalary;
+        address companyWallet; // dedicated ETH wallet the user controls (store private key separately)
+        string ownerRole;      // role assigned to the creator (auto-added to roles[] if missing)
+        uint256 ownerSalaryPerHour; // USDT 6-dec wei per hour for the creator's first salary stream
         string ownerName;
     }
 
     struct HireEmployee {
         address employeeAddress;
         string name;
-        string role;
         uint96 companyId;
-        uint256 salary;
-        string currency;
+        SalaryItem[] salaryItems;
     }
 
     struct CompanyStruct {
-        //relative storage locations:
-        uint96 companyId; //slot0
-        address owner; // slot0
-        string industry; //slot1
-        string name; //slot2
-        uint256 createdAt; //slot3
-        bool active; //slot4
-        Employee[] employees; //slot5
-        string domain; //slot6
-        string[] roles; //slot7 TODO combine roles and powerRoles
-        string[] powerRoles; //slot7
-        string currency;
+        uint96 companyId;     // slot 0
+        address owner;        // slot 0
+        address companyWallet;// slot 1
+        string industry;      // slot 2
+        string name;          // slot 3
+        uint256 createdAt;    // slot 4
+        bool active;          // slot 5
+        Employee[] employees; // slot 6
+        string domain;        // slot 7
+        string[] roles;       // slot 8
+        string[] powerRoles;  // slot 9
     }
 
     struct Employee {
-        uint256 salary;
-        uint256 lastPayDate;
         address employeeId;
         address payableAddress;
         string name;
         uint256 companyId;
-        string role;
         uint256 hiredAt;
         bool active;
-        string currency;
+        SalaryItem[] salaryItems; // all salary streams (one per role held)
     }
 
     struct CompanyBrief {
@@ -88,24 +94,10 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
     }
 
     struct EmployeeBrief {
-        // leaving space in slot for future updates
         bool isMember;
         uint96 employeeIndex;
     }
 
-    //currently unused
-    struct InventoryItem {
-        uint256 salary;
-        uint256 lastPayDate;
-        uint256 employeeId;
-        address payableAddress;
-        string name;
-        uint256 companyId;
-        string role;
-        uint256 hiredAt;
-        bool active;
-        string currency;
-    }
     ///////////////////////////////////////
     //           State Variables         //
     ///////////////////////////////////////
@@ -114,78 +106,66 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
     mapping(address ownerAddress => CompanyStruct[]) public ownerToCompanies;
     mapping(address employee => mapping(uint96 companyId => EmployeeBrief))
         public employeeBrief;
-    // TODO check to see if switching to interfaces saves gas
 
     WerewolfTokenV1 private werewolfToken;
     TokenSale public tokenSale;
     DAO public dao;
     Treasury public treasury;
-    // CompanyV1 creator;
-    // address owner;
-    // string name;
     bytes32 public constant STAFF_ROLE = keccak256("CEO");
-    uint96 public currentCompanyIndex; //index Number of companies
+    uint96 public currentCompanyIndex;
     uint96 public deletedCompanies;
-    //uint256 public employeesIndex; // Number of employees in company <--- note remove this
-    uint256 public creationFee; // Fee to create a business
-
+    uint256 public creationFee;
     address public treasuryAddress;
 
     ///////////////////////////////////////
     //           Events                  //
     ///////////////////////////////////////
-    event EmployeeHired(address indexed employee, uint256 salary);
+    event EmployeeHired(address indexed employee);
     event EmployeeFired(address indexed employee);
-    event EmployeePaid(address indexed employee, uint256 amount);
-    event CompanyCreated(address indexed owner, uint96 indexed companyIndex);
-    event CompanyDeleted(address indexed owner, uint96 indexed companyIndex);
+    event EmployeePaid(address indexed employee, uint256 wlfAmount);
+    event RoleAdded(address indexed employee, uint96 indexed companyId, string role);
+    event CompanyCreated(address indexed owner, uint96 indexed companyId);
+    event CompanyDeleted(address indexed owner, uint96 indexed companyId);
 
     ///////////////////////////////////////
     //           Modifiers               //
     ///////////////////////////////////////
     modifier onlyRoleWithPower(uint96 _companyId) {
-        // Ensure the caller is a member of the company
         EmployeeBrief memory empBrief = employeeBrief[msg.sender][_companyId];
         require(empBrief.isMember, "Not an employee of this company");
 
         CompanyBrief memory compBrief = companyBrief[_companyId];
-        CompanyStruct storage s_companyPtr = ownerToCompanies[compBrief.owner][
-            compBrief.index
-        ];
-        // Check if the employee's role is in the powerRoles list
-        uint256 cachedLength = s_companyPtr.powerRoles.length;
-        string memory employeeRoleCached = s_companyPtr
-            .employees[empBrief.employeeIndex]
-            .role;
+        CompanyStruct storage s_company = ownerToCompanies[compBrief.owner][compBrief.index];
+        SalaryItem[] storage items = s_company.employees[empBrief.employeeIndex].salaryItems;
+
         bool hasPower;
-        for (uint256 i = 0; i < cachedLength; i++) {
-            if (
-                keccak256(abi.encodePacked(s_companyPtr.powerRoles[i])) == //mh need to make sure no company has id of 0
-                keccak256(abi.encodePacked(employeeRoleCached))
-            ) {
-                hasPower = true;
-                break;
+        uint256 powerRolesLen = s_company.powerRoles.length;
+        for (uint256 i = 0; i < items.length && !hasPower; i++) {
+            bytes32 roleHash = keccak256(abi.encodePacked(items[i].role));
+            for (uint256 j = 0; j < powerRolesLen && !hasPower; j++) {
+                if (keccak256(abi.encodePacked(s_company.powerRoles[j])) == roleHash) {
+                    hasPower = true;
+                }
             }
         }
         require(hasPower, "You do not have a power role in this company.");
         _;
     }
+
     ///////////////////////////////////////
     //      Constructor/Initializer      //
     ///////////////////////////////////////
 
     constructor() {
-        //disable the implementation contracts initializer
         _disableInitializers();
     }
 
     /**
      * @notice Initializes the proxy's storage
-     * @dev
-     * @param _token address of the Wereworlf token
-     * @param _treasuryAddress address where all the funds and fees will be stored
-     * @param _daoAddress privileged address
-     * @param tokenSaleAddress the address that will handle the token sale
+     * @param _token address of the Werewolf token
+     * @param _treasuryAddress address where all fees are sent
+     * @param _daoAddress DAO contract address
+     * @param tokenSaleAddress TokenSale contract address
      */
     function initialize(
         address _token,
@@ -196,17 +176,11 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         werewolfToken = WerewolfTokenV1(_token);
         dao = DAO(_daoAddress);
         tokenSale = TokenSale(payable(tokenSaleAddress));
-        treasury = Treasury(treasuryAddress);
-        treasuryAddress = _treasuryAddress;
+        treasuryAddress = _treasuryAddress;      // assign first (Bug 1 fix)
+        treasury = Treasury(_treasuryAddress);   // then use the assigned value
 
         creationFee = 10e18;
-        // the index and id for the next newly created company
-        currentCompanyIndex = 1; //initalizing it to 1 to avoid bugs and exploits
-
-        //TODO
-        //setup roles logic
-        // _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        // _setupRole(STAFF_ROLE, msg.sender);
+        currentCompanyIndex = 1;
     }
 
     ///////////////////////////////////////
@@ -214,334 +188,235 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
     ///////////////////////////////////////
 
     /**
-     * @notice Allow users to create a business
-     * @param _creationParams is a CreateCompany struct with company creation details
+     * @notice Creates a new company and hires the caller as the first employee.
+     * @dev Charges creationFee WLF. The ownerRole is auto-added to roles[] if missing.
+     *      Company wallet is a separate EOA the user controls — store the private key securely.
+     * @param _params CreateCompany struct with all company details
      */
-    function createCompany(CreateCompany memory _creationParams) public {
+    function createCompany(CreateCompany memory _params) public {
         require(
             werewolfToken.balanceOf(msg.sender) >= creationFee,
-            "Token balance must be more than amount to pay."
+            "Token balance must be more than creation fee."
         );
         require(
-            werewolfToken.transferFrom(
-                msg.sender,
-                treasuryAddress,
-                creationFee
-            ),
+            werewolfToken.transferFrom(msg.sender, treasuryAddress, creationFee),
             "Transfer failed."
-        ); // question Should the fee be transferred to this address??
-
-        // note: Probably need to add some checks on the params
-        uint256 ownedCompLength = ownerToCompanies[msg.sender].length; // This can be zero
-        uint256 nextCompIndex;
-
-        if (ownedCompLength == 0) {
-            // Do nothing and leave nextCompIndex = 0
-        } else {
-            nextCompIndex = ownerToCompanies[msg.sender].length - 1;
-        }
-
-        CompanyStruct storage compPtr = ownerToCompanies[msg.sender][
-            nextCompIndex
-        ];
-
-        {
-            compPtr.companyId = currentCompanyIndex;
-            compPtr.owner = msg.sender;
-            compPtr.industry = _creationParams.industry;
-            compPtr.name = _creationParams.name;
-            compPtr.createdAt = block.timestamp;
-            compPtr.active = true;
-            compPtr.domain = _creationParams.domain;
-            compPtr.roles = _creationParams.roles;
-            compPtr.powerRoles = _creationParams.powerRoles;
-            compPtr.currency = _creationParams.currency;
-        }
-
-        companyBrief[currentCompanyIndex] = CompanyBrief(
-            msg.sender,
-            uint96(nextCompIndex)
         );
 
-        // Add the owner as the first employee with the CEO role
-        HireEmployee memory ownerHireParams = HireEmployee({
-            salary: _creationParams.ownerSalary,
-            employeeAddress: msg.sender,
-            name: _creationParams.ownerName,
-            companyId: currentCompanyIndex,
-            role: "CEO",
-            currency: _creationParams.currency
-        });
+        // Bug 2 fix: push empty slot first, then get the index
+        ownerToCompanies[msg.sender].push();
+        uint256 nextCompIndex = ownerToCompanies[msg.sender].length - 1;
+        CompanyStruct storage compPtr = ownerToCompanies[msg.sender][nextCompIndex];
 
-        hireEmployee(ownerHireParams); // Hire the owner as an employee with the CEO role
+        compPtr.companyId = currentCompanyIndex;
+        compPtr.owner = msg.sender;
+        compPtr.companyWallet = _params.companyWallet;
+        compPtr.industry = _params.industry;
+        compPtr.name = _params.name;
+        compPtr.createdAt = block.timestamp;
+        compPtr.active = true;
+        compPtr.domain = _params.domain;
+        compPtr.roles = _params.roles;
+        compPtr.powerRoles = _params.powerRoles;
 
-        emit CompanyCreated(msg.sender, currentCompanyIndex);
-
-        // Increment the number of created companies
-        currentCompanyIndex += 1;
-    }
-
-    function deleteCompany(uint96 _number) public {
-        require(
-            companyBrief[_number].owner == msg.sender,
-            "CompaniesHouse::deleteCompany not owner"
-        );
-        uint96 companyIndex = companyBrief[_number].index;
-        uint256 companyLength = ownerToCompanies[msg.sender].length;
-        if ((companyLength - 1) == (uint256(companyIndex))) {
-            ownerToCompanies[msg.sender].pop();
-        } else {
-            //get the id of the last company in the array
-            uint96 lastCompanyId = ownerToCompanies[msg.sender][
-                companyLength - 1
-            ].companyId;
-            // overwrite the deleted company with the last company in the array
-            ownerToCompanies[msg.sender][_number] = ownerToCompanies[
-                msg.sender
-            ][companyLength - 1];
-            // delete company brief
-            delete companyBrief[_number];
-            //update the companyBrief of the
-            companyBrief[lastCompanyId].index = _number;
-        }
-        //update the deleted companies to keep a count on the active companies
-        deletedCompanies++;
-        emit CompanyDeleted(msg.sender, companyIndex);
-    }
-
-    function hireEmployee(
-        HireEmployee memory _hireParams
-    ) public /* onlyRoleWithPower(_companyId) */ {
-        CompanyBrief memory compBrief = companyBrief[_hireParams.companyId]; //cache the owner and index
-        require(
-            msg.sender == compBrief.owner,
-            "Only owner of the company can hire employee"
-        );
-        bool roleExists; // Flag to check if role exists
-
-        CompanyStruct storage compPtr = ownerToCompanies[compBrief.owner][
-            compBrief.index
-        ];
-        uint256 cachedLength = compPtr.roles.length; //caching the length to avoid SLOAD's
-        //note might change the roles from an array to a mapping to avoid looping through an array and wasting gas
-        //See if the new employee's role exists within the company
-        for (uint256 i = 0; i < cachedLength; i++) {
-            if (
-                keccak256(abi.encodePacked(compPtr.roles[i])) == //question might need []
-                keccak256(abi.encodePacked(_hireParams.role))
-            ) {
-                roleExists = true;
+        // Auto-add ownerRole to roles[] if not already present
+        bool ownerRoleFound;
+        for (uint256 i = 0; i < _params.roles.length; i++) {
+            if (keccak256(abi.encodePacked(_params.roles[i])) == keccak256(abi.encodePacked(_params.ownerRole))) {
+                ownerRoleFound = true;
                 break;
             }
         }
-
-        require(roleExists, "Role is not present in company's roles.");
-        compPtr.employees.push(
-            Employee(
-                _hireParams.salary,
-                block.timestamp,
-                _hireParams.employeeAddress,
-                _hireParams.employeeAddress,
-                _hireParams.name,
-                _hireParams.companyId,
-                _hireParams.role,
-                block.timestamp,
-                true,
-                _hireParams.currency
-            )
-        );
-        uint96 currentNumEmployees = uint96(compPtr.employees.length - 1);
-        //update employee quick access storage
-        employeeBrief[_hireParams.employeeAddress][
-            _hireParams.companyId
-        ] = EmployeeBrief(true, currentNumEmployees);
-
-        emit EmployeeHired(_hireParams.employeeAddress, _hireParams.salary);
-    }
-    /**
-     * @notice This removes an employee from a company
-     * @dev The employeeAddreess is used as an ID, but the payable address can be different than their ID
-     */
-
-    function fireEmployee(address _employeeAddress, uint96 _companyId) public {
-        CompanyBrief memory compBrief = companyBrief[_companyId];
-        require(
-            compBrief.owner == msg.sender,
-            "CompaniesHouse:fireEmployee not owner"
-        );
-        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][
-            _companyId
-        ];
-        require(empBrief.isMember, "CompaniesHouse:fireEmployee not a member");
-
-        Employee[] storage s_employeesPtr = ownerToCompanies[compBrief.owner][
-            compBrief.index
-        ].employees;
-
-        uint96 numEmployees = uint96(s_employeesPtr.length - 1);
-
-        address lastEmployee;
-        if (empBrief.employeeIndex == numEmployees) {
-            s_employeesPtr.pop();
-        } else {
-            lastEmployee = s_employeesPtr[numEmployees].employeeId;
-            s_employeesPtr[empBrief.employeeIndex] = s_employeesPtr[
-                numEmployees
-            ];
-            s_employeesPtr.pop();
-
-            //update the employeeBrief mapping for the last employee
-            employeeBrief[lastEmployee][_companyId].employeeIndex = empBrief
-                .employeeIndex;
+        if (!ownerRoleFound) {
+            compPtr.roles.push(_params.ownerRole);
         }
 
-        //delete the employeeBrief mapping for the fired employee
+        companyBrief[currentCompanyIndex] = CompanyBrief(msg.sender, uint96(nextCompIndex));
+
+        // Hire the creator as the first employee
+        SalaryItem[] memory ownerSalary = new SalaryItem[](1);
+        ownerSalary[0] = SalaryItem({
+            role: _params.ownerRole,
+            salaryPerHour: _params.ownerSalaryPerHour,
+            lastPayDate: block.timestamp
+        });
+
+        _hireEmployeeInternal(
+            msg.sender,
+            _params.ownerName,
+            currentCompanyIndex,
+            ownerSalary,
+            uint96(nextCompIndex)
+        );
+
+        emit CompanyCreated(msg.sender, currentCompanyIndex);
+        currentCompanyIndex += 1;
+    }
+
+    /**
+     * @notice Soft-deletes a company (marks it inactive, clears the brief lookup).
+     * @dev Uses soft delete to avoid storage issues with nested dynamic arrays.
+     */
+    function deleteCompany(uint96 _companyId) public {
+        require(
+            companyBrief[_companyId].owner == msg.sender,
+            "CompaniesHouse::deleteCompany not owner"
+        );
+        uint96 companyIndex = companyBrief[_companyId].index;
+        ownerToCompanies[msg.sender][companyIndex].active = false;
+        delete companyBrief[_companyId];
+        deletedCompanies++;
+        emit CompanyDeleted(msg.sender, _companyId);
+    }
+
+    /**
+     * @notice Hires a new employee into a company.
+     * @dev All roles in salaryItems must exist in the company's roles[]. Each salary
+     *      item represents a separate role + pay stream (e.g., CTO at $300/mo, HR at $200/mo).
+     */
+    function hireEmployee(HireEmployee memory _hireParams) public {
+        CompanyBrief memory compBrief = companyBrief[_hireParams.companyId];
+        require(msg.sender == compBrief.owner, "Only owner of the company can hire employee");
+
+        CompanyStruct storage compPtr = ownerToCompanies[compBrief.owner][compBrief.index];
+        _validateSalaryItemRoles(_hireParams.salaryItems, compPtr.roles);
+
+        _hireEmployeeInternal(
+            _hireParams.employeeAddress,
+            _hireParams.name,
+            _hireParams.companyId,
+            _hireParams.salaryItems,
+            compBrief.index
+        );
+    }
+
+    /**
+     * @notice Adds an additional role+salary stream to an existing employee.
+     * @dev Use this to give the founder CEO, CTO, HR roles at different salaries
+     *      without firing and re-hiring.
+     */
+    function addRoleToEmployee(
+        address _employeeAddress,
+        uint96 _companyId,
+        SalaryItem memory _item
+    ) public {
+        CompanyBrief memory compBrief = companyBrief[_companyId];
+        require(compBrief.owner == msg.sender, "CompaniesHouse:addRoleToEmployee not owner");
+
+        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
+        require(empBrief.isMember, "CompaniesHouse:addRoleToEmployee not a member");
+
+        CompanyStruct storage compPtr = ownerToCompanies[compBrief.owner][compBrief.index];
+        _requireRoleExists(_item.role, compPtr.roles);
+
+        Employee storage emp = compPtr.employees[empBrief.employeeIndex];
+        emp.salaryItems.push(SalaryItem({
+            role: _item.role,
+            salaryPerHour: _item.salaryPerHour,
+            lastPayDate: block.timestamp
+        }));
+
+        emit RoleAdded(_employeeAddress, _companyId, _item.role);
+    }
+
+    /**
+     * @notice Soft-fires an employee (marks them inactive, clears their brief).
+     */
+    function fireEmployee(address _employeeAddress, uint96 _companyId) public {
+        CompanyBrief memory compBrief = companyBrief[_companyId];
+        require(compBrief.owner == msg.sender, "CompaniesHouse:fireEmployee not owner");
+
+        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
+        require(empBrief.isMember, "CompaniesHouse:fireEmployee not a member");
+
+        ownerToCompanies[compBrief.owner][compBrief.index].employees[empBrief.employeeIndex].active = false;
         delete employeeBrief[_employeeAddress][_companyId];
 
         emit EmployeeFired(_employeeAddress);
     }
 
+    /**
+     * @notice Pays all pending salary to an employee across all their salary streams.
+     * @dev Salary is denominated in USDT; WLF amount is calculated at pay time using
+     *      tokenSale.price(). Formula: wlf = usdt_6dec * 10^30 / price_18dec.
+     *      Anyone can trigger payment — the WLF goes to the employee's payableAddress.
+     */
     function payEmployee(address _employeeAddress, uint96 _companyId) public {
-        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][
-            _companyId
-        ];
-        require(
-            empBrief.isMember,
-            "CompaniesHouse:payEmployee Employee not found"
-        );
+        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
+        require(empBrief.isMember, "CompaniesHouse:payEmployee Employee not found");
 
         CompanyBrief memory compBrief = companyBrief[_companyId];
+        Employee storage s_emp = ownerToCompanies[compBrief.owner][compBrief.index].employees[empBrief.employeeIndex];
+        require(s_emp.active, "CompaniesHouse:payEmployee Employee not active");
 
-        Employee storage s_employee = ownerToCompanies[compBrief.owner][
-            compBrief.index
-        ].employees[empBrief.employeeIndex];
+        uint256 wlfPrice = tokenSale.price();
+        require(wlfPrice > 0, "WLF price is zero");
 
-        uint256 payPeriod = block.timestamp - s_employee.lastPayDate;
-        //question is the decimals of the token 18??
-        uint256 payAmount = (payPeriod * s_employee.salary) / 1 hours; // we can make the salary hourly
-        require(payAmount > 0, "Not enough time has passed to pay employee");
+        uint256 totalWLF;
+        for (uint256 i = 0; i < s_emp.salaryItems.length; i++) {
+            SalaryItem storage item = s_emp.salaryItems[i];
+            uint256 payPeriod = block.timestamp - item.lastPayDate;
+            uint256 usdtAmount = (payPeriod * item.salaryPerHour) / 1 hours;
+            if (usdtAmount > 0) {
+                // Convert USDT (6 dec) to WLF (18 dec):
+                // wlf_18dec = usdt_6dec * 10^30 / price_18dec
+                // where price_18dec = actual_usdt_per_wlf * 10^18
+                totalWLF += (usdtAmount * 10 ** 30) / wlfPrice;
+                item.lastPayDate = block.timestamp;
+            }
+        }
 
-        werewolfToken.payEmployee(_employeeAddress, payAmount);
-
-        s_employee.lastPayDate = block.timestamp;
-
-        emit EmployeePaid(_employeeAddress, payAmount);
+        require(totalWLF > 0, "Nothing to pay yet");
+        werewolfToken.payEmployee(s_emp.payableAddress, totalWLF);
+        emit EmployeePaid(_employeeAddress, totalWLF);
     }
 
-    /*    function payEmployees(uint256 _companyId) public {
-        CompanyStruct storage _company = companies[_companyId];
-        // Treasury treasury = Treasury(_treasuryAddress);
+    /**
+     * @notice Pays all active employees in a company in one transaction.
+     */
+    function payEmployees(uint96 _companyId) external {
+        CompanyBrief memory compBrief = companyBrief[_companyId];
+        require(compBrief.owner == msg.sender, "CompaniesHouse:payEmployees not owner");
 
-        // Check if treasury has enough balance to pay all employees
-        uint256 totalPayAmount = 0;
-        for (uint256 i = 0; i < _company.employees.length; i++) {
-            address employeeAddress = _company.employees[i];
-            Employee storage employee = _employees[employeeAddress];
-
-            require(employee.salary > 0, "Employee not found");
-            require(employee.active, "Employee not active");
-
-            uint256 payPeriod = block.timestamp - employee.lastPayDate;
-
-            uint256 price = tokenSale.price();
-            require(price > 0, "Price cannot be zero");
-
-            // Scale up the result by 1e18 for precision, assuming price and salary are compatible with this scale
-            uint256 payAmount = (payPeriod * employee.salary * 1e18) / price;
-            totalPayAmount += payAmount;
+        Employee[] storage employees = ownerToCompanies[compBrief.owner][compBrief.index].employees;
+        for (uint256 i = 0; i < employees.length; i++) {
+            if (employees[i].active) {
+                // Skip if nothing owed (avoids revert in payEmployee)
+                bool hasBalance = _hasPendingPay(employees[i]);
+                if (hasBalance) {
+                    payEmployee(employees[i].employeeId, _companyId);
+                }
+            }
         }
+    }
 
-        uint256 threshold = ((werewolfToken.balanceOf(_treasuryAddress) * treasury.thresholdPercentage()) / 100);
-
-        uint256 treasuryBalance = werewolfToken.balanceOf(_treasuryAddress);
-
-        require(totalPayAmount < threshold, "Treasury has insufficient liquidity to pay employees.");
-
-        require(treasuryBalance > threshold, "Treasury has insufficient liquidity to pay employees.");
-
-        // require(
-        //     treasury.isAboveThreshold(),
-        //     "Treasury has insufficient liquidity to pay employees."
-        // );
-
-        for (uint256 i = 0; i < _company.employees.length; i++) {
-            address employeeAddress = _company.employees[i];
-            Employee storage employee = _employees[employeeAddress];
-
-            require(employee.salary > 0, "Employee not found");
-            require(employee.active, "Employee not active");
-
-            uint256 payPeriod = block.timestamp - employee.lastPayDate;
-
-            uint256 price = tokenSale.price();
-            require(price > 0, "Price cannot be zero");
-
-            // Scale up the result by 1e18 for precision, assuming price and salary are compatible with this scale
-            uint256 payAmount = (payPeriod * employee.salary * 1e18) / price;
-
-            require(payAmount > 0, "Pay amount must be more then 0.");
-
-            require(payPeriod > 0, "Not enough time has passed to pay employee");
-
-            // Call the payEmployee function through the DAO contract
-            werewolfToken.payEmployee(employeeAddress, payAmount);
-            // Update the employee's last pay date
-            employee.lastPayDate = block.timestamp;
-
-            // Emit the EmployeePaid event
-            emit EmployeePaid(employeeAddress, payAmount);
-        }
-    } */
-
+    /**
+     * @notice Updates the role string on a specific salary stream of an employee.
+     * @param _salaryItemIndex index into the employee's salaryItems[] array
+     */
     function setCompanyRole(
         address _employeeAddress,
+        uint256 _salaryItemIndex,
         string memory _newRole,
         uint96 _companyId
     ) public {
         CompanyBrief memory compBrief = companyBrief[_companyId];
-        require(
-            compBrief.owner == msg.sender,
-            "CompaniesHouse:SetCompantRole not owner"
-        );
-        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][
-            _companyId
-        ];
-        require(empBrief.isMember, "COmpaniesHouse:setCompanyRole not member");
+        require(compBrief.owner == msg.sender, "CompaniesHouse:setCompanyRole not owner");
 
-        CompanyStruct storage s_companyPtr = ownerToCompanies[compBrief.owner][
-            compBrief.index
-        ];
-        uint256 rolesLength = s_companyPtr.roles.length; //cache length to avoid SLOAD's
-        bool roleExists; // Flag to check if role exists
-        for (uint256 i = 0; i < rolesLength; i++) {
-            if (
-                keccak256(abi.encodePacked(s_companyPtr.roles[i])) ==
-                keccak256(abi.encodePacked(_newRole))
-            ) {
-                roleExists = true;
-                break;
-            }
-        }
-        require(
-            roleExists,
-            "CompaniesHouse:setCompanyRole role does not exist"
-        );
-        s_companyPtr.employees[empBrief.employeeIndex].role = _newRole;
-        //TODO emit an event for updateed role
+        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
+        require(empBrief.isMember, "CompaniesHouse:setCompanyRole not member");
+
+        CompanyStruct storage s_company = ownerToCompanies[compBrief.owner][compBrief.index];
+        _requireRoleExists(_newRole, s_company.roles);
+
+        Employee storage emp = s_company.employees[empBrief.employeeIndex];
+        require(_salaryItemIndex < emp.salaryItems.length, "Invalid salary item index");
+        emp.salaryItems[_salaryItemIndex].role = _newRole;
     }
 
-    /* function addCompanyRole(uint256 _companyId, string memory _newRole) public onlyRoleWithPower(_companyId) {
-        companies[_companyId].roles.push(_newRole);
-    } */
-
-    function retrieveCompany(
-        uint96 _companyId
-    ) public view returns (CompanyStruct memory) {
+    function retrieveCompany(uint96 _companyId) public view returns (CompanyStruct memory) {
         CompanyBrief memory compBrief = companyBrief[_companyId];
-        require(
-            compBrief.owner != address(0),
-            "CompaniesHouse:retrieveCompany company not found"
-        );
+        require(compBrief.owner != address(0), "CompaniesHouse:retrieveCompany company not found");
         return ownerToCompanies[compBrief.owner][compBrief.index];
     }
 
@@ -549,20 +424,126 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         uint96 _companyId,
         address _employeeAddress
     ) public view returns (Employee memory) {
-        // Ensure that only the owner of the company can retrieve employee details
         CompanyBrief memory compBrief = companyBrief[_companyId];
-        //require(compOwner == msg.sender, "CompaniesHouse:retrieveEmployee not owner");
-        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][
-            _companyId
-        ];
-        require(
-            empBrief.isMember,
-            "CompaniesHouse:retrieveEmployee not member"
-        );
+        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
+        require(empBrief.isMember, "CompaniesHouse:retrieveEmployee not member");
+        return ownerToCompanies[compBrief.owner][compBrief.index].employees[empBrief.employeeIndex];
+    }
 
-        return
-            ownerToCompanies[compBrief.owner][compBrief.index].employees[
-                empBrief.employeeIndex
-            ];
+    /**
+     * @notice Returns total WLF owed to all active employees right now.
+     * @dev Used by the frontend "Safe to Sell" feature to estimate pool price impact.
+     */
+    function getTotalPendingPay(uint96 _companyId) public view returns (uint256 totalWLF) {
+        CompanyBrief memory compBrief = companyBrief[_companyId];
+        Employee[] storage employees = ownerToCompanies[compBrief.owner][compBrief.index].employees;
+        uint256 wlfPrice = tokenSale.price();
+        if (wlfPrice == 0) return 0;
+
+        for (uint256 i = 0; i < employees.length; i++) {
+            if (!employees[i].active) continue;
+            for (uint256 j = 0; j < employees[i].salaryItems.length; j++) {
+                SalaryItem storage item = employees[i].salaryItems[j];
+                uint256 usdtAmount = ((block.timestamp - item.lastPayDate) * item.salaryPerHour) / 1 hours;
+                if (usdtAmount > 0) {
+                    totalWLF += (usdtAmount * 10 ** 30) / wlfPrice;
+                }
+            }
+        }
+    }
+
+    /**
+     * @notice Returns total monthly USDT payroll across all active employees.
+     * @dev Assumes 730 hours per month (365 * 24 / 12).
+     */
+    function getMonthlyBurnUSDT(uint96 _companyId) public view returns (uint256 usdtPerMonth) {
+        CompanyBrief memory compBrief = companyBrief[_companyId];
+        Employee[] storage employees = ownerToCompanies[compBrief.owner][compBrief.index].employees;
+        uint256 totalPerHour;
+        for (uint256 i = 0; i < employees.length; i++) {
+            if (!employees[i].active) continue;
+            for (uint256 j = 0; j < employees[i].salaryItems.length; j++) {
+                totalPerHour += employees[i].salaryItems[j].salaryPerHour;
+            }
+        }
+        usdtPerMonth = totalPerHour * 730;
+    }
+
+    /**
+     * @notice Returns WLF needed in treasury to sustain 5 years of payroll at current WLF price.
+     * @dev As WLF price increases, fewer tokens are needed. Use as a minimum treasury target.
+     */
+    function getRequiredFor5Years(uint96 _companyId) public view returns (uint256 wlfRequired) {
+        uint256 usdtNeeded = getMonthlyBurnUSDT(_companyId) * 60; // 60 months
+        uint256 wlfPrice = tokenSale.price();
+        if (wlfPrice == 0 || usdtNeeded == 0) return 0;
+        wlfRequired = (usdtNeeded * 10 ** 30) / wlfPrice;
+    }
+
+    ///////////////////////////////////////
+    //         Internal Functions        //
+    ///////////////////////////////////////
+
+    function _hireEmployeeInternal(
+        address _employeeAddress,
+        string memory _name,
+        uint96 _companyId,
+        SalaryItem[] memory _salaryItems,
+        uint96 _companyArrayIndex
+    ) internal {
+        CompanyBrief memory compBrief = companyBrief[_companyId];
+        CompanyStruct storage compPtr = ownerToCompanies[compBrief.owner][_companyArrayIndex];
+
+        compPtr.employees.push();
+        uint256 newEmpIdx = compPtr.employees.length - 1;
+        Employee storage newEmp = compPtr.employees[newEmpIdx];
+
+        newEmp.employeeId = _employeeAddress;
+        newEmp.payableAddress = _employeeAddress;
+        newEmp.name = _name;
+        newEmp.companyId = _companyId;
+        newEmp.hiredAt = block.timestamp;
+        newEmp.active = true;
+
+        for (uint256 i = 0; i < _salaryItems.length; i++) {
+            newEmp.salaryItems.push(SalaryItem({
+                role: _salaryItems[i].role,
+                salaryPerHour: _salaryItems[i].salaryPerHour,
+                lastPayDate: block.timestamp
+            }));
+        }
+
+        employeeBrief[_employeeAddress][_companyId] = EmployeeBrief(true, uint96(newEmpIdx));
+        emit EmployeeHired(_employeeAddress);
+    }
+
+    function _validateSalaryItemRoles(
+        SalaryItem[] memory _items,
+        string[] storage _roles
+    ) internal view {
+        for (uint256 si = 0; si < _items.length; si++) {
+            _requireRoleExists(_items[si].role, _roles);
+        }
+    }
+
+    function _requireRoleExists(string memory _role, string[] storage _roles) internal view {
+        bool found;
+        bytes32 roleHash = keccak256(abi.encodePacked(_role));
+        for (uint256 i = 0; i < _roles.length; i++) {
+            if (keccak256(abi.encodePacked(_roles[i])) == roleHash) {
+                found = true;
+                break;
+            }
+        }
+        require(found, "Role is not present in company's roles.");
+    }
+
+    function _hasPendingPay(Employee storage _emp) internal view returns (bool) {
+        for (uint256 i = 0; i < _emp.salaryItems.length; i++) {
+            if (block.timestamp - _emp.salaryItems[i].lastPayDate >= 1 hours) {
+                return true;
+            }
+        }
+        return false;
     }
 }

@@ -149,11 +149,14 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
     uint256 public lastEpochUpdate;
 
     // Reward tracking
-    uint256 public totalStakedValue;      // Total value of all staked LP shares
+    uint256 public totalStakedValue;      // Total value of all staked LP shares (kept for backward compat)
     uint256 public lastUpdateTime;
-    uint256 public rewardPerShareStored;
+    uint256 public rewardPerShareStored;  // Reward accumulated per WLF wei (name kept for upgrade safety)
     mapping(address => uint256) public userRewardPerSharePaid;
     mapping(address => uint256) public rewards;
+
+    // Total WLF contributed across all LP positions (used as reward base)
+    uint256 public totalWLFStaked;
 
     ///////////////////////////////////////
     //           Events                  //
@@ -303,6 +306,7 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
         saleShares[saleId] += sharesToMint;
         totalStakedValue += sharesToMint;
         userWLFStaked[user] += purchaseAmount;
+        totalWLFStaked += purchaseAmount;
 
         // 5-year hard lock: extend unlock time if needed
         if (fixedDuration) {
@@ -334,6 +338,7 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
         if (userBalance > 0) {
             uint256 wlfReduction = (userWLFStaked[msg.sender] * shares) / userBalance;
             userWLFStaked[msg.sender] -= wlfReduction;
+            totalWLFStaked -= wlfReduction;
         }
         _burn(msg.sender, shares);
         totalStakedValue -= shares;
@@ -415,17 +420,17 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
      */
     function earned(address account) public view returns (uint256) {
         uint256 pendingRewardPerShare = 0;
-        if (totalSupply() > 0 && totalStakedValue > 0) {
+        if (totalWLFStaked > 0) {
             uint256 timeSinceLastUpdate = block.timestamp - lastUpdateTime;
             if (timeSinceLastUpdate > 0) {
                 uint256 apy = calculateAPY();
-                uint256 rewardPerSecond = (totalStakedValue * apy) / (YEAR_IN_TIME * PERCENTAGE_SCALE);
+                uint256 rewardPerSecond = (totalWLFStaked * apy) / (YEAR_IN_TIME * PERCENTAGE_SCALE);
                 uint256 pendingReward = rewardPerSecond * timeSinceLastUpdate;
-                pendingRewardPerShare = (pendingReward * SCALE) / totalSupply();
+                pendingRewardPerShare = (pendingReward * SCALE) / totalWLFStaked;
             }
         }
         uint256 currentRewardPerShare = rewardPerShareStored + pendingRewardPerShare;
-        return (balanceOf(account) * (currentRewardPerShare - userRewardPerSharePaid[account])) / SCALE
+        return (userWLFStaked[account] * (currentRewardPerShare - userRewardPerSharePaid[account])) / SCALE
                + rewards[account];
     }
 
@@ -435,12 +440,12 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
      */
     function calculateAPY() public view returns (uint256) {
         uint256 wlfTotalSupply = wlfToken.totalSupply();
-        if (wlfTotalSupply == 0 || totalStakedValue == 0) {
+        if (wlfTotalSupply == 0 || totalWLFStaked == 0) {
             return MAX_APY; // no stakers yet — show max APY to attract first stakers
         }
 
-        // Calculate staking ratio (total staked value / total supply)
-        uint256 stakingRatio = (totalStakedValue * SCALE) / wlfTotalSupply;
+        // Staking ratio: WLF locked in LP / total WLF supply
+        uint256 stakingRatio = (totalWLFStaked * SCALE) / wlfTotalSupply;
 
         // Halflife decay: APY halves every 0.1 (10%) change in ratio
         uint256 exponent = stakingRatio / 1e17; // leaving 1 decimal precision
@@ -504,7 +509,7 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
      * @notice Update reward per share based on APY
      */
     function _updateRewardPerShare() internal {
-        if (totalStakedValue == 0) {
+        if (totalWLFStaked == 0) {
             lastUpdateTime = block.timestamp;
             return;
         }
@@ -516,13 +521,12 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
         uint256 timeSinceLastUpdate = block.timestamp - lastUpdateTime;
         uint256 apy = calculateAPY();
 
-        // Calculate rewards accrued: (totalStaked * APY * time) / year
-        uint256 rewardPerSecond = (totalStakedValue * apy) / YEAR_IN_TIME / PERCENTAGE_SCALE;
+        // Rewards accrued: (totalWLFStaked * APY * time) / year
+        uint256 rewardPerSecond = (totalWLFStaked * apy) / YEAR_IN_TIME / PERCENTAGE_SCALE;
         uint256 reward = rewardPerSecond * timeSinceLastUpdate;
 
-        if (totalSupply() > 0) {
-            rewardPerShareStored += (reward * SCALE) / totalSupply();
-        }
+        // rewardPerShareStored now tracks reward per WLF wei (name kept for upgrade storage safety)
+        rewardPerShareStored += (reward * SCALE) / totalWLFStaked;
 
         lastUpdateTime = block.timestamp;
     }
@@ -532,7 +536,7 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
      */
     function _earned(address account) internal view returns (uint256) {
         return
-            (balanceOf(account) * (rewardPerShareStored - userRewardPerSharePaid[account])) /
+            (userWLFStaked[account] * (rewardPerShareStored - userRewardPerSharePaid[account])) /
             SCALE +
             rewards[account];
     }
