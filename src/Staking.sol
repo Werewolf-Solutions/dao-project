@@ -211,6 +211,46 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
     }
 
     /**
+     * @notice Withdraw all unlocked positions and immediately re-stake as a single flexible position.
+     * @dev WLF stays in the contract; no external transfer occurs. Gas-efficient single transaction.
+     */
+    function withdrawAllAndStakeFlexible() external {
+        _updateRewardPerToken();
+        StakePosition[] storage userPositions = stakePositions[msg.sender];
+        uint256 totalAssets_;
+        uint256 totalSharesBurned;
+        for (uint256 i = 0; i < userPositions.length; i++) {
+            StakePosition storage pos = userPositions[i];
+            if (!pos.active) continue;
+            if (pos.unlockAt > 0 && block.timestamp < pos.unlockAt) continue;
+            uint256 posAssets = _convertToAssets(pos.shares, Math.Rounding.Floor);
+            totalAssets_ += posAssets;
+            totalSharesBurned += pos.shares;
+            stakedBalance -= posAssets;
+            emit TokensWithdrawn(msg.sender, i, posAssets, pos.shares);
+            pos.shares = 0;
+            pos.active = false;
+        }
+        require(totalAssets_ > 0, "Staking: no unlocked positions");
+        _burn(msg.sender, totalSharesBurned);
+
+        // Re-stake the total as a new flexible position
+        uint256 newShares = _convertToShares(totalAssets_, Math.Rounding.Floor);
+        stakedBalance += totalAssets_;
+        _mint(msg.sender, newShares);
+        uint256 newIdx = stakePositions[msg.sender].length;
+        stakePositions[msg.sender].push(StakePosition({
+            shares:   newShares,
+            assets:   totalAssets_,
+            stakedAt: block.timestamp,
+            unlockAt: 0,
+            bonusApy: 0,
+            active:   true
+        }));
+        emit TokensStaked(msg.sender, newIdx, totalAssets_, newShares, false, 0, 0);
+    }
+
+    /**
      * @notice ERC4626-compatible withdraw (withdraws from unlocked positions, oldest first).
      */
     function withdraw(uint256 _assetAmount, address _receiver, address _owner)

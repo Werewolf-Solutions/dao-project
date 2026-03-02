@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useAccount, useReadContract, useReadContracts, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { parseUnits, encodeAbiParameters, parseAbiParameters, formatEther, formatUnits } from 'viem';
-import { daoABI, werewolfTokenABI, erc20ABI, treasuryABI, tokenSaleABI, getAddress } from '@/contracts';
+import { daoABI, werewolfTokenABI, erc20ABI, treasuryABI, tokenSaleABI, companiesHouseABI, getAddress } from '@/contracts';
 import { useTheme } from '@/contexts/ThemeContext';
 import { PageContainer } from '@/components/PageContainer';
 import { Button } from '@/components/Button';
@@ -12,13 +12,6 @@ import { LPDelegation } from '@/components/LPDelegation';
 
 const ALL_STATES = ['Pending', 'Active', 'Succeeded', 'Queued', 'Defeated', 'Canceled', 'Expired', 'Executed'];
 
-// Planned token sales roadmap (static reference data)
-const TOKEN_SALES = [
-  { id: 0, usdt: '2k',   wlf: '5M',   price: '0.0004', lock: '5 years', note: 'Founder sale' },
-  { id: 1, usdt: '100k', wlf: '25M',  price: '0.004',  lock: '5 years', note: 'Public sale — start ASAP' },
-  { id: 2, usdt: '1M',   wlf: '25M',  price: '0.04',   lock: '',        note: '' },
-  { id: 3, usdt: '10M',  wlf: '25M',  price: '0.4',    lock: '',        note: '' },
-];
 
 export default function DAO() {
   const { address, chainId } = useAccount();
@@ -30,6 +23,7 @@ export default function DAO() {
   const lpStakingAddress = getAddress(chainId, 'LPStaking');
   const treasuryAddress = getAddress(chainId, 'Treasury');
   const usdtAddress = getAddress(chainId, 'USDT');
+  const companiesHouseAddress = getAddress(chainId, 'CompaniesHouse');
 
   // ── Reads ──────────────────────────────────────────────────────────────────
 
@@ -90,6 +84,13 @@ export default function DAO() {
     query: { enabled: !!tokenSaleAddress },
   });
 
+  const { data: saleIdCounter } = useReadContract({
+    address: tokenSaleAddress,
+    abi: tokenSaleABI,
+    functionName: 'saleIdCounter',
+    query: { enabled: !!tokenSaleAddress, refetchInterval: 30_000 },
+  });
+
   const { data: treasurySwapRouter } = useReadContract({
     address: treasuryAddress,
     abi: treasuryABI,
@@ -113,6 +114,29 @@ export default function DAO() {
     query: { enabled: !!wlfAddress && !!treasuryAddress },
   });
 
+
+  const { data: currentCompanyIndex } = useReadContract({
+    address: companiesHouseAddress,
+    abi: companiesHouseABI,
+    functionName: 'currentCompanyIndex',
+    query: { enabled: !!companiesHouseAddress },
+  });
+
+  // IDs start at 1; currentCompanyIndex is the next ID to be assigned
+  const companyCount = currentCompanyIndex !== undefined ? Number(currentCompanyIndex) : 0;
+  const companyReadConfigs = companyCount > 1
+    ? Array.from({ length: companyCount - 1 }, (_, i) => ({
+        address: companiesHouseAddress as `0x${string}`,
+        abi: companiesHouseABI,
+        functionName: 'retrieveCompany' as const,
+        args: [BigInt(i + 1)] as [bigint],
+      }))
+    : [];
+
+  const { data: companyResults } = useReadContracts({
+    contracts: companyReadConfigs,
+    query: { enabled: !!companiesHouseAddress && companyCount > 1 },
+  });
 
   // ── Writes ─────────────────────────────────────────────────────────────────
 
@@ -153,10 +177,20 @@ export default function DAO() {
     { address: '', amount: '' },
   ]);
 
+  // Quick: company airdrop
+  const [companyAirdropAmount, setCompanyAirdropAmount] = useState('');
+  const [selectedCompanyIds, setSelectedCompanyIds] = useState<Set<number>>(new Set());
+
+  const toggleCompany = (id: number) =>
+    setSelectedCompanyIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
   // ── Status filter ──────────────────────────────────────────────────────────
 
   const [visibleStates, setVisibleStates] = useState<Set<string>>(new Set());
-  const [showRoadmap, setShowRoadmap] = useState(false);
 
   const toggleState = (s: string) =>
     setVisibleStates(prev => {
@@ -168,6 +202,22 @@ export default function DAO() {
   // ── Derived ────────────────────────────────────────────────────────────────
 
   const isGuardian = !!(guardian && address && guardian.toLowerCase() === address.toLowerCase());
+
+  type CompanyInfo = {
+    companyId: number;
+    name: string;
+    industry: string;
+    companyWallet: `0x${string}`;
+  };
+
+  const activeCompanies: CompanyInfo[] = (companyResults ?? [])
+    .map(r => {
+      if (r.status !== 'success' || !r.result) return null;
+      const c = r.result as { companyId: bigint; name: string; industry: string; companyWallet: `0x${string}`; active: boolean };
+      if (!c.active) return null;
+      return { companyId: Number(c.companyId), name: c.name, industry: c.industry, companyWallet: c.companyWallet };
+    })
+    .filter((c): c is CompanyInfo => c !== null);
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
@@ -247,6 +297,20 @@ export default function DAO() {
       ])
     );
     setLastAction('create-airdrop');
+    writeContract({ address: daoAddress, abi: daoABI, functionName: 'createProposal', args: [targetArr, sigArr, dataArr] });
+    setIsModalOpen(false);
+  };
+
+  const handleCompanyAirdropProposal = () => {
+    if (!daoAddress || !wlfAddress || selectedCompanyIds.size === 0 || !companyAirdropAmount) return;
+    const amountWei = parseUnits(companyAirdropAmount, 18);
+    const selected = activeCompanies.filter(c => selectedCompanyIds.has(c.companyId));
+    const targetArr = selected.map(() => wlfAddress as `0x${string}`);
+    const sigArr    = selected.map(() => 'airdrop(address,uint256)');
+    const dataArr   = selected.map(c =>
+      encodeAbiParameters(parseAbiParameters('address, uint256'), [c.companyWallet, amountWei])
+    );
+    setLastAction('create-company-airdrop');
     writeContract({ address: daoAddress, abi: daoABI, functionName: 'createProposal', args: [targetArr, sigArr, dataArr] });
     setIsModalOpen(false);
   };
@@ -469,43 +533,6 @@ export default function DAO() {
 
       </div>
 
-      {/* ── Token Sales Roadmap ── */}
-      <div className={`mt-4 rounded-xl border border-white/10 overflow-hidden`}>
-        <button
-          className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold hover:bg-white/5 transition-colors"
-          onClick={() => setShowRoadmap(v => !v)}
-        >
-          <span>Token Sales Roadmap</span>
-          <span className={theme.textMuted}>{showRoadmap ? '▴' : '▾'}</span>
-        </button>
-        {showRoadmap && (
-          <div className="px-4 pb-4 space-y-2">
-            {TOKEN_SALES.map(s => (
-              <div
-                key={s.id}
-                className={`flex items-start gap-3 p-3 rounded-lg ${theme.cardNested}`}
-              >
-                <span className={`mt-0.5 text-xs font-bold px-1.5 py-0.5 rounded ${theme.textMuted} border border-white/10`}>
-                  #{s.id}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-white">
-                    {s.usdt} USDT for {s.wlf} WLF
-                    <span className={`ml-2 text-xs font-normal ${theme.textMuted}`}>@ {s.price} USDT/WLF</span>
-                    {s.lock && (
-                      <span className="ml-2 text-xs text-sky-400">· locked {s.lock}</span>
-                    )}
-                  </p>
-                  {s.note && (
-                    <p className={`text-xs mt-0.5 ${s.id === 1 ? 'text-amber-400' : theme.textMuted}`}>{s.note}</p>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
       {/* ── Vote Delegation ── */}
       <LPDelegation daoAddress={daoAddress} lpStakingAddress={lpStakingAddress} />
 
@@ -637,26 +664,28 @@ export default function DAO() {
                   </div>
                 )}
 
-                {/* ── Start Sale #1 ── */}
-                <div className={`${theme.cardNested} p-4 space-y-2`}>
-                  <p className="font-semibold text-sm">Start Sale #1</p>
-                  <p className={`text-xs ${theme.textMuted}`}>
-                    Airdrop 25,000,000 WLF to TokenSale and open the public sale at 0.004 USDT/WLF.
-                  </p>
-                  <div className={`text-xs font-mono ${theme.textMuted} space-y-0.5 pt-1`}>
-                    <p>1. werewolfToken.airdrop(tokenSale, 25,000,000 WLF)</p>
-                    <p>2. tokenSale.startSale(25,000,000 WLF, 0.004 USDT)</p>
+                {/* ── Start Sale #1 (hidden once sale #1 or later is active) ── */}
+                {saleIdCounter !== undefined && saleIdCounter < 1n && (
+                  <div className={`${theme.cardNested} p-4 space-y-2`}>
+                    <p className="font-semibold text-sm">Start Sale #1</p>
+                    <p className={`text-xs ${theme.textMuted}`}>
+                      Airdrop 25,000,000 WLF to TokenSale and open the public sale at 0.004 USDT/WLF.
+                    </p>
+                    <div className={`text-xs font-mono ${theme.textMuted} space-y-0.5 pt-1`}>
+                      <p>1. werewolfToken.airdrop(tokenSale, 25,000,000 WLF)</p>
+                      <p>2. tokenSale.startSale(25,000,000 WLF, 0.004 USDT)</p>
+                    </div>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={handleStartSale1}
+                      disabled={!tokenSaleAddress || isPending || isConfirming}
+                      loading={isPending || isConfirming}
+                    >
+                      Submit Start Sale #1
+                    </Button>
                   </div>
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={handleStartSale1}
-                    disabled={!tokenSaleAddress || isPending || isConfirming}
-                    loading={isPending || isConfirming}
-                  >
-                    Submit Start Sale #1
-                  </Button>
-                </div>
+                )}
 
                 {/* ── Set Voting Period ── */}
                 <div className={`${theme.cardNested} p-4 space-y-3`}>
@@ -834,6 +863,86 @@ export default function DAO() {
                     loading={isPending || isConfirming}
                   >
                     Submit Airdrop Proposal
+                  </Button>
+                </div>
+
+                {/* ── Airdrop WLF to Companies ── */}
+                <div className={`${theme.cardNested} p-4 space-y-3`}>
+                  <div>
+                    <p className="font-semibold text-sm">Airdrop WLF to Companies</p>
+                    <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
+                      Select registered companies and airdrop WLF to each company wallet.
+                      One operation per company.
+                    </p>
+                  </div>
+
+                  {/* Company checklist */}
+                  {activeCompanies.length === 0 ? (
+                    <p className={`text-xs ${theme.textMuted}`}>No active companies found.</p>
+                  ) : (
+                    <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                      {activeCompanies.map(company => (
+                        <label key={company.companyId} className="flex items-center gap-2.5 cursor-pointer group">
+                          <input
+                            type="checkbox"
+                            checked={selectedCompanyIds.has(company.companyId)}
+                            onChange={() => toggleCompany(company.companyId)}
+                            className="accent-primary w-3.5 h-3.5 rounded"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <span className="text-sm text-white group-hover:text-white/80 truncate">{company.name}</span>
+                            <span className={`text-xs ${theme.textMuted} ml-1.5`}>{company.industry}</span>
+                          </div>
+                          <span className={`text-xs font-mono ${theme.textMuted} shrink-0`}>
+                            {company.companyWallet.slice(0, 6)}…{company.companyWallet.slice(-4)}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Select all / none */}
+                  {activeCompanies.length > 1 && (
+                    <div className="flex gap-3">
+                      <button
+                        onClick={() => setSelectedCompanyIds(new Set(activeCompanies.map(c => c.companyId)))}
+                        className={`text-xs ${theme.textMuted} hover:text-white transition-colors`}
+                      >
+                        Select all
+                      </button>
+                      <button
+                        onClick={() => setSelectedCompanyIds(new Set())}
+                        className={`text-xs ${theme.textMuted} hover:text-white transition-colors`}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  )}
+
+                  <Input
+                    label="Amount per company (WLF)"
+                    type="number"
+                    min="0"
+                    value={companyAirdropAmount}
+                    onChange={e => setCompanyAirdropAmount(e.target.value)}
+                    placeholder="1000"
+                  />
+
+                  {selectedCompanyIds.size > 0 && companyAirdropAmount && (
+                    <p className={`text-xs font-mono ${theme.textMuted}`}>
+                      {selectedCompanyIds.size} operation{selectedCompanyIds.size > 1 ? 's' : ''} ·{' '}
+                      Total: {(selectedCompanyIds.size * parseFloat(companyAirdropAmount || '0')).toLocaleString()} WLF
+                    </p>
+                  )}
+
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={handleCompanyAirdropProposal}
+                    disabled={selectedCompanyIds.size === 0 || !companyAirdropAmount || parseFloat(companyAirdropAmount) <= 0 || !wlfAddress || isPending || isConfirming}
+                    loading={isPending || isConfirming}
+                  >
+                    Submit Company Airdrop Proposal
                   </Button>
                 </div>
 

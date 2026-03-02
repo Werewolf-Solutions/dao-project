@@ -13,6 +13,7 @@ import TokenSale from "@/pages/TokenSale";
 import DAO from "@/pages/DAO";
 import Staking from "@/pages/Staking";
 import Account from "@/pages/Account";
+import Companies from "@/pages/Companies";
 import ErrorPage from "@/pages/ErrorPage";
 import "./index.css";
 
@@ -31,6 +32,7 @@ const router = createBrowserRouter([
 			{ path: "/dao", element: <DAO /> },
 			{ path: "/staking", element: <Staking /> },
 			{ path: "/account", element: <Account /> },
+			{ path: "/companies-house", element: <Companies /> },
 		],
 	},
 ]);

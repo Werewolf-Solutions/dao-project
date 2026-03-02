@@ -68,24 +68,27 @@ type StakePosition = {
 // ── WLF Position Card ────────────────────────────────────────────────────────
 
 interface WlfPositionCardProps {
-  index:                  number;
-  pos:                    StakePosition;
-  apy:                    bigint | undefined;
-  positionTick:           number;
-  withdrawInput:          string;
-  onWithdrawInputChange:  (val: string) => void;
-  onWithdrawAll:          () => void;
-  onWithdrawAmount:       () => void;
-  onStakeMore:            () => void;
-  isWithdrawAllLoading:   boolean;
-  isWithdrawAmountLoading:boolean;
-  anyLoading:             boolean;
+  index:                    number;
+  pos:                      StakePosition;
+  apy:                      bigint | undefined;
+  positionTick:             number;
+  withdrawInput:            string;
+  onWithdrawInputChange:    (val: string) => void;
+  onWithdrawAll:            () => void;
+  onWithdrawAmount:         () => void;
+  onWithdrawRewards:        (reward: bigint) => void;
+  onStakeMore:              () => void;
+  isWithdrawAllLoading:     boolean;
+  isWithdrawAmountLoading:  boolean;
+  isWithdrawRewardsLoading: boolean;
+  anyLoading:               boolean;
 }
 
 function WlfPositionCard({
   index, pos, apy, positionTick,
   withdrawInput, onWithdrawInputChange, onWithdrawAll, onWithdrawAmount,
-  onStakeMore, isWithdrawAllLoading, isWithdrawAmountLoading, anyLoading,
+  onWithdrawRewards, onStakeMore,
+  isWithdrawAllLoading, isWithdrawAmountLoading, isWithdrawRewardsLoading, anyLoading,
 }: WlfPositionCardProps) {
   const now = BigInt(Math.floor(Date.now() / 1000));
   const isFixed   = pos.unlockAt > 0n;
@@ -185,10 +188,24 @@ function WlfPositionCard({
           </Button>
         </div>
 
+        {/* Withdraw rewards only (no principal) */}
+        {earned > 0n && canWithdraw && (
+          <Button
+            variant="secondary"
+            fullWidth
+            onClick={() => onWithdrawRewards(earned)}
+            loading={isWithdrawRewardsLoading}
+            disabled={anyLoading}
+            title="Withdraw only accrued rewards, keep principal staked"
+          >
+            Withdraw Rewards (~{fmt18(earned, 4)} WLF)
+          </Button>
+        )}
+
         {/* Withdraw all + Stake more */}
         <div className="flex gap-2">
           <Button
-            variant="secondary"
+            variant="danger"
             fullWidth
             onClick={onWithdrawAll}
             loading={isWithdrawAllLoading}
@@ -328,6 +345,7 @@ export default function Staking() {
   // ── Per-position withdraw inputs ────────────────────────────────────────
 
   const [posWithdrawInputs, setPosWithdrawInputs] = useState<Record<number, string>>({});
+  const [showRewardsBreakdown, setShowRewardsBreakdown] = useState(false);
 
   // ── WLF staking reads ────────────────────────────────────────────────────
 
@@ -553,6 +571,17 @@ export default function Staking() {
 
   const activePositions = (positions ?? []).filter((p) => p.active);
 
+  const hasUnlockedPositions = activePositions.some(
+    (p) => p.unlockAt === 0n || now >= p.unlockAt,
+  );
+
+  // Total rewards earned across all active positions (live, includes positionTick)
+  const totalEarned = activePositions.reduce((acc, pos) => {
+    const elapsed = now > pos.stakedAt ? (now - pos.stakedAt + BigInt(positionTick)) : BigInt(positionTick);
+    const e = apy && apy > 0n ? pos.assets * apy * elapsed / (31_536_000n * 100_000n) : 0n;
+    return acc + e;
+  }, 0n);
+
   // ── New position handlers ────────────────────────────────────────────────
 
   const handleApprove = () => {
@@ -588,6 +617,24 @@ export default function Staking() {
     if (amount <= 0n) return;
     setLastAction(`withdraw-${index}`);
     writeContract({ address: stakingAddress, abi: stakingABI, functionName: 'withdrawAmountFromPosition', args: [BigInt(index), amount] });
+  };
+
+  const handleWithdrawRewards = (index: number, rewardAmount: bigint) => {
+    if (!stakingAddress || rewardAmount <= 0n) return;
+    setLastAction(`withdraw-rewards-${index}`);
+    writeContract({ address: stakingAddress, abi: stakingABI, functionName: 'withdrawAmountFromPosition', args: [BigInt(index), rewardAmount] });
+  };
+
+  const handleWithdrawAllBulk = () => {
+    if (!stakingAddress) return;
+    setLastAction('withdraw-all-bulk');
+    writeContract({ address: stakingAddress, abi: stakingABI, functionName: 'withdrawAll' });
+  };
+
+  const handleWithdrawAllAndStake = () => {
+    if (!stakingAddress) return;
+    setLastAction('withdraw-all-stake');
+    writeContract({ address: stakingAddress, abi: stakingABI, functionName: 'withdrawAllAndStakeFlexible' });
   };
 
   // ── LP handlers ──────────────────────────────────────────────────────────
@@ -658,7 +705,89 @@ export default function Staking() {
             }
           />
           <Row label="WLF in wallet"           value={`${fmt18(wlfWalletBalance)} WLF`} />
+          {/* ── Combined rewards row with per-position breakdown dropdown ── */}
+          {(totalEarned > 0n || displayReward > 0n) && (() => {
+            const combinedRewards = totalEarned + displayReward;
+            return (
+              <>
+                <Row
+                  label="Total rewards earned"
+                  value={
+                    <span className="flex items-center gap-2">
+                      <span className="font-mono font-semibold" style={{ color: '#52b788' }}>
+                        +{fmt18(combinedRewards, 6)} WLF
+                      </span>
+                      <button
+                        onClick={() => setShowRewardsBreakdown((v) => !v)}
+                        className="text-xs px-1.5 py-0.5 rounded transition-colors"
+                        style={{ color: theme.textMuted, border: '1px solid rgba(255,255,255,0.15)' }}
+                        title="Show per-position breakdown"
+                      >
+                        {showRewardsBreakdown ? '▴' : '▾'}
+                      </button>
+                    </span>
+                  }
+                />
+                {showRewardsBreakdown && (
+                  <div
+                    className="mt-1 mb-1 space-y-0.5 pl-3 py-1.5 rounded"
+                    style={{ borderLeft: '2px solid rgba(82,183,136,0.3)', background: 'rgba(82,183,136,0.04)' }}
+                  >
+                    {activePositions.map((pos, i) => {
+                      const trueIdx = (positions ?? []).findIndex((p) => p === pos);
+                      const idx = trueIdx >= 0 ? trueIdx : i;
+                      const elapsed = now > pos.stakedAt
+                        ? (now - pos.stakedAt + BigInt(positionTick))
+                        : BigInt(positionTick);
+                      const e = apy && apy > 0n
+                        ? pos.assets * apy * elapsed / (31_536_000n * 100_000n)
+                        : 0n;
+                      const isFixed = pos.unlockAt > 0n;
+                      const typeLabel = isFixed
+                        ? `Fixed · ${bonusApyToMultiplierLabel(pos.bonusApy)}`
+                        : 'Flexible';
+                      return (
+                        <Row
+                          key={idx}
+                          label={<span style={{ color: theme.textMuted }}>#{idx + 1} {typeLabel}</span>}
+                          value={<span className="font-mono text-xs" style={{ color: '#52b788' }}>+{fmt18(e, 6)} WLF</span>}
+                        />
+                      );
+                    })}
+                    {displayReward > 0n && (
+                      <Row
+                        label={<span style={{ color: theme.textMuted }}>LP staking</span>}
+                        value={<span className="font-mono text-xs" style={{ color: '#52b788' }}>+{fmt18(displayReward, 6)} WLF</span>}
+                      />
+                    )}
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </div>
+        {activePositions.length > 0 && (
+          <div className="mt-4 flex gap-2">
+            <Button
+              variant="danger"
+              fullWidth
+              onClick={handleWithdrawAllBulk}
+              loading={isLoading && lastAction === 'withdraw-all-bulk'}
+              disabled={isLoading || !hasUnlockedPositions}
+            >
+              Withdraw All
+            </Button>
+            <Button
+              variant="success"
+              fullWidth
+              onClick={handleWithdrawAllAndStake}
+              loading={isLoading && lastAction === 'withdraw-all-stake'}
+              disabled={isLoading || !hasUnlockedPositions}
+            >
+              Withdraw &amp; Stake Flexible
+            </Button>
+          </div>
+        )}
       </Card>
 
       {/* ── Tab bar ── */}
@@ -714,19 +843,15 @@ export default function Staking() {
                     }
                     onWithdrawAll={() => handleWithdrawAll(idx)}
                     onWithdrawAmount={() => handleWithdrawAmount(idx)}
+                    onWithdrawRewards={(reward) => handleWithdrawRewards(idx, reward)}
                     onStakeMore={() => {
-                      // Pre-select the same type in new position form and scroll
-                      if (pos.unlockAt === 0n) {
-                        setSelectedDuration(DURATIONS[0]);
-                      } else {
-                        const durSecs = Number(pos.unlockAt - pos.stakedAt);
-                        const match = DURATIONS.find((d) => d.seconds === durSecs);
-                        if (match) setSelectedDuration(match);
-                      }
+                      // Stake More always opens flexible form
+                      setSelectedDuration(DURATIONS[0]);
                       newPositionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
                     }}
                     isWithdrawAllLoading={isLoading && lastAction === `withdraw-all-${idx}`}
                     isWithdrawAmountLoading={isLoading && lastAction === `withdraw-${idx}`}
+                    isWithdrawRewardsLoading={isLoading && lastAction === `withdraw-rewards-${idx}`}
                     anyLoading={isLoading}
                   />
                 );
@@ -838,9 +963,7 @@ export default function Staking() {
                       <span className="w-16 font-semibold" style={{ color: isActive ? '#52b788' : 'white' }}>
                         {row.base.toFixed(2)}%
                       </span>
-                      <span className="flex-1 text-right text-xs" style={{ color: theme.textMuted }}>
-                        1.05x…3x APY (fixed)
-                      </span>
+                      <span className="flex-1" />
                       {isActive && <span className="font-bold" style={{ color: '#52b788' }}>← now</span>}
                     </div>
                   );
@@ -913,11 +1036,6 @@ export default function Staking() {
                       disabled={isLpLoading || isCompoundPending || isCompoundConfirming || !displayReward || displayReward === 0n}>
                       Stake WLF (Flexible)
                     </Button>
-                    <Button variant="secondary" fullWidth onClick={() => handleLpCompoundRewards(true)}
-                      loading={(isCompoundPending || isCompoundConfirming) && lastLpAction === 'compound-fixed'}
-                      disabled={isLpLoading || isCompoundPending || isCompoundConfirming || !displayReward || displayReward === 0n}>
-                      Stake WLF (Fixed 30d)
-                    </Button>
                   </div>
                 </div>
 
@@ -939,8 +1057,7 @@ export default function Staking() {
 
               <p className={`text-xs mt-4 ${theme.textMuted}`}>
                 Rewards accrue continuously. <strong>Withdraw to Wallet</strong> sends WLF to your address.{' '}
-                <strong>Stake WLF (Flexible)</strong> stakes with no lock.{' '}
-                <strong>Stake WLF (Fixed 30d)</strong> locks for 30 days and earns +5% APY bonus.
+                <strong>Stake WLF (Flexible)</strong> compounds rewards into a new flexible WLF staking position.
                 Withdrawing LP shares does <strong>not</strong> auto-claim rewards — always claim first.
                 LP shares are locked for 5 years from sale end.
               </p>

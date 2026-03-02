@@ -95,8 +95,8 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
     ///////////////////////////////////////
     //           Constants              //
     ///////////////////////////////////////
-    uint256 public constant MIN_APY = 8_000;           // 8% (higher due to IL risk)
-    uint256 public constant MAX_APY = 80_000;           // 80%
+    uint256 public constant MIN_APY = 80;              // 0.08% (higher due to IL risk)
+    uint256 public constant MAX_APY = 800;              // 0.8%
     uint256 public constant LOCKED_STAKE_BONUS_APY = 5_000; // 5%
     uint256 public constant PERCENTAGE_SCALE = 1e5;
     uint256 public constant SCALE = 1e18;
@@ -375,16 +375,15 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
     }
 
     /**
-     * @notice Claim accumulated rewards
+     * @notice Claim accumulated rewards.
+     * @dev Uses wlfToken.payEmployee to source WLF from the authorized treasury allocation,
+     *      avoiding the need for LPStaking to hold a WLF balance prior to trading fees accumulating.
      */
     function claimRewards() external updateReward(msg.sender) {
         uint256 reward = rewards[msg.sender];
         if (reward > 0) {
             rewards[msg.sender] = 0;
-            require(
-                wlfToken.transfer(msg.sender, reward),
-                "LPStaking: Reward transfer failed"
-            );
+            wlfToken.payEmployee(msg.sender, reward);
             emit RewardsDistributed(msg.sender, reward);
         }
     }
@@ -399,6 +398,8 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
         require(reward > 0, "LPStaking: No rewards to compound");
         rewards[msg.sender] = 0;
 
+        // Pull WLF into this contract first via payEmployee, then forward to staking vault
+        wlfToken.payEmployee(address(this), reward);
         IERC20(address(wlfToken)).approve(stakingVault, reward);
         if (fixedDuration) {
             IStakingVault(stakingVault).stakeFixedDuration(msg.sender, reward);

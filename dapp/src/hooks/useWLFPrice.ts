@@ -77,7 +77,7 @@ export function useWLFPrice(): number | null {
     functionName: 'slot0',
     query: {
       enabled: !!validPool,
-      refetchInterval: 30_000,
+      refetchInterval: 60_000,
     },
   });
 

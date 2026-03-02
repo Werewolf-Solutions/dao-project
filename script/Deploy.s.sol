@@ -112,6 +112,7 @@ contract Deploy is Script {
             treasury.setSwapRouter(netConfig.swapRouter, netConfig.usdt, 500);
         }
 
+
         // Transfer ownership to Timelock
         werewolfToken.transferOwnership(address(timelock));
         treasury.transferOwnership(address(timelock));
@@ -119,6 +120,9 @@ contract Deploy is Script {
 
         // Wire Staking.treasury while founder is still Timelock admin
         _setStakingTreasury();
+
+        // Authorize LPStaking and CompaniesHouse to call werewolfToken.payEmployee
+        _authorizePayEmployeeCallers();
 
         // Transfer Timelock admin to DAO (must be last action as founder)
         _setTimelockAdmin();
@@ -145,6 +149,25 @@ contract Deploy is Script {
         dao.__acceptAdmin();
 
         console.log("Timelock admin transferred to DAO. Timelock.delay =", timelock.delay());
+    }
+
+    /**
+     * @dev Authorizes LPStaking and CompaniesHouse to call werewolfToken.payEmployee().
+     *      _authorizeCaller is onlyTimelock, so we queue+execute via Timelock (delay=0 on testnet).
+     *      Must be called BEFORE _setTimelockAdmin() while founder is still Timelock admin.
+     */
+    function _authorizePayEmployeeCallers() internal {
+        uint256 eta = block.timestamp;
+
+        bytes memory lpCallData = abi.encode(address(lpStaking));
+        timelock.queueTransaction(address(werewolfToken), "_authorizeCaller(address)", lpCallData, eta);
+        timelock.executeTransaction(address(werewolfToken), "_authorizeCaller(address)", lpCallData, eta);
+
+        bytes memory chCallData = abi.encode(address(companiesHouse));
+        timelock.queueTransaction(address(werewolfToken), "_authorizeCaller(address)", chCallData, eta);
+        timelock.executeTransaction(address(werewolfToken), "_authorizeCaller(address)", chCallData, eta);
+
+        console.log("Authorized LPStaking and CompaniesHouse as WLF payEmployee callers");
     }
 
     /**
@@ -198,7 +221,11 @@ contract Deploy is Script {
             address(werewolfToken),
             address(treasury),
             address(dao),
-            address(tokenSale)
+            address(tokenSale),
+            address(timelock),         // admin — Timelock controls company treasury admin functions
+            netConfig.usdt,            // USDT token for employee payouts
+            netConfig.swapRouter,      // Uniswap V3 router (address(0) on local chain)
+            netConfig.minReserveMonths // 1 local / 3 testnet / 60 mainnet
         );
         TransparentUpgradeableProxy companiesHouseProxy = new TransparentUpgradeableProxy(
                 address(companiesHouseImpl),

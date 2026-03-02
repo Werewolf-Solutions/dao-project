@@ -5,6 +5,7 @@ import { parseUnits, formatUnits, formatEther } from 'viem';
 import { tokenSaleABI, erc20ABI, getAddress } from '@/contracts';
 import { useChain } from '@/contexts/ChainContext';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useWLFPrice } from '@/hooks/useWLFPrice';
 import { PageContainer } from '@/components/PageContainer';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
@@ -117,11 +118,31 @@ export default function TokenSale() {
     query: { enabled: !!tokenSaleAddress },
   });
 
+  const { data: usdtCollected } = useReadContract({
+    address: tokenSaleAddress,
+    abi: tokenSaleABI,
+    functionName: 'saleUSDTCollected',
+    args: [saleIdCounter ?? 0n],
+    query: { enabled: !!tokenSaleAddress && saleIdCounter !== undefined, refetchInterval: 10_000 },
+  });
+
+  const { data: usdtWlfCollected } = useReadContract({
+    address: tokenSaleAddress,
+    abi: tokenSaleABI,
+    functionName: 'saleUSDTWLFCollected',
+    args: [saleIdCounter ?? 0n],
+    query: { enabled: !!tokenSaleAddress && saleIdCounter !== undefined, refetchInterval: 10_000 },
+  });
+
   // ── Writes ─────────────────────────────────────────────────────────────────
 
-  const { writeContract: writeApprove, data: approveTxHash, isPending: isApprovePending } = useWriteContract();
-  const { writeContract: writeBuy, data: buyTxHash, isPending: isBuyPending } = useWriteContract();
-  const { writeContract: writeEndSale, data: endSaleTxHash, isPending: isEndSalePending } = useWriteContract();
+  const [approveTxHash, setApproveTxHash] = useState<`0x${string}` | undefined>();
+  const [buyTxHash, setBuyTxHash] = useState<`0x${string}` | undefined>();
+  const [endSaleTxHash, setEndSaleTxHash] = useState<`0x${string}` | undefined>();
+
+  const { writeContract: writeApprove, isPending: isApprovePending } = useWriteContract();
+  const { writeContract: writeBuy, isPending: isBuyPending } = useWriteContract();
+  const { writeContract: writeEndSale, isPending: isEndSalePending } = useWriteContract();
 
   const { isLoading: isApproveConfirming, isSuccess: isApproveConfirmed } = useWaitForTransactionReceipt({ hash: approveTxHash });
   const { isLoading: isBuyConfirming, isSuccess: isBuyConfirmed } = useWaitForTransactionReceipt({ hash: buyTxHash });
@@ -145,6 +166,40 @@ export default function TokenSale() {
   useEffect(() => {
     if (isEndSaleConfirmed) void refetchSaleLPCreated();
   }, [isEndSaleConfirmed, refetchSaleLPCreated]);
+
+  // ── Pool price & LP split estimate ─────────────────────────────────────────
+
+  const poolPrice = useWLFPrice(); // human USDT per WLF, or null
+
+  const lpSplitEstimate = (() => {
+    if (poolPrice === null || poolPrice === 0) return null;
+    const wlfHuman  = Number(formatEther(usdtWlfCollected ?? 0n));   // WLF (18 dec → float)
+    const usdtHuman = Number(formatUnits(usdtCollected ?? 0n, 6));   // USDT (6 dec → float)
+    if (wlfHuman === 0 && usdtHuman === 0) return null;
+
+    const usdtNeeded = wlfHuman * poolPrice; // USDT needed to pair all WLF at pool price
+
+    if (usdtHuman >= usdtNeeded) {
+      // Excess USDT → Treasury; all WLF goes to LP
+      return {
+        lpWlf:  wlfHuman,
+        lpUsdt: usdtNeeded,
+        treasuryWlf:  0,
+        treasuryUsdt: usdtHuman - usdtNeeded,
+        excessToken: 'USDT' as const,
+      };
+    } else {
+      // Excess WLF → Treasury; all USDT goes to LP
+      const wlfNeeded = usdtHuman / poolPrice;
+      return {
+        lpWlf:  wlfNeeded,
+        lpUsdt: usdtHuman,
+        treasuryWlf:  wlfHuman - wlfNeeded,
+        treasuryUsdt: 0,
+        excessToken: 'WLF' as const,
+      };
+    }
+  })();
 
   // ── Derived values ─────────────────────────────────────────────────────────
 
@@ -190,19 +245,19 @@ export default function TokenSale() {
 
   const handleEndSale = () => {
     if (!tokenSaleAddress) return showMessage('Contract not found on this network.');
-    writeEndSale({ address: tokenSaleAddress, abi: tokenSaleABI, functionName: 'endSale', args: [] });
+    writeEndSale(
+      { address: tokenSaleAddress, abi: tokenSaleABI, functionName: 'endSale', args: [] },
+      { onSuccess: (hash) => setEndSaleTxHash(hash) },
+    );
   };
 
   const handleApprove = () => {
     if (!usdtAddress || !tokenSaleAddress) return showMessage('Contracts not found on this network.');
-    // Approve max so the user only needs to approve once
     const maxUint256 = BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff');
-    writeApprove({
-      address: usdtAddress,
-      abi: erc20ABI,
-      functionName: 'approve',
-      args: [tokenSaleAddress, maxUint256],
-    });
+    writeApprove(
+      { address: usdtAddress, abi: erc20ABI, functionName: 'approve', args: [tokenSaleAddress, maxUint256] },
+      { onSuccess: (hash) => setApproveTxHash(hash) },
+    );
   };
 
   const handleBuyUsdt = () => {
@@ -210,13 +265,15 @@ export default function TokenSale() {
     if (!saleActive) return showMessage('Sale is not active.');
     if (amountWei <= 0n) return showMessage('Enter a valid amount.');
     if (!hasEnoughUsdt) return showMessage('Insufficient USDT balance.');
-    writeBuy({
-      address: tokenSaleAddress,
-      abi: tokenSaleABI,
-      functionName: 'buyTokens',
-      // _amount = WLF wei, amount0Desired = WLF wei, amount1Desired = USDT 6-dec
-      args: [amountWei, amountWei, usdtCost],
-    });
+    writeBuy(
+      {
+        address: tokenSaleAddress,
+        abi: tokenSaleABI,
+        functionName: 'buyTokens',
+        args: [amountWei, amountWei, usdtCost],
+      },
+      { onSuccess: (hash) => setBuyTxHash(hash) },
+    );
   };
 
   // ── Guards ─────────────────────────────────────────────────────────────────
@@ -244,15 +301,31 @@ export default function TokenSale() {
       <Card title="Token Sale">
         {/* ── How it works ── */}
         <div
-          className="rounded-lg p-4 mb-6 border text-sm space-y-2"
+          className="rounded-lg p-4 mb-6 border text-sm space-y-3"
           style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.03)' }}
         >
           <p className="font-semibold text-white">How it works</p>
-          <ol className="list-decimal list-inside space-y-1" style={{ color: theme.textMuted }}>
-            <li>You pay USDT — your payment is held alongside WLF tokens in the contract.</li>
-            <li>After the sale ends, the pooled funds create a <strong className="text-white">Uniswap v3 LP position</strong> (WLF/USDT).</li>
-            <li>You claim <strong className="text-white">LP staking shares</strong> on the Staking page, proportional to your purchase.</li>
-            <li>Shares earn <strong className="text-white">WLF rewards continuously</strong> — same APY as WLF staking, locked 5 years.</li>
+          <ol className="list-decimal list-inside space-y-2" style={{ color: theme.textMuted }}>
+            <li>
+              You pay USDT — it is held in the sale contract alongside the matching WLF tokens until the sale closes.
+            </li>
+            <li>
+              When the sale ends, the pooled USDT and WLF are deposited together into a{' '}
+              <strong className="text-white">Uniswap v3 WLF/USDT liquidity position</strong>.
+              This is what creates (and deepens) the on-chain market for WLF.
+            </li>
+            <li>
+              Any small remainder of USDT or WLF that could not be perfectly paired — due to the current
+              Uniswap pool price ratio — is forwarded to the{' '}
+              <strong className="text-white">DAO Treasury</strong> rather than being wasted.
+            </li>
+            <li>
+              LP staking shares are automatically distributed to every buyer proportional to their USDT paid,
+              locked for <strong className="text-white">5 years</strong>.
+            </li>
+            <li>
+              Those shares earn <strong className="text-white">WLF rewards continuously</strong> — at the same APY as direct WLF staking.
+            </li>
           </ol>
         </div>
 
@@ -303,6 +376,91 @@ export default function TokenSale() {
             )}
           </div>
         </div>
+
+        {/* ── LP split estimate ── */}
+        {(usdtCollected !== undefined || poolPrice !== null) && (
+          <div
+            className="rounded-lg p-4 mb-6 border text-sm space-y-3"
+            style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.03)' }}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <p className="font-semibold text-white">Estimated distribution at sale end</p>
+              {poolPrice !== null ? (
+                <span className="text-xs font-mono px-2 py-0.5 rounded-full border border-white/10 text-white/50">
+                  Pool: ${poolPrice < 0.001 ? poolPrice.toFixed(6) : poolPrice.toFixed(4)} / WLF
+                </span>
+              ) : (
+                <span className="text-xs text-white/30 italic">No pool yet</span>
+              )}
+            </div>
+
+            {/* Collected totals */}
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                <p className="text-xs text-white/40 mb-0.5">Collected USDT</p>
+                <p className="font-mono text-white text-sm">${fmt6(usdtCollected ?? 0n, 2)}</p>
+              </div>
+              <div className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                <p className="text-xs text-white/40 mb-0.5">Paired WLF</p>
+                <p className="font-mono text-white text-sm">{fmt18(usdtWlfCollected ?? 0n, 0)}</p>
+              </div>
+            </div>
+
+            {lpSplitEstimate ? (
+              <div className="space-y-2">
+                {/* Uniswap LP row */}
+                <div className="flex items-start gap-2.5">
+                  <span className="mt-0.5 text-xs font-bold px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-300 border border-blue-700/40 shrink-0">LP</span>
+                  <div>
+                    <p style={{ color: theme.textMuted }} className="text-xs">
+                      → Uniswap v3 WLF/USDT position
+                    </p>
+                    <p className="text-sm font-mono text-white">
+                      {lpSplitEstimate.lpWlf.toLocaleString(undefined, { maximumFractionDigits: 0 })} WLF
+                      {' + '}
+                      ${lpSplitEstimate.lpUsdt.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT
+                    </p>
+                  </div>
+                </div>
+
+                {/* Treasury row */}
+                <div className="flex items-start gap-2.5">
+                  <span className="mt-0.5 text-xs font-bold px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300 border border-amber-700/40 shrink-0">DAO</span>
+                  <div>
+                    <p style={{ color: theme.textMuted }} className="text-xs">
+                      → Treasury (unpaired remainder)
+                    </p>
+                    {lpSplitEstimate.excessToken === 'USDT' ? (
+                      <p className="text-sm font-mono text-white">
+                        ${lpSplitEstimate.treasuryUsdt.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT
+                        {lpSplitEstimate.treasuryUsdt < 0.01 && (
+                          <span className="text-xs text-white/40 ml-1">(negligible)</span>
+                        )}
+                      </p>
+                    ) : (
+                      <p className="text-sm font-mono text-white">
+                        {lpSplitEstimate.treasuryWlf.toLocaleString(undefined, { maximumFractionDigits: 0 })} WLF
+                        {lpSplitEstimate.treasuryWlf < 1 && (
+                          <span className="text-xs text-white/40 ml-1">(negligible)</span>
+                        )}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <p className="text-xs text-white/25 pt-1">
+                  * Estimate based on current pool price. Actual amounts depend on pool price at the moment <code>endSale()</code> is executed.
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs text-white/30 italic">
+                {poolPrice === null
+                  ? 'No active WLF/USDT pool — the sale will seed the initial Uniswap price.'
+                  : 'No funds collected yet.'}
+              </p>
+            )}
+          </div>
+        )}
 
         {/* ── Wallet balances ── */}
         <div className="space-y-0.5 mb-6">

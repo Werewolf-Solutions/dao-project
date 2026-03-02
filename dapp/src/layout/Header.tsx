@@ -13,6 +13,7 @@ const NAV_LINKS = [
   { to: '/dao', label: 'DAO' },
   { to: '/staking', label: 'Staking' },
   { to: '/account', label: 'Account' },
+  { to: '/companies-house', label: 'Companies' },
 ];
 
 export default function Header() {

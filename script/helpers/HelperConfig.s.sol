@@ -18,6 +18,7 @@ contract HelperConfig is Script, Constants {
         address usdt;
         address positionManager;  // Uniswap v3 NonfungiblePositionManager
         address swapRouter;       // Uniswap v3 SwapRouter (address(0) on local)
+        uint256 minReserveMonths; // USDT reserve threshold: 3 for testnet, 60 for mainnet
         address weth;             // WETH9 / Wrapped Ether
         uint256 timelockDelay;    // 0 for local/testnet; 2 days for mainnet
     }
@@ -78,7 +79,8 @@ contract HelperConfig is Script, Constants {
             positionManager: positionManager,
             swapRouter: swapRouterAddr,
             weth: weth,
-            timelockDelay: 0
+            timelockDelay: 0,
+            minReserveMonths: 3  // 3-month reserve for testnet (DAO can raise to 60 via proposal)
         });
     }
 
@@ -101,7 +103,8 @@ contract HelperConfig is Script, Constants {
             positionManager: positionManager,
             swapRouter: address(0),  // No real SwapRouter on local chain
             weth: weth,
-            timelockDelay: 0
+            timelockDelay: 0,
+            minReserveMonths: 1  // 1-month reserve for local testing
         });
     }
 }

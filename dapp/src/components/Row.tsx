@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
 
 interface RowProps {
-  label: string;
+  label: ReactNode;
   value: ReactNode;
 }
 

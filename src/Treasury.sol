@@ -188,4 +188,17 @@ contract Treasury is OwnableUpgradeable {
 
         emit WLFBuyback(usdtAmount, wlfReceived);
     }
+
+    /**
+     * @notice Transfers any ERC20 token held by the Treasury to a recipient.
+     * @dev onlyOwner (= Timelock). Used by DAO proposals to fund company treasuries:
+     *      step 1 — treasury.withdrawToken(usdt, X, address(companiesHouse))
+     *      step 2 — companiesHouse.creditToCompany(companyId, usdt, X)
+     * @param token ERC20 token to transfer
+     * @param amount Amount to transfer (token decimals)
+     * @param to Recipient address
+     */
+    function withdrawToken(address token, uint256 amount, address to) external onlyOwner {
+        IERC20(token).transfer(to, amount);
+    }
 }

@@ -8,6 +8,20 @@ import "./WerewolfTokenV1.sol";
 import "./DAO.sol";
 import "./TokenSale.sol";
 
+interface IV3SwapRouter {
+    struct ExactInputSingleParams {
+        address tokenIn;
+        address tokenOut;
+        uint24  fee;
+        address recipient;
+        uint256 deadline;
+        uint256 amountIn;
+        uint256 amountOutMinimum;
+        uint160 sqrtPriceLimitX96;
+    }
+    function exactInputSingle(ExactInputSingleParams calldata params) external returns (uint256 amountOut);
+}
+
 //for future use
 import "./interfaces/ITreasury.sol";
 import "./interfaces/IWerewolfTokenV1.sol";
@@ -36,8 +50,8 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
     /**
      * @notice A single salary stream within an employee's compensation package.
      * @dev Salary is denominated in USDT with 6 decimal places (e.g., $500/month
-     *      ≈ 684_931 USDT-wei per hour). WLF amount is computed at pay time using
-     *      the TokenSale price, so the WLF payout automatically adjusts as price moves.
+     *      ≈ 684_931 USDT-wei per hour). USDT is sent directly from the company's
+     *      internal balance at pay time.
      */
     struct SalaryItem {
         string role;
@@ -107,29 +121,51 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
     mapping(address employee => mapping(uint96 companyId => EmployeeBrief))
         public employeeBrief;
 
+    /// @notice Per-company ERC20 token balances held inside this contract
+    mapping(uint96 companyId => mapping(address token => uint256)) public companyTokenBalances;
+
     WerewolfTokenV1 private werewolfToken;
     TokenSale public tokenSale;
     DAO public dao;
     Treasury public treasury;
+    address public usdtAddress;
     bytes32 public constant STAFF_ROLE = keccak256("CEO");
     uint96 public currentCompanyIndex;
     uint96 public deletedCompanies;
     uint256 public creationFee;
     address public treasuryAddress;
 
+    /// @notice Months of payroll USDT the company must always keep in reserve (default: 60 = 5 years)
+    uint256 public minReserveMonths;
+    /// @notice Privileged admin address — set to Timelock on deploy so DAO can manage via proposals
+    address public admin;
+    /// @notice Uniswap V3 SwapRouter address used to buy WLF when company has no WLF balance
+    address public swapRouter;
+
     ///////////////////////////////////////
     //           Events                  //
     ///////////////////////////////////////
     event EmployeeHired(address indexed employee);
     event EmployeeFired(address indexed employee);
-    event EmployeePaid(address indexed employee, uint256 wlfAmount);
+    /// @param usdtAmount USDT (6 dec) transferred to the employee
+    event EmployeePaid(address indexed employee, uint256 usdtAmount);
     event RoleAdded(address indexed employee, uint96 indexed companyId, string role);
     event CompanyCreated(address indexed owner, uint96 indexed companyId);
     event CompanyDeleted(address indexed owner, uint96 indexed companyId);
+    /// @param companyId The company whose treasury was funded
+    /// @param token ERC20 token address deposited
+    /// @param amount Amount deposited (token decimals)
+    event CompanyFunded(uint96 indexed companyId, address indexed token, uint256 amount);
 
     ///////////////////////////////////////
     //           Modifiers               //
     ///////////////////////////////////////
+
+    modifier onlyAdmin() {
+        require(msg.sender == admin, "CompaniesHouse: not admin");
+        _;
+    }
+
     modifier onlyRoleWithPower(uint96 _companyId) {
         EmployeeBrief memory empBrief = employeeBrief[msg.sender][_companyId];
         require(empBrief.isMember, "Not an employee of this company");
@@ -166,21 +202,129 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
      * @param _treasuryAddress address where all fees are sent
      * @param _daoAddress DAO contract address
      * @param tokenSaleAddress TokenSale contract address
+     * @param _admin privileged admin address (set to Timelock so DAO controls admin functions)
+     * @param _usdtAddress USDT token contract address
+     * @param _swapRouter Uniswap V3 SwapRouter address (address(0) on local chain)
+     * @param _minReserveMonths months of payroll USDT the company must keep in reserve (e.g. 3 for testnet, 60 for mainnet)
      */
     function initialize(
         address _token,
         address _treasuryAddress,
         address _daoAddress,
-        address tokenSaleAddress
+        address tokenSaleAddress,
+        address _admin,
+        address _usdtAddress,
+        address _swapRouter,
+        uint256 _minReserveMonths
     ) public initializer {
         werewolfToken = WerewolfTokenV1(_token);
         dao = DAO(_daoAddress);
         tokenSale = TokenSale(payable(tokenSaleAddress));
-        treasuryAddress = _treasuryAddress;      // assign first (Bug 1 fix)
-        treasury = Treasury(_treasuryAddress);   // then use the assigned value
-
+        treasuryAddress = _treasuryAddress;
+        treasury = Treasury(_treasuryAddress);
+        usdtAddress = _usdtAddress;
+        admin = _admin;
+        swapRouter = _swapRouter;
+        minReserveMonths = _minReserveMonths;
         creationFee = 10e18;
         currentCompanyIndex = 1;
+    }
+
+    ///////////////////////////////////////
+    //         External Functions        //
+    ///////////////////////////////////////
+
+    /**
+     * @notice Deposits ERC20 tokens into a company's internal treasury.
+     * @dev Anyone can fund a company. Pulls tokens from msg.sender via transferFrom.
+     *      Requires prior ERC20 approval from msg.sender to this contract.
+     * @param companyId The company to fund
+     * @param token The ERC20 token to deposit
+     * @param amount Amount to deposit (token decimals)
+     */
+    function depositToCompany(uint96 companyId, address token, uint256 amount) external {
+        require(companyBrief[companyId].owner != address(0), "CompaniesHouse: company not found");
+        IERC20(token).transferFrom(msg.sender, address(this), amount);
+        companyTokenBalances[companyId][token] += amount;
+        emit CompanyFunded(companyId, token, amount);
+    }
+
+    /**
+     * @notice Credits tokens already sent directly to this contract into a company's balance.
+     * @dev onlyAdmin (= Timelock). Used by DAO airdrop proposals:
+     *      step 1 — treasury.withdrawToken(usdt, X, address(companiesHouse))
+     *      step 2 — companiesHouse.creditToCompany(companyId, usdt, X)
+     *      No token transfer happens here — tokens must already be in this contract.
+     * @param companyId The company to credit
+     * @param token The ERC20 token to credit
+     * @param amount Amount to credit (token decimals)
+     */
+    function creditToCompany(uint96 companyId, address token, uint256 amount) external onlyAdmin {
+        require(companyBrief[companyId].owner != address(0), "CompaniesHouse: company not found");
+        companyTokenBalances[companyId][token] += amount;
+        emit CompanyFunded(companyId, token, amount);
+    }
+
+    /**
+     * @notice Updates the minimum reserve duration companies must maintain.
+     * @dev onlyAdmin. DAO can adjust this via governance proposal through Timelock.
+     * @param months Number of months of payroll USDT that must remain after any payment
+     */
+    function setMinReserveMonths(uint256 months) external onlyAdmin {
+        minReserveMonths = months;
+    }
+
+    /**
+     * @notice Transfers the admin role to a new address.
+     * @dev onlyAdmin. Used to hand off control (e.g., founder → Timelock → new Timelock).
+     */
+    function setAdmin(address _admin) external onlyAdmin {
+        admin = _admin;
+    }
+
+    /**
+     * @notice Sets the Uniswap V3 SwapRouter address used to buy WLF for employee payments.
+     * @dev onlyAdmin. Required before payEmployee can fall back to the Uniswap swap path.
+     */
+    function setSwapRouter(address _swapRouter) external onlyAdmin {
+        swapRouter = _swapRouter;
+    }
+
+    /**
+     * @notice Pays all active employees in a company in one transaction.
+     * @dev Performs a single reserve check against the total batch amount before paying
+     *      anyone, so the balance drawdown from earlier payments does not block later ones.
+     */
+    function payEmployees(uint96 _companyId) external {
+        CompanyBrief memory compBrief = companyBrief[_companyId];
+        require(_isAuthorized(msg.sender, _companyId), "Not authorized to pay employees in this company");
+
+        Employee[] storage employees = ownerToCompanies[compBrief.owner][compBrief.index].employees;
+
+        // ── 1. Sum total USDT owed across all active employees ───────────────
+        uint256 totalUSDTAll;
+        for (uint256 i = 0; i < employees.length; i++) {
+            if (!employees[i].active) continue;
+            for (uint256 j = 0; j < employees[i].salaryItems.length; j++) {
+                uint256 payPeriod = block.timestamp - employees[i].salaryItems[j].lastPayDate;
+                totalUSDTAll += (payPeriod * employees[i].salaryItems[j].salaryPerHour) / 1 hours;
+            }
+        }
+        if (totalUSDTAll == 0) return;
+
+        // ── 2. Single reserve check for the whole batch ──────────────────────
+        uint256 minReserve = getMonthlyBurnUSDT(_companyId) * minReserveMonths;
+        require(
+            companyTokenBalances[_companyId][usdtAddress] >= totalUSDTAll + minReserve,
+            "CompaniesHouse: below minimum reserve threshold"
+        );
+
+        // ── 3. Pay each employee (no per-employee reserve re-check) ─────────
+        for (uint256 i = 0; i < employees.length; i++) {
+            if (employees[i].active && _hasPendingPay(employees[i])) {
+                _payEmployeeUSDT(employees[i], _companyId);
+            }
+        }
     }
 
     ///////////////////////////////////////
@@ -276,7 +420,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
      */
     function hireEmployee(HireEmployee memory _hireParams) public {
         CompanyBrief memory compBrief = companyBrief[_hireParams.companyId];
-        require(msg.sender == compBrief.owner, "Only owner of the company can hire employee");
+        require(_isAuthorized(msg.sender, _hireParams.companyId), "Not authorized to hire in this company");
 
         CompanyStruct storage compPtr = ownerToCompanies[compBrief.owner][compBrief.index];
         _validateSalaryItemRoles(_hireParams.salaryItems, compPtr.roles);
@@ -301,7 +445,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         SalaryItem memory _item
     ) public {
         CompanyBrief memory compBrief = companyBrief[_companyId];
-        require(compBrief.owner == msg.sender, "CompaniesHouse:addRoleToEmployee not owner");
+        require(_isAuthorized(msg.sender, _companyId), "Not authorized to add roles in this company");
 
         EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
         require(empBrief.isMember, "CompaniesHouse:addRoleToEmployee not a member");
@@ -324,7 +468,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
      */
     function fireEmployee(address _employeeAddress, uint96 _companyId) public {
         CompanyBrief memory compBrief = companyBrief[_companyId];
-        require(compBrief.owner == msg.sender, "CompaniesHouse:fireEmployee not owner");
+        require(_isAuthorized(msg.sender, _companyId), "Not authorized to fire employees in this company");
 
         EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
         require(empBrief.isMember, "CompaniesHouse:fireEmployee not a member");
@@ -336,12 +480,19 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
     }
 
     /**
-     * @notice Pays all pending salary to an employee across all their salary streams.
-     * @dev Salary is denominated in USDT; WLF amount is calculated at pay time using
-     *      tokenSale.price(). Formula: wlf = usdt_6dec * 10^30 / price_18dec.
-     *      Anyone can trigger payment — the WLF goes to the employee's payableAddress.
+     * @notice Pays all pending salary to an employee directly in USDT.
+     * @dev The company must hold at least totalUSDT + (monthlyBurn × minReserveMonths) USDT
+     *      after the payment. Salary is transferred directly from the company's internal
+     *      USDT balance to the employee's payable address.
+     *
+     *      WLF payment option (direct or via Uniswap swap) is planned for a future version.
+     *
+     * @param _employeeAddress the employee to pay
+     * @param _companyId company the employee belongs to
      */
     function payEmployee(address _employeeAddress, uint96 _companyId) public {
+        require(_isAuthorized(msg.sender, _companyId), "Not authorized to pay employees in this company");
+
         EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
         require(empBrief.isMember, "CompaniesHouse:payEmployee Employee not found");
 
@@ -349,45 +500,83 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         Employee storage s_emp = ownerToCompanies[compBrief.owner][compBrief.index].employees[empBrief.employeeIndex];
         require(s_emp.active, "CompaniesHouse:payEmployee Employee not active");
 
-        uint256 wlfPrice = tokenSale.price();
-        require(wlfPrice > 0, "WLF price is zero");
+        // ── 1. Checks ────────────────────────────────────────────────────────
 
-        uint256 totalWLF;
+        uint256 totalUSDT;
         for (uint256 i = 0; i < s_emp.salaryItems.length; i++) {
-            SalaryItem storage item = s_emp.salaryItems[i];
-            uint256 payPeriod = block.timestamp - item.lastPayDate;
-            uint256 usdtAmount = (payPeriod * item.salaryPerHour) / 1 hours;
-            if (usdtAmount > 0) {
-                // Convert USDT (6 dec) to WLF (18 dec):
-                // wlf_18dec = usdt_6dec * 10^30 / price_18dec
-                // where price_18dec = actual_usdt_per_wlf * 10^18
-                totalWLF += (usdtAmount * 10 ** 30) / wlfPrice;
-                item.lastPayDate = block.timestamp;
-            }
+            uint256 payPeriod = block.timestamp - s_emp.salaryItems[i].lastPayDate;
+            totalUSDT += (payPeriod * s_emp.salaryItems[i].salaryPerHour) / 1 hours;
         }
+        require(totalUSDT > 0, "Nothing to pay yet");
 
-        require(totalWLF > 0, "Nothing to pay yet");
-        werewolfToken.payEmployee(s_emp.payableAddress, totalWLF);
-        emit EmployeePaid(_employeeAddress, totalWLF);
+        uint256 minReserve = getMonthlyBurnUSDT(_companyId) * minReserveMonths;
+        require(
+            companyTokenBalances[_companyId][usdtAddress] >= totalUSDT + minReserve,
+            "CompaniesHouse: below minimum reserve threshold"
+        );
+
+        // ── 2+3. Effects + Interactions ───────────────────────────────────────
+
+        _payEmployeeUSDT(s_emp, _companyId);
     }
 
     /**
-     * @notice Pays all active employees in a company in one transaction.
+     * @notice Pays an employee with a split of USDT and/or WLF from the company's internal balances.
+     * @dev Either amount may be zero (pay entirely in one token). The USDT portion is subject to the
+     *      minimum reserve check; the WLF portion only requires sufficient company WLF balance.
+     *      Updates lastPayDate across all salary streams (same as payEmployee).
+     * @param _employeeAddress the employee to pay
+     * @param _companyId company the employee belongs to
+     * @param _usdtAmount USDT (6 dec) to pay from company balance
+     * @param _wlfToken WLF token address (ignored when _wlfAmount == 0)
+     * @param _wlfAmount WLF (18 dec) to pay from company balance
      */
-    function payEmployees(uint96 _companyId) external {
-        CompanyBrief memory compBrief = companyBrief[_companyId];
-        require(compBrief.owner == msg.sender, "CompaniesHouse:payEmployees not owner");
+    function payEmployeeWithTokens(
+        address _employeeAddress,
+        uint96 _companyId,
+        uint256 _usdtAmount,
+        address _wlfToken,
+        uint256 _wlfAmount
+    ) public {
+        require(_isAuthorized(msg.sender, _companyId), "Not authorized to pay employees in this company");
 
-        Employee[] storage employees = ownerToCompanies[compBrief.owner][compBrief.index].employees;
-        for (uint256 i = 0; i < employees.length; i++) {
-            if (employees[i].active) {
-                // Skip if nothing owed (avoids revert in payEmployee)
-                bool hasBalance = _hasPendingPay(employees[i]);
-                if (hasBalance) {
-                    payEmployee(employees[i].employeeId, _companyId);
-                }
-            }
+        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
+        require(empBrief.isMember, "CompaniesHouse:payEmployeeWithTokens Employee not found");
+
+        CompanyBrief memory compBrief = companyBrief[_companyId];
+        Employee storage s_emp = ownerToCompanies[compBrief.owner][compBrief.index].employees[empBrief.employeeIndex];
+        require(s_emp.active, "CompaniesHouse:payEmployeeWithTokens Employee not active");
+        require(_usdtAmount > 0 || _wlfAmount > 0, "Nothing to pay");
+
+        // ── 1. Checks ────────────────────────────────────────────────────────
+        if (_usdtAmount > 0) {
+            uint256 minReserve = getMonthlyBurnUSDT(_companyId) * minReserveMonths;
+            uint256 companyUsdtBal = companyTokenBalances[_companyId][usdtAddress];
+            require(
+                companyUsdtBal >= _usdtAmount + minReserve,
+                "CompaniesHouse: below minimum USDT reserve threshold"
+            );
         }
+        if (_wlfAmount > 0) {
+            require(
+                companyTokenBalances[_companyId][_wlfToken] >= _wlfAmount,
+                "CompaniesHouse: insufficient company WLF balance"
+            );
+        }
+
+        // ── 2. Effects ────────────────────────────────────────────────────────
+        uint256 payTimestamp = block.timestamp;
+        for (uint256 i = 0; i < s_emp.salaryItems.length; i++) {
+            s_emp.salaryItems[i].lastPayDate = payTimestamp;
+        }
+        if (_usdtAmount > 0) companyTokenBalances[_companyId][usdtAddress] -= _usdtAmount;
+        if (_wlfAmount > 0) companyTokenBalances[_companyId][_wlfToken] -= _wlfAmount;
+
+        // ── 3. Interactions ───────────────────────────────────────────────────
+        if (_usdtAmount > 0) IERC20(usdtAddress).transfer(s_emp.payableAddress, _usdtAmount);
+        if (_wlfAmount > 0) IERC20(_wlfToken).transfer(s_emp.payableAddress, _wlfAmount);
+
+        emit EmployeePaid(_employeeAddress, _usdtAmount);
     }
 
     /**
@@ -401,7 +590,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         uint96 _companyId
     ) public {
         CompanyBrief memory compBrief = companyBrief[_companyId];
-        require(compBrief.owner == msg.sender, "CompaniesHouse:setCompanyRole not owner");
+        require(_isAuthorized(msg.sender, _companyId), "Not authorized to update roles in this company");
 
         EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
         require(empBrief.isMember, "CompaniesHouse:setCompanyRole not member");
@@ -412,6 +601,24 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         Employee storage emp = s_company.employees[empBrief.employeeIndex];
         require(_salaryItemIndex < emp.salaryItems.length, "Invalid salary item index");
         emp.salaryItems[_salaryItemIndex].role = _newRole;
+    }
+
+    /**
+     * @notice Returns all active company IDs owned by the given address.
+     * @dev Use this to enumerate the caller's companies in the frontend.
+     */
+    function getOwnerCompanyIds(address _owner) public view returns (uint96[] memory) {
+        CompanyStruct[] storage companies = ownerToCompanies[_owner];
+        uint256 count;
+        for (uint256 i = 0; i < companies.length; i++) {
+            if (companies[i].active) count++;
+        }
+        uint96[] memory ids = new uint96[](count);
+        uint256 idx;
+        for (uint256 i = 0; i < companies.length; i++) {
+            if (companies[i].active) ids[idx++] = companies[i].companyId;
+        }
+        return ids;
     }
 
     function retrieveCompany(uint96 _companyId) public view returns (CompanyStruct memory) {
@@ -431,23 +638,16 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
     }
 
     /**
-     * @notice Returns total WLF owed to all active employees right now.
-     * @dev Used by the frontend "Safe to Sell" feature to estimate pool price impact.
+     * @notice Returns total USDT (6 dec) owed to all active employees right now.
      */
-    function getTotalPendingPay(uint96 _companyId) public view returns (uint256 totalWLF) {
+    function getTotalPendingUSDT(uint96 _companyId) public view returns (uint256 totalUSDT) {
         CompanyBrief memory compBrief = companyBrief[_companyId];
         Employee[] storage employees = ownerToCompanies[compBrief.owner][compBrief.index].employees;
-        uint256 wlfPrice = tokenSale.price();
-        if (wlfPrice == 0) return 0;
-
         for (uint256 i = 0; i < employees.length; i++) {
             if (!employees[i].active) continue;
             for (uint256 j = 0; j < employees[i].salaryItems.length; j++) {
                 SalaryItem storage item = employees[i].salaryItems[j];
-                uint256 usdtAmount = ((block.timestamp - item.lastPayDate) * item.salaryPerHour) / 1 hours;
-                if (usdtAmount > 0) {
-                    totalWLF += (usdtAmount * 10 ** 30) / wlfPrice;
-                }
+                totalUSDT += ((block.timestamp - item.lastPayDate) * item.salaryPerHour) / 1 hours;
             }
         }
     }
@@ -470,14 +670,11 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
     }
 
     /**
-     * @notice Returns WLF needed in treasury to sustain 5 years of payroll at current WLF price.
-     * @dev As WLF price increases, fewer tokens are needed. Use as a minimum treasury target.
+     * @notice Returns the minimum USDT reserve the company must always maintain.
+     * @dev = monthlyBurn × minReserveMonths. Company balance must exceed this after every payment.
      */
-    function getRequiredFor5Years(uint96 _companyId) public view returns (uint256 wlfRequired) {
-        uint256 usdtNeeded = getMonthlyBurnUSDT(_companyId) * 60; // 60 months
-        uint256 wlfPrice = tokenSale.price();
-        if (wlfPrice == 0 || usdtNeeded == 0) return 0;
-        wlfRequired = (usdtNeeded * 10 ** 30) / wlfPrice;
+    function getRequiredReserveUSDT(uint96 _companyId) public view returns (uint256) {
+        return getMonthlyBurnUSDT(_companyId) * minReserveMonths;
     }
 
     ///////////////////////////////////////
@@ -538,10 +735,62 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         require(found, "Role is not present in company's roles.");
     }
 
+    /**
+     * @dev Transfers all pending USDT to an employee. No auth or reserve checks —
+     *      callers are responsible for ensuring those invariants hold before calling.
+     */
+    function _payEmployeeUSDT(Employee storage s_emp, uint96 _companyId) internal {
+        uint256 totalUSDT;
+        uint256 payTimestamp = block.timestamp;
+        for (uint256 i = 0; i < s_emp.salaryItems.length; i++) {
+            totalUSDT += ((payTimestamp - s_emp.salaryItems[i].lastPayDate) * s_emp.salaryItems[i].salaryPerHour) / 1 hours;
+            s_emp.salaryItems[i].lastPayDate = payTimestamp;
+        }
+        if (totalUSDT == 0) return;
+        companyTokenBalances[_companyId][usdtAddress] -= totalUSDT;
+        IERC20(usdtAddress).transfer(s_emp.payableAddress, totalUSDT);
+        emit EmployeePaid(s_emp.employeeId, totalUSDT);
+    }
+
     function _hasPendingPay(Employee storage _emp) internal view returns (bool) {
         for (uint256 i = 0; i < _emp.salaryItems.length; i++) {
             if (block.timestamp - _emp.salaryItems[i].lastPayDate >= 1 hours) {
                 return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * @notice Returns true if _caller is authorized to manage the given company.
+     * @dev Authorized callers: company owner, company wallet, or any active employee
+     *      whose role is listed in the company's powerRoles[].
+     */
+    function _isAuthorized(address _caller, uint96 _companyId) internal view returns (bool) {
+        CompanyBrief memory compBrief = companyBrief[_companyId];
+
+        // Owner always authorized
+        if (_caller == compBrief.owner) return true;
+
+        CompanyStruct storage s_company = ownerToCompanies[compBrief.owner][compBrief.index];
+
+        // Company wallet authorized (e.g., automated scripts using its private key)
+        if (_caller == s_company.companyWallet) return true;
+
+        // Active employee with a power role
+        EmployeeBrief memory empBrief = employeeBrief[_caller][_companyId];
+        if (!empBrief.isMember) return false;
+
+        Employee storage emp = s_company.employees[empBrief.employeeIndex];
+        if (!emp.active) return false;
+
+        uint256 powerRolesLen = s_company.powerRoles.length;
+        for (uint256 i = 0; i < emp.salaryItems.length; i++) {
+            bytes32 roleHash = keccak256(abi.encodePacked(emp.salaryItems[i].role));
+            for (uint256 j = 0; j < powerRolesLen; j++) {
+                if (keccak256(abi.encodePacked(s_company.powerRoles[j])) == roleHash) {
+                    return true;
+                }
             }
         }
         return false;
