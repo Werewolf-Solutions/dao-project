@@ -522,6 +522,36 @@ export default function Staking() {
     if (isCompoundConfirmed) void refetchLpEarned();
   }, [isCompoundConfirmed, refetchLpEarned]);
 
+  // ── Bulk rewards flow: WLF rewards tx → LP rewards tx (chained) ──────────
+  // 'withdraw-rewards' = send to wallet  |  'withdraw-stake' = stake flexible
+  const [bulkFlow, setBulkFlow] = useState<'withdraw-rewards' | 'withdraw-stake' | null>(null);
+  const [bulkStep, setBulkStep] = useState<'wlf' | 'lp'>('wlf');
+
+  useEffect(() => {
+    if (!isConfirmed || !bulkFlow || bulkStep !== 'wlf') return;
+    // WLF rewards tx confirmed — fire LP tx if there are LP rewards
+    if (displayReward > 0n && lpStakingAddress) {
+      setBulkStep('lp');
+      if (bulkFlow === 'withdraw-rewards') {
+        setLastLpAction('bulk-claim');
+        writeLp({ address: lpStakingAddress, abi: lpStakingABI, functionName: 'claimRewards', args: [] });
+      } else {
+        setLastLpAction('bulk-compound');
+        writeCompound({ address: lpStakingAddress, abi: lpStakingABI, functionName: 'claimAndStakeRewards', args: [stakingAddress!, false] });
+      }
+    } else {
+      setBulkFlow(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConfirmed]);
+
+  useEffect(() => {
+    if ((isLpConfirmed || isCompoundConfirmed) && bulkFlow && bulkStep === 'lp') {
+      setBulkFlow(null);
+      setBulkStep('wlf');
+    }
+  }, [isLpConfirmed, isCompoundConfirmed, bulkFlow, bulkStep]);
+
   // ── Derived values ───────────────────────────────────────────────────────
 
   const stakeAmountBig = (() => {
@@ -625,16 +655,34 @@ export default function Staking() {
     writeContract({ address: stakingAddress, abi: stakingABI, functionName: 'withdrawAmountFromPosition', args: [BigInt(index), rewardAmount] });
   };
 
-  const handleWithdrawAllBulk = () => {
+  const handleWithdrawAllRewards = () => {
     if (!stakingAddress) return;
-    setLastAction('withdraw-all-bulk');
-    writeContract({ address: stakingAddress, abi: stakingABI, functionName: 'withdrawAll' });
+    const hasWlf = totalEarned > 0n;
+    const hasLp  = displayReward > 0n;
+    if (hasWlf) {
+      setBulkFlow(hasLp ? 'withdraw-rewards' : null);
+      setBulkStep('wlf');
+      setLastAction('withdraw-all-rewards');
+      writeContract({ address: stakingAddress, abi: stakingABI, functionName: 'withdrawAllRewards' });
+    } else if (hasLp && lpStakingAddress) {
+      setLastLpAction('bulk-claim');
+      writeLp({ address: lpStakingAddress, abi: lpStakingABI, functionName: 'claimRewards', args: [] });
+    }
   };
 
-  const handleWithdrawAllAndStake = () => {
+  const handleWithdrawAllRewardsAndStake = () => {
     if (!stakingAddress) return;
-    setLastAction('withdraw-all-stake');
-    writeContract({ address: stakingAddress, abi: stakingABI, functionName: 'withdrawAllAndStakeFlexible' });
+    const hasWlf = totalEarned > 0n;
+    const hasLp  = displayReward > 0n;
+    if (hasWlf) {
+      setBulkFlow(hasLp ? 'withdraw-stake' : null);
+      setBulkStep('wlf');
+      setLastAction('withdraw-all-rewards-stake');
+      writeContract({ address: stakingAddress, abi: stakingABI, functionName: 'withdrawAllRewardsAndStakeFlexible' });
+    } else if (hasLp && lpStakingAddress) {
+      setLastLpAction('bulk-compound');
+      writeCompound({ address: lpStakingAddress, abi: lpStakingABI, functionName: 'claimAndStakeRewards', args: [stakingAddress, false] });
+    }
   };
 
   // ── LP handlers ──────────────────────────────────────────────────────────
@@ -766,28 +814,38 @@ export default function Staking() {
             );
           })()}
         </div>
-        {activePositions.length > 0 && (
-          <div className="mt-4 flex gap-2">
-            <Button
-              variant="danger"
-              fullWidth
-              onClick={handleWithdrawAllBulk}
-              loading={isLoading && lastAction === 'withdraw-all-bulk'}
-              disabled={isLoading || !hasUnlockedPositions}
-            >
-              Withdraw All
-            </Button>
-            <Button
-              variant="success"
-              fullWidth
-              onClick={handleWithdrawAllAndStake}
-              loading={isLoading && lastAction === 'withdraw-all-stake'}
-              disabled={isLoading || !hasUnlockedPositions}
-            >
-              Withdraw &amp; Stake Flexible
-            </Button>
-          </div>
-        )}
+        {(() => {
+          const hasWlfRewards = totalEarned > 0n;
+          const hasLpRewards  = displayReward > 0n;
+          const hasAnyRewards = hasWlfRewards || hasLpRewards;
+          const isBulkLoading =
+            (isPending || isConfirming) ||
+            (bulkFlow !== null && (isLpPending || isLpConfirming || isCompoundPending || isCompoundConfirming));
+          return hasAnyRewards ? (
+            <div className="mt-4 flex gap-2">
+              <Button
+                variant="danger"
+                fullWidth
+                onClick={handleWithdrawAllRewards}
+                loading={isBulkLoading && (lastAction === 'withdraw-all-rewards' || lastLpAction === 'bulk-claim')}
+                disabled={isBulkLoading}
+                title="Withdraw all accrued rewards to wallet — principals stay staked"
+              >
+                Withdraw Rewards
+              </Button>
+              <Button
+                variant="success"
+                fullWidth
+                onClick={handleWithdrawAllRewardsAndStake}
+                loading={isBulkLoading && (lastAction === 'withdraw-all-rewards-stake' || lastLpAction === 'bulk-compound')}
+                disabled={isBulkLoading}
+                title="Withdraw all accrued rewards and compound them into a new flexible position"
+              >
+                Compound Rewards
+              </Button>
+            </div>
+          ) : null;
+        })()}
       </Card>
 
       {/* ── Tab bar ── */}

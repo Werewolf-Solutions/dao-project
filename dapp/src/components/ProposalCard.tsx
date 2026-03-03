@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
-import { formatUnits } from 'viem';
+import { formatUnits, decodeAbiParameters, parseAbiParameters } from 'viem';
 import { daoABI } from '@/contracts';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Button } from './Button';
@@ -31,6 +31,74 @@ const SIG_LABELS: Record<string, string> = {
 
 function sigToLabel(sig: string): string {
   return SIG_LABELS[sig] ?? sig;
+}
+
+// ── Calldata decoder ──────────────────────────────────────────────────────────
+
+type ParamFmt = 'address' | 'wlf' | 'usdt' | 'price' | 'seconds' | 'blocks' | 'raw';
+type ParamDef = { name: string; fmt: ParamFmt };
+
+const SIG_PARAMS: Record<string, ParamDef[]> = {
+  'airdrop(address,uint256)':              [{ name: 'to',         fmt: 'address' }, { name: 'amount',      fmt: 'wlf'     }],
+  'startSale(uint256,uint256)':            [{ name: 'amount',     fmt: 'wlf'     }, { name: 'price',       fmt: 'price'   }],
+  'endSale()':                             [],
+  'transfer(address,uint256)':             [{ name: 'to',         fmt: 'address' }, { name: 'amount',      fmt: 'raw'     }],
+  'setPendingAdmin(address)':              [{ name: 'admin',      fmt: 'address' }],
+  'acceptAdmin()':                         [],
+  'setGuardian(address)':                  [{ name: 'guardian',   fmt: 'address' }],
+  'payEmployee(address,uint256)':          [{ name: 'employee',   fmt: 'address' }, { name: 'amount',      fmt: 'raw'     }],
+  'setVotingPeriod(uint256)':              [{ name: 'period',     fmt: 'seconds' }],
+  'setVotingDelay(uint256)':               [{ name: 'delay',      fmt: 'blocks'  }],
+  'setDaoContract(address)':               [{ name: 'dao',        fmt: 'address' }],
+  'setTokenSaleContract(address)':         [{ name: 'contract',   fmt: 'address' }],
+  'buybackWLF(uint256,uint256)':           [{ name: 'usdtAmount', fmt: 'usdt'    }, { name: 'minWlf',      fmt: 'wlf'     }],
+  'setSwapRouter(address)':               [{ name: 'router',     fmt: 'address' }],
+};
+
+function fmtParamValue(value: unknown, fmt: ParamFmt): string {
+  const v = value as bigint;
+  switch (fmt) {
+    case 'address': return String(value);
+    case 'wlf':     return `${Number(formatUnits(v, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} WLF`;
+    case 'usdt':    return `${(Number(v) / 1e6).toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT`;
+    case 'price':   return `${Number(formatUnits(v, 18)).toLocaleString(undefined, { maximumFractionDigits: 8 })} USDT/WLF`;
+    case 'seconds': {
+      const s = Number(v);
+      const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+      return h > 0 ? `${h}h ${m}m (${s}s)` : `${m}m ${s % 60}s (${s}s)`;
+    }
+    case 'blocks':  return `${v} block${v === 1n ? '' : 's'}`;
+    default:        return String(value);
+  }
+}
+
+/** Returns decoded params array, empty array for no-arg functions, or null on failure. */
+function decodeCalldata(sig: string, data: `0x${string}`): Array<{ name: string; value: string }> | null {
+  const paramDefs = SIG_PARAMS[sig];
+  // Extract types string from signature, e.g. "address,uint256" from "foo(address,uint256)"
+  const typesStr = sig.match(/\(([^)]*)\)/)?.[1] ?? '';
+
+  // For known no-arg sigs, or data is empty, nothing to show
+  if ((paramDefs && paramDefs.length === 0) || !data || data === '0x') return [];
+
+  try {
+    const abiParams = parseAbiParameters(typesStr || 'bytes');
+    const decoded = decodeAbiParameters(abiParams, data);
+
+    if (paramDefs) {
+      return paramDefs.map((def, i) => ({
+        name:  def.name,
+        value: fmtParamValue(decoded[i], def.fmt),
+      }));
+    }
+    // Unknown sig — show generic param_N labels with raw values
+    return Array.from(decoded).map((v, i) => ({
+      name:  `param_${i}`,
+      value: String(v),
+    }));
+  } catch {
+    return null; // decode failed → caller falls back to raw hex
+  }
 }
 
 function fmtWlf(raw: bigint): string {
@@ -444,14 +512,32 @@ export function ProposalCard({ id, daoAddress, isGuardian, visibleStates }: Prop
                 <p className={theme.textMuted}>
                   <span className="text-white/40">Function: </span>{signatures[i] ?? '—'}
                 </p>
-                {datas[i] && datas[i] !== '0x' && (
-                  <div>
-                    <p className="text-white/40">Calldata:</p>
-                    <p className="font-mono text-white/35 break-all max-h-20 overflow-y-auto bg-white/5 rounded p-1.5 mt-0.5">
-                      {datas[i]}
-                    </p>
-                  </div>
-                )}
+                {(() => {
+                  const sig  = signatures[i] ?? '';
+                  const data = datas[i] as `0x${string}` | undefined;
+                  if (!data || data === '0x') return null;
+                  const decoded = decodeCalldata(sig, data);
+                  if (decoded === null) {
+                    // Decode failed — show raw hex as fallback
+                    return (
+                      <div>
+                        <p className="text-white/40">Calldata (raw):</p>
+                        <p className="font-mono text-white/30 break-all bg-white/5 rounded p-1.5 mt-0.5">{data}</p>
+                      </div>
+                    );
+                  }
+                  if (decoded.length === 0) return null;
+                  return (
+                    <div className="space-y-0.5 pt-0.5">
+                      {decoded.map(({ name, value }) => (
+                        <p key={name} className="text-white/50">
+                          <span className="text-white/35">{name}: </span>
+                          <span className="font-mono text-white/70">{value}</span>
+                        </p>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
             ))}
 

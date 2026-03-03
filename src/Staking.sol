@@ -211,6 +211,74 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
     }
 
     /**
+     * @notice Withdraw only accrued rewards from all active positions, keeping principals staked.
+     * @dev Reward per position = convertToAssets(shares) - position.assets (original deposit).
+     *      Positions remain active; only the appreciation above the original deposit is sent to wallet.
+     */
+    function withdrawAllRewards() external {
+        _updateRewardPerToken();
+        StakePosition[] storage userPositions = stakePositions[msg.sender];
+        uint256 totalRewards;
+        for (uint256 i = 0; i < userPositions.length; i++) {
+            StakePosition storage pos = userPositions[i];
+            if (!pos.active) continue;
+            uint256 currentValue = _convertToAssets(pos.shares, Math.Rounding.Floor);
+            if (currentValue <= pos.assets) continue;
+            uint256 reward = currentValue - pos.assets;
+            uint256 sharesToBurn = _convertToShares(reward, Math.Rounding.Ceil);
+            // Guard: never burn more shares than the position holds
+            if (sharesToBurn >= pos.shares) sharesToBurn = pos.shares - 1;
+            if (sharesToBurn == 0) continue;
+            totalRewards += _withdrawFromPosition(msg.sender, i, sharesToBurn);
+        }
+        require(totalRewards > 0, "Staking: no rewards to withdraw");
+    }
+
+    /**
+     * @notice Withdraw accrued rewards from all active positions and re-stake them as a single
+     *         flexible position.  Principals remain staked in their original positions.
+     * @dev WLF stays in the contract; no external transfer occurs.
+     */
+    function withdrawAllRewardsAndStakeFlexible() external {
+        _updateRewardPerToken();
+        StakePosition[] storage userPositions = stakePositions[msg.sender];
+        uint256 totalRewards;
+        uint256 totalSharesBurned;
+        for (uint256 i = 0; i < userPositions.length; i++) {
+            StakePosition storage pos = userPositions[i];
+            if (!pos.active) continue;
+            uint256 currentValue = _convertToAssets(pos.shares, Math.Rounding.Floor);
+            if (currentValue <= pos.assets) continue;
+            uint256 reward = currentValue - pos.assets;
+            uint256 sharesToBurn = _convertToShares(reward, Math.Rounding.Ceil);
+            if (sharesToBurn >= pos.shares) sharesToBurn = pos.shares - 1;
+            if (sharesToBurn == 0) continue;
+            totalRewards += reward;
+            totalSharesBurned += sharesToBurn;
+            pos.shares -= sharesToBurn;
+            stakedBalance -= reward;
+            emit TokensWithdrawn(msg.sender, i, reward, sharesToBurn);
+        }
+        require(totalRewards > 0, "Staking: no rewards to withdraw");
+        _burn(msg.sender, totalSharesBurned);
+
+        // Re-stake rewards as a new flexible position
+        uint256 newShares = _convertToShares(totalRewards, Math.Rounding.Floor);
+        stakedBalance += totalRewards;
+        _mint(msg.sender, newShares);
+        uint256 newIdx = stakePositions[msg.sender].length;
+        stakePositions[msg.sender].push(StakePosition({
+            shares:   newShares,
+            assets:   totalRewards,
+            stakedAt: block.timestamp,
+            unlockAt: 0,
+            bonusApy: 0,
+            active:   true
+        }));
+        emit TokensStaked(msg.sender, newIdx, totalRewards, newShares, false, 0, 0);
+    }
+
+    /**
      * @notice Withdraw all unlocked positions and immediately re-stake as a single flexible position.
      * @dev WLF stays in the contract; no external transfer occurs. Gas-efficient single transaction.
      */

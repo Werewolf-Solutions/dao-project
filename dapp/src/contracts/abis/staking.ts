@@ -1156,6 +1156,20 @@ export const stakingABI = [
   },
   {
     "type": "function",
+    "name": "withdrawAllRewards",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "withdrawAllRewardsAndStakeFlexible",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "withdrawAmountFromPosition",
     "inputs": [
       {

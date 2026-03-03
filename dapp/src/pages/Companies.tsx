@@ -397,7 +397,8 @@ function EmployeeCard({
   }, []);
 
   const { writeContract, isPending } = useWriteContract();
-  const { isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
+  const { isSuccess, isLoading: isMining } = useWaitForTransactionReceipt({ hash: txHash });
+  const isLoading = isPending || isMining;
 
   // USDT owed (6 dec)
   const totalPendingUSDT = employee.salaryItems.reduce((acc, item) => {
@@ -406,13 +407,17 @@ function EmployeeCard({
     return acc + (elapsed * item.salaryPerHour) / 3600n;
   }, 0n);
 
+  const MIN_PAY_USDT = 1_000_000n; // 1 USDT (6 dec)
   const hasPending = totalPendingUSDT > 0n;
-  const canPay = hasPending && companyUsdtBalance >= totalPendingUSDT + requiredReserve;
+  const aboveMinimum = totalPendingUSDT >= MIN_PAY_USDT;
+  const canPay = hasPending && aboveMinimum && companyUsdtBalance >= totalPendingUSDT + requiredReserve;
   const payTitle = !hasPending
     ? 'No pending pay'
-    : canPay
-      ? 'Pay salary in USDT'
-      : 'USDT balance below minimum reserve threshold';
+    : !aboveMinimum
+      ? `Minimum $1.00 USDT required to pay (currently $${fmtUSDT(totalPendingUSDT, 4)})`
+      : canPay
+        ? 'Pay salary in USDT'
+        : 'USDT balance below minimum reserve threshold';
 
   function handlePay() {
     setPayError(null);
@@ -481,15 +486,21 @@ function EmployeeCard({
               <div className="flex items-center gap-2">
                 <button
                   onClick={handlePay}
-                  disabled={!canPay || isPending}
-                  title={payTitle}
-                  className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                    canPay && !isPending
+                  disabled={!canPay || isLoading}
+                  title={isLoading ? (isPending ? 'Waiting for wallet…' : 'Transaction confirming…') : payTitle}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium transition-colors ${
+                    canPay && !isLoading
                       ? 'bg-[#8e2421] text-white hover:bg-[#a12926]'
                       : 'bg-white/5 text-white/30 cursor-not-allowed'
                   }`}
                 >
-                  {isPending ? 'Paying…' : `Pay ${employee.name.split(' ')[0]}`}
+                  {isLoading && (
+                    <svg className="animate-spin h-3 w-3 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  )}
+                  {isPending ? 'Confirm…' : isMining ? 'Processing…' : `Pay ${employee.name.split(' ')[0]}`}
                 </button>
                 <span
                   title="WLF payment option is coming in a future version"
@@ -537,7 +548,8 @@ function HireEmployeeForm({
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>();
 
   const { writeContract, isPending } = useWriteContract();
-  const { isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
+  const { isLoading: isWaiting, isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
+  const isHiring = isPending || isWaiting;
 
   useEffect(() => {
     if (isSuccess) { onHired(); setAddress(''); setName(''); setMonthlyUSD(''); }
@@ -604,10 +616,16 @@ function HireEmployeeForm({
       </div>
       <button
         onClick={handleHire}
-        disabled={isPending || !address || !name || !monthlyUSD}
-        className={`${theme.btnPrimary} px-4 py-2 text-sm disabled:opacity-40`}
+        disabled={isHiring || !address || !name || !monthlyUSD}
+        className={`${theme.btnPrimary} px-4 py-2 text-sm disabled:opacity-40 flex items-center gap-2`}
       >
-        {isPending ? 'Hiring…' : 'Hire Employee'}
+        {isHiring && (
+          <svg className="animate-spin h-3 w-3 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+        )}
+        {isHiring ? 'Hiring…' : 'Hire Employee'}
       </button>
       {isSuccess && <p className="text-xs text-green-400">Employee hired.</p>}
     </div>
@@ -640,7 +658,8 @@ function CompanyCard({
   const [payAllError, setPayAllError] = useState<string | null>(null);
   const [copiedWallet, setCopiedWallet] = useState(false);
   const { writeContract: writePayAll, isPending: isPayAllPending } = useWriteContract();
-  const { isSuccess: isPayAllSuccess } = useWaitForTransactionReceipt({ hash: payAllTxHash });
+  const { isSuccess: isPayAllSuccess, isLoading: isPayAllMining } = useWaitForTransactionReceipt({ hash: payAllTxHash });
+  const isPayAllLoading = isPayAllPending || isPayAllMining;
 
   useEffect(() => { if (isPayAllSuccess) { refetchCompany(); setPayAllError(null); } }, [isPayAllSuccess]);
 
@@ -750,6 +769,7 @@ function CompanyCard({
     'text-red-400';
 
   // Can pay all: company balance must exceed reserve after paying everyone
+  const MIN_PAY_USDT = 1_000_000n; // 1 USDT (6 dec)
   const totalPendingAllUSDT = activeEmployees.reduce((acc, emp) => {
     return acc + emp.salaryItems.reduce((a, item) => {
       const nowSec = BigInt(Math.floor(Date.now() / 1000));
@@ -757,7 +777,15 @@ function CompanyCard({
       return a + (elapsed * item.salaryPerHour) / 3600n;
     }, 0n);
   }, 0n);
-  const canPayAll = activeEmployees.length > 0 && totalPendingAllUSDT > 0n && companyBalance >= totalPendingAllUSDT + reserve;
+  const allAboveMinimum = activeEmployees.length > 0 && activeEmployees.every(emp => {
+    const pending = emp.salaryItems.reduce((a, item) => {
+      const nowSec = BigInt(Math.floor(Date.now() / 1000));
+      const elapsed = nowSec > item.lastPayDate ? nowSec - item.lastPayDate : 0n;
+      return a + (elapsed * item.salaryPerHour) / 3600n;
+    }, 0n);
+    return pending >= MIN_PAY_USDT;
+  });
+  const canPayAll = allAboveMinimum && companyBalance >= totalPendingAllUSDT + reserve;
 
   return (
     <div className={`${theme.card} space-y-4`}>
@@ -997,19 +1025,29 @@ function CompanyCard({
                   }
                 )
               }
-              disabled={isPayAllPending || !canPayAll}
+              disabled={isPayAllLoading || !canPayAll}
               title={
-                canPayAll
-                  ? 'Pay all employees in USDT'
-                  : `USDT balance below minimum ${monthly > 0n && reserve > 0n ? fmtMonths(Math.floor(Number(reserve / monthly))) : 'reserve'} threshold`
+                isPayAllLoading
+                  ? (isPayAllPending ? 'Waiting for wallet…' : 'Transaction confirming…')
+                  : canPayAll
+                    ? 'Pay all employees in USDT'
+                    : !allAboveMinimum
+                      ? 'All employees must have at least $1.00 USDT pending before paying'
+                      : `USDT balance below minimum ${monthly > 0n && reserve > 0n ? fmtMonths(Math.floor(Number(reserve / monthly))) : 'reserve'} threshold`
               }
-              className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                isPayAllPending || !canPayAll
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                isPayAllLoading || !canPayAll
                   ? 'bg-white/5 text-white/30 cursor-not-allowed'
                   : 'bg-[#8e2421] text-white hover:bg-[#a12926]'
               }`}
             >
-              {isPayAllPending ? 'Paying all…' : 'Pay All'}
+              {isPayAllLoading && (
+                <svg className="animate-spin h-3 w-3 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+              )}
+              {isPayAllPending ? 'Confirm…' : isPayAllMining ? 'Processing…' : 'Pay All'}
             </button>
           )}
         </div>
@@ -1024,9 +1062,9 @@ function CompanyCard({
           <p className={`text-sm ${theme.textMuted}`}>No employees yet.</p>
         )}
 
-        {activeEmployees.map((emp) => (
+        {activeEmployees.map((emp, idx) => (
           <EmployeeCard
-            key={emp.employeeId}
+            key={`${emp.employeeId}-${idx}`}
             employee={emp}
             company={{ ...company, companyId } as Company}
             isAuthorized={isAuthorized}

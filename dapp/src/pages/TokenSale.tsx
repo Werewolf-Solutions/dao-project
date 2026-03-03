@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
-import { parseUnits, formatUnits, formatEther } from 'viem';
+import { useAccount, useReadContract, useReadContracts, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi';
+import { parseUnits, formatUnits, formatEther, parseAbiItem } from 'viem';
 import { tokenSaleABI, erc20ABI, getAddress } from '@/contracts';
 import { useChain } from '@/contexts/ChainContext';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -26,6 +26,182 @@ function fmt6(raw: bigint | undefined, decimals = 4): string {
   return Number(formatUnits(raw, 6)).toLocaleString(undefined, {
     maximumFractionDigits: decimals,
   });
+}
+
+// ── Past Sales ────────────────────────────────────────────────────────────────
+
+const PURCHASE_EVENT = parseAbiItem(
+  'event TokensPurchased(address indexed buyer, uint256 amount, uint256 saleId)'
+);
+
+type BuyerMap = Map<string, bigint>; // addr → total WLF
+
+function SalePastCard({
+  saleId, price, wlfCollected, usdtCollected, buyers, logsLoading, logsError,
+}: {
+  saleId: number;
+  price: bigint | undefined;
+  wlfCollected: bigint | undefined;
+  usdtCollected: bigint | undefined;
+  buyers: BuyerMap;
+  logsLoading: boolean;
+  logsError: boolean;
+}) {
+  const { theme } = useTheme();
+  const [expanded, setExpanded] = useState(false);
+  const sortedBuyers = [...buyers.entries()].sort((a, b) => (b[1] > a[1] ? 1 : -1));
+
+  return (
+    <div className={`${theme.cardNested} p-4 space-y-3`}>
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold text-white">Sale #{saleId}</h3>
+        <span className="text-xs text-green-400 font-medium px-2 py-0.5 rounded-full bg-green-400/10 border border-green-400/20">
+          Completed
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <div>
+          <span className="text-white/40">Price</span>
+          <p className="font-mono text-white/80 mt-0.5">
+            {price !== undefined ? `${formatEther(price)} USDT/WLF` : '…'}
+          </p>
+        </div>
+        <div>
+          <span className="text-white/40">Participants</span>
+          <p className="font-mono text-white/80 mt-0.5">
+            {logsLoading ? '…' : buyers.size}
+          </p>
+        </div>
+        <div>
+          <span className="text-white/40">WLF sold</span>
+          <p className="font-mono text-white/80 mt-0.5">
+            {wlfCollected !== undefined ? `${fmt18(wlfCollected, 0)} WLF` : '…'}
+          </p>
+        </div>
+        <div>
+          <span className="text-white/40">USDT raised</span>
+          <p className="font-mono text-white/80 mt-0.5">
+            {usdtCollected !== undefined ? `$${fmt6(usdtCollected, 2)}` : '…'}
+          </p>
+        </div>
+      </div>
+
+      {logsError && (
+        <p className="text-xs text-red-400">Could not load participant data.</p>
+      )}
+
+      {!logsLoading && !logsError && sortedBuyers.length > 0 && (
+        <div>
+          <button
+            onClick={() => setExpanded(v => !v)}
+            className="text-xs text-white/35 hover:text-white/65 transition-colors"
+          >
+            {expanded
+              ? '▴ Hide participants'
+              : `▾ Show ${sortedBuyers.length} participant${sortedBuyers.length !== 1 ? 's' : ''}`}
+          </button>
+          {expanded && (
+            <div className="mt-2 space-y-1.5 max-h-60 overflow-y-auto pr-1">
+              {sortedBuyers.map(([addr, amount], i) => (
+                <div key={addr} className="flex items-center justify-between gap-2 text-xs">
+                  <span className="text-white/30 shrink-0 w-4">{i + 1}.</span>
+                  <span className="font-mono text-white/55 flex-1 break-all">{addr}</span>
+                  <span className="font-mono text-white/80 shrink-0">{fmt18(amount, 0)} WLF</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PastSalesSection({
+  tokenSaleAddress,
+  saleIdCounter,
+  chainId,
+}: {
+  tokenSaleAddress: `0x${string}`;
+  saleIdCounter: bigint;
+  chainId: number | undefined;
+}) {
+  const publicClient = usePublicClient({ chainId });
+  const pastCount = Number(saleIdCounter);
+  const pastIds = Array.from({ length: pastCount }, (_, i) => BigInt(i));
+
+  // Batch-read sale metadata: for each past ID fetch sales(), saleWLFCollected(), saleUSDTCollected()
+  const { data: salesData } = useReadContracts({
+    contracts: pastIds.flatMap(id => [
+      { address: tokenSaleAddress, abi: tokenSaleABI, functionName: 'sales' as const,             args: [id] as [bigint] },
+      { address: tokenSaleAddress, abi: tokenSaleABI, functionName: 'saleWLFCollected' as const,  args: [id] as [bigint] },
+      { address: tokenSaleAddress, abi: tokenSaleABI, functionName: 'saleUSDTCollected' as const, args: [id] as [bigint] },
+    ]),
+    query: { enabled: pastCount > 0 },
+  });
+
+  // Fetch all TokensPurchased logs and group by saleId
+  const [buyersBySale, setBuyersBySale] = useState<Map<number, BuyerMap>>(new Map());
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsError, setLogsError] = useState(false);
+
+  useEffect(() => {
+    if (!publicClient || pastCount === 0) return;
+    let cancelled = false;
+    setLogsLoading(true);
+    setLogsError(false);
+
+    publicClient.getLogs({
+      address: tokenSaleAddress,
+      event: PURCHASE_EVENT,
+      fromBlock: 'earliest',
+      toBlock: 'latest',
+    }).then(logs => {
+      if (cancelled) return;
+      const map = new Map<number, BuyerMap>();
+      for (const log of logs) {
+        const sid = Number(log.args.saleId ?? 0n);
+        if (!map.has(sid)) map.set(sid, new Map());
+        const buyers = map.get(sid)!;
+        const addr = (log.args.buyer ?? '').toLowerCase();
+        buyers.set(addr, (buyers.get(addr) ?? 0n) + (log.args.amount ?? 0n));
+      }
+      setBuyersBySale(map);
+      setLogsLoading(false);
+    }).catch(() => {
+      if (!cancelled) { setLogsError(true); setLogsLoading(false); }
+    });
+
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [publicClient, tokenSaleAddress, pastCount]);
+
+  if (pastCount === 0) return null;
+
+  return (
+    <div className="mt-6 space-y-3">
+      <h2 className="font-bold text-base text-white/80">Past Sales</h2>
+      {pastIds.map((id, i) => {
+        type SaleTuple = [bigint, bigint, bigint, boolean];
+        const sale = salesData?.[i * 3]?.result as SaleTuple | undefined;
+        const wlf  = salesData?.[i * 3 + 1]?.result as bigint | undefined;
+        const usdt = salesData?.[i * 3 + 2]?.result as bigint | undefined;
+        return (
+          <SalePastCard
+            key={Number(id)}
+            saleId={Number(id)}
+            price={sale?.[2]}
+            wlfCollected={wlf}
+            usdtCollected={usdt}
+            buyers={buyersBySale.get(Number(id)) ?? new Map()}
+            logsLoading={logsLoading}
+            logsError={logsError}
+          />
+        );
+      })}
+    </div>
+  );
 }
 
 export default function TokenSale() {
@@ -574,6 +750,15 @@ export default function TokenSale() {
           </div>
         )}
       </Card>
+
+      {/* ── Past Sales ── */}
+      {tokenSaleAddress && saleIdCounter !== undefined && saleIdCounter > 0n && (
+        <PastSalesSection
+          tokenSaleAddress={tokenSaleAddress}
+          saleIdCounter={saleIdCounter}
+          chainId={chainId}
+        />
+      )}
 
       {/* ── Message popup ── */}
       {isPopupOpen && (
