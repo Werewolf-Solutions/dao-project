@@ -373,6 +373,7 @@ function EmployeeCard({
   wlfPrice,
   connectedAddress,
   companiesHouseAddress,
+  onRefetch,
 }: {
   employee: Employee;
   company: Company;
@@ -382,9 +383,11 @@ function EmployeeCard({
   wlfPrice: bigint;
   connectedAddress: `0x${string}`;
   companiesHouseAddress: `0x${string}`;
+  onRefetch: () => void;
 }) {
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>();
   const [payError, setPayError] = useState<string | null>(null);
+  const [showEditForm, setShowEditForm] = useState(false);
 
   // Tick every 5s so pending-USDT recalculates from Date.now() without a contract call
   const [, setTick] = useState(0);
@@ -452,9 +455,21 @@ function EmployeeCard({
             {employee.employeeId.slice(0, 6)}…{employee.employeeId.slice(-4)}
           </p>
         </div>
-        <div className="text-right shrink-0">
+        <div className="flex flex-col items-end gap-1 shrink-0">
           <p className="text-sm font-mono text-white/80">${totalMonthlyUSD.toLocaleString(undefined, { maximumFractionDigits: 2 })}/mo</p>
           <p className={`text-xs ${theme.textMuted}`}>USDT</p>
+          {isAuthorized && (
+            <button
+              onClick={() => setShowEditForm(v => !v)}
+              className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
+                showEditForm
+                  ? 'bg-white/15 text-white/80'
+                  : 'bg-white/5 text-white/40 hover:bg-white/10 hover:text-white/70'
+              }`}
+            >
+              {showEditForm ? 'Cancel' : 'Edit'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -522,6 +537,16 @@ function EmployeeCard({
 
       {employee.employeeId.toLowerCase() === connectedAddress.toLowerCase() && (
         <MyWalletPanel address={connectedAddress} wlfPrice={wlfPrice} />
+      )}
+
+      {showEditForm && (
+        <EditEmployeeForm
+          employee={employee}
+          company={company}
+          companiesHouseAddress={companiesHouseAddress}
+          onSaved={() => { setShowEditForm(false); onRefetch(); }}
+          onCancel={() => setShowEditForm(false)}
+        />
       )}
     </div>
   );
@@ -629,6 +654,326 @@ function HireEmployeeForm({
   );
 }
 
+// ─── EditEmployeeForm ─────────────────────────────────────────────────────────
+
+function EditEmployeeForm({
+  employee,
+  company,
+  companiesHouseAddress,
+  onSaved,
+  onCancel,
+}: {
+  employee: Employee;
+  company: Company;
+  companiesHouseAddress: `0x${string}`;
+  onSaved: () => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(employee.name);
+  const [payableAddress, setPayableAddress] = useState(employee.payableAddress);
+  const [salaryItems, setSalaryItems] = useState<{ role: string; monthlyUSD: string }[]>(
+    employee.salaryItems.map(item => ({
+      role: item.role,
+      monthlyUSD: hourlyWeiToMonthlyUSD(item.salaryPerHour),
+    }))
+  );
+  const [txHash, setTxHash] = useState<`0x${string}` | undefined>();
+
+  const { writeContract, isPending } = useWriteContract();
+  const { isLoading: isWaiting, isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
+  const isSaving = isPending || isWaiting;
+
+  useEffect(() => { if (isSuccess) onSaved(); }, [isSuccess]);
+
+  function updateItem(idx: number, field: 'role' | 'monthlyUSD', value: string) {
+    setSalaryItems(prev => prev.map((item, i) => i === idx ? { ...item, [field]: value } : item));
+  }
+  function removeItem(idx: number) {
+    setSalaryItems(prev => prev.filter((_, i) => i !== idx));
+  }
+  function addItem() {
+    setSalaryItems(prev => [...prev, { role: company.roles[0] ?? '', monthlyUSD: '' }]);
+  }
+
+  function handleSave() {
+    if (!name.trim() || salaryItems.length === 0) return;
+    writeContract(
+      {
+        address: companiesHouseAddress,
+        abi: companiesHouseABI,
+        functionName: 'updateEmployee',
+        args: [
+          employee.employeeId,
+          company.companyId,
+          {
+            name: name.trim(),
+            payableAddress: payableAddress as `0x${string}`,
+            salaryItems: salaryItems.map(item => ({
+              role: item.role,
+              salaryPerHour: monthlyUSDToHourlyWei(item.monthlyUSD),
+              lastPayDate: 0n,
+            })),
+          },
+        ],
+        gas: 500_000n,
+      },
+      { onSuccess: (hash) => setTxHash(hash) }
+    );
+  }
+
+  return (
+    <div className={`p-4 rounded-lg ${theme.cardNested} space-y-4`}>
+      <p className="font-semibold text-white/80">Edit Employee</p>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <label className={`block text-xs mb-1 ${theme.textMuted}`}>Name *</label>
+          <input className={theme.input} value={name} onChange={e => setName(e.target.value)} />
+        </div>
+        <div>
+          <label className={`block text-xs mb-1 ${theme.textMuted}`}>Payable Address</label>
+          <input className={`${theme.input} font-mono text-xs`} value={payableAddress} onChange={e => setPayableAddress(e.target.value)} />
+        </div>
+      </div>
+
+      <div>
+        <label className={`block text-xs mb-2 ${theme.textMuted}`}>Salary Streams</label>
+        <div className="space-y-2">
+          {salaryItems.map((item, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <select
+                className={`${theme.input} flex-1`}
+                value={item.role}
+                onChange={e => updateItem(i, 'role', e.target.value)}
+              >
+                {(company.roles as string[]).map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+              <div className="relative flex-1">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40 text-sm">$</span>
+                <input
+                  className={`${theme.input} pl-7`}
+                  placeholder="Monthly USD"
+                  type="number"
+                  min="0"
+                  value={item.monthlyUSD}
+                  onChange={e => updateItem(i, 'monthlyUSD', e.target.value)}
+                />
+              </div>
+              <button
+                onClick={() => removeItem(i)}
+                disabled={salaryItems.length === 1}
+                className="shrink-0 px-2 py-1.5 rounded text-xs text-white/40 hover:text-red-400 disabled:opacity-20"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+        <button
+          onClick={addItem}
+          className="mt-2 text-xs text-white/50 hover:text-white/80 transition-colors"
+        >
+          + Add Salary Stream
+        </button>
+      </div>
+
+      <div className="flex items-center gap-3 pt-1">
+        <button
+          onClick={handleSave}
+          disabled={isSaving || !name.trim() || salaryItems.length === 0}
+          className={`${theme.btnPrimary} px-4 py-2 text-sm disabled:opacity-40 flex items-center gap-2`}
+        >
+          {isSaving && (
+            <svg className="animate-spin h-3 w-3 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+          )}
+          {isSaving ? 'Saving…' : 'Save Changes'}
+        </button>
+        <button
+          onClick={onCancel}
+          disabled={isSaving}
+          className="px-4 py-2 rounded text-sm text-white/50 hover:text-white/80 disabled:opacity-40"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── EditCompanyForm ──────────────────────────────────────────────────────────
+
+function EditCompanyForm({
+  company,
+  companiesHouseAddress,
+  onSaved,
+  onCancel,
+}: {
+  company: Company;
+  companiesHouseAddress: `0x${string}`;
+  onSaved: () => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(company.name);
+  const [industry, setIndustry] = useState(company.industry);
+  const [domain, setDomain] = useState(company.domain);
+  const [wallet, setWallet] = useState(company.companyWallet);
+  const [roles, setRoles] = useState<string[]>([...company.roles]);
+  const [powerRoles, setPowerRoles] = useState<string[]>([...company.powerRoles]);
+  const [newRole, setNewRole] = useState('');
+  const [newPowerRole, setNewPowerRole] = useState('');
+  const [txHash, setTxHash] = useState<`0x${string}` | undefined>();
+
+  const { writeContract, isPending } = useWriteContract();
+  const { isLoading: isWaiting, isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
+  const isSaving = isPending || isWaiting;
+
+  useEffect(() => { if (isSuccess) onSaved(); }, [isSuccess]);
+
+  function addRole() {
+    const r = newRole.trim();
+    if (r && !roles.includes(r)) { setRoles([...roles, r]); }
+    setNewRole('');
+  }
+  function removeRole(r: string) { setRoles(roles.filter(x => x !== r)); }
+
+  function addPowerRole() {
+    const r = newPowerRole.trim();
+    if (r && !powerRoles.includes(r)) { setPowerRoles([...powerRoles, r]); }
+    setNewPowerRole('');
+  }
+  function removePowerRole(r: string) { setPowerRoles(powerRoles.filter(x => x !== r)); }
+
+  function handleSave() {
+    if (!name.trim()) return;
+    writeContract(
+      {
+        address: companiesHouseAddress,
+        abi: companiesHouseABI,
+        functionName: 'updateCompany',
+        args: [company.companyId, {
+          name: name.trim(),
+          industry: industry.trim(),
+          domain: domain.trim(),
+          roles,
+          powerRoles,
+          companyWallet: wallet as `0x${string}`,
+        }],
+        gas: 500_000n,
+      },
+      { onSuccess: (hash) => setTxHash(hash) }
+    );
+  }
+
+  return (
+    <div className={`p-4 rounded-lg ${theme.cardNested} space-y-4`}>
+      <p className="font-semibold text-white/80">Edit Company</p>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <label className={`block text-xs mb-1 ${theme.textMuted}`}>Name *</label>
+          <input className={theme.input} value={name} onChange={e => setName(e.target.value)} />
+        </div>
+        <div>
+          <label className={`block text-xs mb-1 ${theme.textMuted}`}>Industry</label>
+          <input className={theme.input} value={industry} onChange={e => setIndustry(e.target.value)} />
+        </div>
+        <div>
+          <label className={`block text-xs mb-1 ${theme.textMuted}`}>Domain</label>
+          <input className={theme.input} value={domain} onChange={e => setDomain(e.target.value)} />
+        </div>
+        <div>
+          <label className={`block text-xs mb-1 ${theme.textMuted}`}>Company Wallet</label>
+          <input className={`${theme.input} font-mono text-xs`} value={wallet} onChange={e => setWallet(e.target.value)} />
+        </div>
+      </div>
+
+      {/* Roles */}
+      <div>
+        <label className={`block text-xs mb-1 ${theme.textMuted}`}>Roles</label>
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {roles.map(r => (
+            <span key={r} className="flex items-center gap-1 px-2 py-0.5 rounded bg-white/10 text-xs text-white/80">
+              {r}
+              <button onClick={() => removeRole(r)} className="text-white/40 hover:text-red-400 leading-none">×</button>
+            </span>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <input
+            className={`${theme.input} flex-1`}
+            placeholder="New role"
+            value={newRole}
+            onChange={e => setNewRole(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addRole(); } }}
+          />
+          <button
+            onClick={addRole}
+            disabled={!newRole.trim()}
+            className="px-3 py-1.5 rounded text-xs bg-white/10 text-white/70 hover:bg-white/20 disabled:opacity-40"
+          >
+            + Add
+          </button>
+        </div>
+      </div>
+
+      {/* Power Roles */}
+      <div>
+        <label className={`block text-xs mb-1 ${theme.textMuted}`}>Power Roles (admin access)</label>
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {powerRoles.map(r => (
+            <span key={r} className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-900/40 border border-amber-700/40 text-xs text-amber-300">
+              {r}
+              <button onClick={() => removePowerRole(r)} className="text-amber-400/60 hover:text-red-400 leading-none">×</button>
+            </span>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <input
+            className={`${theme.input} flex-1`}
+            placeholder="New power role"
+            value={newPowerRole}
+            onChange={e => setNewPowerRole(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addPowerRole(); } }}
+          />
+          <button
+            onClick={addPowerRole}
+            disabled={!newPowerRole.trim()}
+            className="px-3 py-1.5 rounded text-xs bg-amber-900/30 text-amber-300 hover:bg-amber-900/50 disabled:opacity-40"
+          >
+            + Add
+          </button>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3 pt-1">
+        <button
+          onClick={handleSave}
+          disabled={isSaving || !name.trim()}
+          className={`${theme.btnPrimary} px-4 py-2 text-sm disabled:opacity-40 flex items-center gap-2`}
+        >
+          {isSaving && (
+            <svg className="animate-spin h-3 w-3 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+          )}
+          {isSaving ? 'Saving…' : 'Save Changes'}
+        </button>
+        <button
+          onClick={onCancel}
+          disabled={isSaving}
+          className="px-4 py-2 rounded text-sm text-white/50 hover:text-white/80 disabled:opacity-40"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── CompanyCard ──────────────────────────────────────────────────────────────
 
 function CompanyCard({
@@ -649,6 +994,7 @@ function CompanyCard({
   onRefetch: () => void;
 }) {
   const [showHireForm, setShowHireForm] = useState(false);
+  const [showEditForm, setShowEditForm] = useState(false);
   const [showDepositForm, setShowDepositForm] = useState(false);
   const [showDepositWlfForm, setShowDepositWlfForm] = useState(false);
   const [payAllTxHash, setPayAllTxHash] = useState<`0x${string}` | undefined>();
@@ -786,9 +1132,23 @@ function CompanyCard({
             <h2 className="text-xl font-bold text-white">{company.name}</h2>
             <p className={`text-sm ${theme.textMuted}`}>{company.industry} · {company.domain}</p>
           </div>
-          <span className={`px-2 py-0.5 rounded text-xs font-medium ${company.active ? 'bg-green-900/40 text-green-300' : 'bg-red-900/30 text-red-400'}`}>
-            {company.active ? 'Active' : 'Inactive'}
-          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className={`px-2 py-0.5 rounded text-xs font-medium ${company.active ? 'bg-green-900/40 text-green-300' : 'bg-red-900/30 text-red-400'}`}>
+              {company.active ? 'Active' : 'Inactive'}
+            </span>
+            {company.owner.toLowerCase() === addrLower && (
+              <button
+                onClick={() => setShowEditForm(v => !v)}
+                className={`px-2.5 py-0.5 rounded text-xs font-medium transition-colors ${
+                  showEditForm
+                    ? 'bg-white/15 text-white/80'
+                    : 'bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/80'
+                }`}
+              >
+                {showEditForm ? 'Cancel Edit' : 'Edit'}
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Company wallet + live ETH balance */}
@@ -948,6 +1308,18 @@ function CompanyCard({
           );
         })()}
 
+        {/* Edit company form */}
+        {showEditForm && (
+          <div className="mt-3">
+            <EditCompanyForm
+              company={{ ...company, companyId } as Company}
+              companiesHouseAddress={companiesHouseAddress}
+              onSaved={() => { setShowEditForm(false); refetchAll(); onRefetch(); }}
+              onCancel={() => setShowEditForm(false)}
+            />
+          </div>
+        )}
+
         {/* Deposit buttons */}
         <div className="mt-3 space-y-2">
           {showDepositForm ? (
@@ -1063,6 +1435,7 @@ function CompanyCard({
             wlfPrice={wlfPrice}
             connectedAddress={address}
             companiesHouseAddress={companiesHouseAddress}
+            onRefetch={refetchAll}
           />
         ))}
 

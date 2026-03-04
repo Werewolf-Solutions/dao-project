@@ -53,6 +53,33 @@ export const companiesHouseABI = [
   },
   {
     "type": "function",
+    "name": "updateEmployee",
+    "inputs": [
+      { "name": "_employeeAddress", "type": "address", "internalType": "address" },
+      { "name": "_companyId",       "type": "uint96",  "internalType": "uint96"  },
+      {
+        "name": "_params", "type": "tuple",
+        "internalType": "struct CompaniesHouseV1.UpdateEmployee",
+        "components": [
+          { "name": "name",           "type": "string",  "internalType": "string"  },
+          { "name": "payableAddress", "type": "address", "internalType": "address" },
+          {
+            "name": "salaryItems", "type": "tuple[]",
+            "internalType": "struct CompaniesHouseV1.SalaryItem[]",
+            "components": [
+              { "name": "role",          "type": "string",  "internalType": "string"  },
+              { "name": "salaryPerHour", "type": "uint256", "internalType": "uint256" },
+              { "name": "lastPayDate",   "type": "uint256", "internalType": "uint256" }
+            ]
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "addRoleToEmployee",
     "inputs": [
       { "name": "_employeeAddress", "type": "address", "internalType": "address" },
@@ -109,6 +136,28 @@ export const companiesHouseABI = [
     "name": "payEmployees",
     "inputs": [
       { "name": "_companyId", "type": "uint96", "internalType": "uint96" }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "updateCompany",
+    "inputs": [
+      { "name": "_companyId", "type": "uint96", "internalType": "uint96" },
+      {
+        "name": "_params",
+        "type": "tuple",
+        "internalType": "struct CompaniesHouseV1.UpdateCompany",
+        "components": [
+          { "name": "name",          "type": "string",   "internalType": "string"   },
+          { "name": "industry",      "type": "string",   "internalType": "string"   },
+          { "name": "domain",        "type": "string",   "internalType": "string"   },
+          { "name": "roles",         "type": "string[]", "internalType": "string[]" },
+          { "name": "powerRoles",    "type": "string[]", "internalType": "string[]" },
+          { "name": "companyWallet", "type": "address",  "internalType": "address"  }
+        ]
+      }
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
@@ -345,6 +394,15 @@ export const companiesHouseABI = [
   },
   {
     "type": "event",
+    "name": "CompanyUpdated",
+    "inputs": [
+      { "name": "owner",     "type": "address", "indexed": true },
+      { "name": "companyId", "type": "uint96",  "indexed": true }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "CompanyDeleted",
     "inputs": [
       { "name": "owner",     "type": "address", "indexed": true },
@@ -367,6 +425,15 @@ export const companiesHouseABI = [
     "name": "EmployeeHired",
     "inputs": [
       { "name": "employee", "type": "address", "indexed": true }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "EmployeeUpdated",
+    "inputs": [
+      { "name": "employee",  "type": "address", "indexed": true },
+      { "name": "companyId", "type": "uint96",  "indexed": true }
     ],
     "anonymous": false
   },

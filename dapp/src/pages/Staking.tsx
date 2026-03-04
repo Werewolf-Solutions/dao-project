@@ -356,7 +356,6 @@ export default function Staking() {
   const wlfAddress       = getAddress(chainId, 'WerewolfToken');
   const lpStakingAddress = getAddress(chainId, 'LPStaking');
   const tokenSaleAddress = getAddress(chainId, 'TokenSale');
-  const treasuryAddress  = getAddress(chainId, 'Treasury');
 
   const [activeTab, setActiveTab] = useState<'wlf' | 'lp'>('wlf');
   const [searchParams] = useSearchParams();
@@ -422,11 +421,6 @@ export default function Staking() {
     query: { enabled: !!wlfAddress, refetchInterval: 30_000 },
   });
 
-  const { data: treasuryWlfBalance } = useReadContract({
-    address: wlfAddress, abi: erc20ABI, functionName: 'balanceOf',
-    args: [treasuryAddress!],
-    query: { enabled: !!wlfAddress && !!treasuryAddress, refetchInterval: 30_000 },
-  });
 
   const { data: wlfAllowance, refetch: refetchAllowance } = useReadContract({
     address: wlfAddress, abi: erc20ABI, functionName: 'allowance',
@@ -463,6 +457,11 @@ export default function Staking() {
     address: lpStakingAddress, abi: lpStakingABI, functionName: 'fixedLockUnlockTime',
     args: [address!],
     query: { enabled: !!address && !!lpStakingAddress },
+  });
+
+  const { data: totalWLFStakedInLP } = useReadContract({
+    address: lpStakingAddress, abi: lpStakingABI, functionName: 'totalWLFStaked',
+    query: { enabled: !!lpStakingAddress, refetchInterval: 15_000 },
   });
 
   const { data: saleIdCounter } = useReadContract({
@@ -608,18 +607,12 @@ export default function Staking() {
   const apyDisplay    = apy !== undefined ? `${(Number(apy) / 1_000).toFixed(2)}%` : '—';
   const lpApyDisplay  = lpApy !== undefined ? `${(Number(lpApy) / 1_000).toFixed(2)}%` : '—';
 
-  // Circulating supply = total supply minus tokens sitting in Treasury (not yet distributed)
-  const circulatingSupply = ((): bigint => {
-    if (!wlfTotalSupply) return 0n;
-    const treasury = treasuryWlfBalance ?? 0n;
-    return wlfTotalSupply > treasury ? wlfTotalSupply - treasury : 0n;
-  })();
-
-  // Staking ratio = staked WLF / circulating supply, as a fraction 0–1.
+  // Staking ratio = (WLF staking + LP staking) / total WLF supply.
   // Use floating point (after scaling down) to avoid bigint integer-division precision loss.
+  const totalCommittedWLF = (totalAssets ?? 0n) + (totalWLFStakedInLP ?? 0n);
   const stakingRatioFrac = ((): number => {
-    if (!totalAssets || totalAssets === 0n || circulatingSupply === 0n) return 0;
-    return Number(totalAssets / 10n ** 9n) / Number(circulatingSupply / 10n ** 9n);
+    if (totalCommittedWLF === 0n || !wlfTotalSupply || wlfTotalSupply === 0n) return 0;
+    return Number(totalCommittedWLF / 10n ** 9n) / Number(wlfTotalSupply / 10n ** 9n);
   })();
 
   // APY schedule band index (0–9, each band = 10% of circulating supply)
@@ -627,7 +620,7 @@ export default function Staking() {
 
   const stakingRatioDisplay = ((): string => {
     if (!wlfTotalSupply) return '—';
-    if (!totalAssets) return '—';
+    if (totalCommittedWLF === 0n && !totalAssets && !totalWLFStakedInLP) return '—';
     const pct = stakingRatioFrac * 100;
     if (pct === 0) return '0.00%';
     if (pct < 0.01) return `${pct.toFixed(4)}%`;
@@ -800,7 +793,9 @@ export default function Staking() {
       {/* ── WLF Overview — always visible, above tabs ── */}
       <Card title="WLF Staking Overview" className="mb-6">
         <div className="space-y-0.5">
-          <Row label="Total WLF staked"        value={`${fmt18(totalAssets)} WLF`} />
+          <Row label="Total WLF staked"        value={`${fmt18(totalCommittedWLF)} WLF`} />
+          <Row label="  ↳ Direct staking"      value={`${fmt18(totalAssets ?? 0n)} WLF`} />
+          <Row label="  ↳ LP staking"          value={`${fmt18(totalWLFStakedInLP ?? 0n)} WLF`} />
           <Row label="Protocol staking ratio"  value={stakingRatioDisplay} />
           <Row
             label="Current APY (flexible)"

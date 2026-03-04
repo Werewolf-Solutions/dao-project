@@ -71,6 +71,21 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         string ownerName;
     }
 
+    struct UpdateCompany {
+        string name;
+        string industry;
+        string domain;
+        string[] roles;
+        string[] powerRoles;
+        address companyWallet;
+    }
+
+    struct UpdateEmployee {
+        string name;
+        address payableAddress;
+        SalaryItem[] salaryItems; // role + salaryPerHour; lastPayDate is ignored (preserved)
+    }
+
     struct HireEmployee {
         address employeeAddress;
         string name;
@@ -148,11 +163,13 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
     //           Events                  //
     ///////////////////////////////////////
     event EmployeeHired(address indexed employee);
+    event EmployeeUpdated(address indexed employee, uint96 indexed companyId);
     event EmployeeFired(address indexed employee);
     /// @param usdtAmount USDT (6 dec) transferred to the employee
     event EmployeePaid(address indexed employee, uint256 usdtAmount);
     event RoleAdded(address indexed employee, uint96 indexed companyId, string role);
     event CompanyCreated(address indexed owner, uint96 indexed companyId);
+    event CompanyUpdated(address indexed owner, uint96 indexed companyId);
     event CompanyDeleted(address indexed owner, uint96 indexed companyId);
     /// @param companyId The company whose treasury was funded
     /// @param token ERC20 token address deposited
@@ -414,6 +431,87 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         delete companyBrief[_companyId];
         deletedCompanies++;
         emit CompanyDeleted(msg.sender, _companyId);
+    }
+
+    /**
+     * @notice Updates mutable company metadata.
+     * @dev Only the company owner may call this. Replaces roles[] and powerRoles[] entirely.
+     * @param _companyId ID of the company to update
+     * @param _params New values for name, industry, domain, roles, powerRoles, companyWallet
+     */
+    function updateCompany(uint96 _companyId, UpdateCompany memory _params) public {
+        require(
+            companyBrief[_companyId].owner == msg.sender,
+            "CompaniesHouse: not owner"
+        );
+        uint96 idx = companyBrief[_companyId].index;
+        CompanyStruct storage compPtr = ownerToCompanies[msg.sender][idx];
+        require(compPtr.active, "CompaniesHouse: company not active");
+
+        compPtr.name = _params.name;
+        compPtr.industry = _params.industry;
+        compPtr.domain = _params.domain;
+        compPtr.companyWallet = _params.companyWallet;
+
+        delete compPtr.roles;
+        for (uint256 i = 0; i < _params.roles.length; i++) {
+            compPtr.roles.push(_params.roles[i]);
+        }
+
+        delete compPtr.powerRoles;
+        for (uint256 i = 0; i < _params.powerRoles.length; i++) {
+            compPtr.powerRoles.push(_params.powerRoles[i]);
+        }
+
+        emit CompanyUpdated(msg.sender, _companyId);
+    }
+
+    /**
+     * @notice Updates an existing employee's name, payable address, and salary streams.
+     * @dev Salary items are matched by index — existing slots preserve lastPayDate,
+     *      new slots get block.timestamp, and excess old slots are removed with pop().
+     */
+    function updateEmployee(
+        address _employeeAddress,
+        uint96 _companyId,
+        UpdateEmployee memory _params
+    ) public {
+        require(_isAuthorized(msg.sender, _companyId), "Not authorized to update employees in this company");
+
+        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
+        require(empBrief.isMember, "CompaniesHouse: not a member");
+
+        CompanyBrief memory compBrief = companyBrief[_companyId];
+        CompanyStruct storage s_company = ownerToCompanies[compBrief.owner][compBrief.index];
+        Employee storage emp = s_company.employees[empBrief.employeeIndex];
+        require(emp.active, "CompaniesHouse: employee not active");
+
+        _validateSalaryItemRoles(_params.salaryItems, s_company.roles);
+
+        emp.name = _params.name;
+        emp.payableAddress = _params.payableAddress;
+
+        uint256 oldLen = emp.salaryItems.length;
+        uint256 newLen = _params.salaryItems.length;
+        uint256 updateLen = oldLen < newLen ? oldLen : newLen;
+
+        for (uint256 i = 0; i < updateLen; i++) {
+            emp.salaryItems[i].role = _params.salaryItems[i].role;
+            emp.salaryItems[i].salaryPerHour = _params.salaryItems[i].salaryPerHour;
+            // lastPayDate intentionally preserved
+        }
+        for (uint256 i = oldLen; i < newLen; i++) {
+            emp.salaryItems.push(SalaryItem({
+                role: _params.salaryItems[i].role,
+                salaryPerHour: _params.salaryItems[i].salaryPerHour,
+                lastPayDate: block.timestamp
+            }));
+        }
+        for (uint256 i = oldLen; i > newLen; i--) {
+            emp.salaryItems.pop();
+        }
+
+        emit EmployeeUpdated(_employeeAddress, _companyId);
     }
 
     /**

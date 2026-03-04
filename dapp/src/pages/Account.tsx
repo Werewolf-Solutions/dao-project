@@ -40,7 +40,7 @@ export default function Account() {
           <Row label="ETH Balance" value={ethDisplay} />
           <Row label="WLF Balance" value={tokenBalance ?? '—'} />
 
-          {account.status === 'connected' && (
+          {(account.status === 'connected' || account.status === 'reconnecting') && (
             <div className="mt-4">
               <Button variant="danger" onClick={() => disconnect()}>Disconnect</Button>
             </div>
@@ -50,16 +50,22 @@ export default function Account() {
         {/* Connect section */}
         <Card title="Connect Wallet">
           <div className="space-y-3">
-            {connectors.map((connector) => (
+            {connectors.filter(c => c.name === 'MetaMask').map((connector) => (
               <Button
                 key={connector.uid}
                 variant="info"
                 fullWidth
                 onClick={() => connect({ connector })}
               >
-                {connector.name}
+                MetaMask
               </Button>
             ))}
+            <Button variant="secondary" fullWidth disabled>
+              Ledger — Coming Soon
+            </Button>
+            <Button variant="secondary" fullWidth disabled>
+              Other Wallets — Coming Soon
+            </Button>
           </div>
           {status === 'pending' && (
             <p className={`text-sm text-center mt-3 ${theme.textMuted}`}>Connecting…</p>

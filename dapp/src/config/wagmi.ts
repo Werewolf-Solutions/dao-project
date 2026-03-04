@@ -5,6 +5,7 @@ import { sepolia, localhost, foundry } from "wagmi/chains";
 export const config = createConfig({
 	chains: [sepolia, localhost, foundry],
 	connectors: [injected({ target: 'metaMask' })],
+	multiInjectedProviderDiscovery: false,
 	transports: {
 		[sepolia.id]: http(),
 		[localhost.id]: http(),

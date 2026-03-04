@@ -56,8 +56,15 @@ export default function Header() {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
 
-  const isConnected = account.status === 'connected';
+  const isConnected = account.status === 'connected' || account.status === 'reconnecting';
   const isSupported = !account.chainId || SUPPORTED_CHAINS.has(account.chainId as (typeof sepolia.id | typeof foundry.id | typeof localhost.id));
+
+  // Auto-switch to Sepolia when connected to a chain with no deployed contracts
+  useEffect(() => {
+    if (account.status === 'connected' && account.chainId && !SUPPORTED_CHAINS.has(account.chainId as never)) {
+      switchChain({ chainId: sepolia.id });
+    }
+  }, [account.status, account.chainId]);
   const wlfPrice = useWLFPrice();
   const priceStr = wlfPrice === null ? null
     : wlfPrice < 0.000001 ? wlfPrice.toExponential(2)
@@ -195,7 +202,7 @@ export default function Header() {
               )
             )}
 
-            {account.status === 'connected' ? (
+            {(account.status === 'connected' || account.status === 'reconnecting') ? (
               <div className="relative" ref={dropdownRef}>
                 <button
                   className={`${theme.btnSecondary} px-3 py-1.5 text-sm font-mono flex items-center gap-2`}
@@ -362,16 +369,32 @@ export default function Header() {
               <h2 className="text-lg font-bold">Connect Wallet</h2>
             </div>
             <div className="px-6 py-5 space-y-3">
-              {connectors.map((connector) => (
+              {connectors.filter(c => c.name === 'MetaMask').map((connector) => (
                 <button
                   key={connector.uid}
                   onClick={() => connect({ connector })}
                   type="button"
                   className={`w-full px-4 py-3 ${theme.btnInfo}`}
                 >
-                  {connector.name}
+                  MetaMask
                 </button>
               ))}
+              <button
+                type="button"
+                disabled
+                className={`w-full px-4 py-3 ${theme.btnSecondary} opacity-50 cursor-not-allowed text-left flex justify-between items-center`}
+              >
+                <span>Ledger</span>
+                <span className="text-xs">Coming Soon</span>
+              </button>
+              <button
+                type="button"
+                disabled
+                className={`w-full px-4 py-3 ${theme.btnSecondary} opacity-50 cursor-not-allowed text-left flex justify-between items-center`}
+              >
+                <span>Other Wallets</span>
+                <span className="text-xs">Coming Soon</span>
+              </button>
               {status === 'pending' && (
                 <p className={`text-sm text-center ${theme.textMuted}`}>Connecting…</p>
               )}
