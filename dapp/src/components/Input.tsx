@@ -1,4 +1,4 @@
-import type { ChangeEvent } from 'react';
+import type { ChangeEvent, CSSProperties } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
 
 interface InputProps {
@@ -10,6 +10,7 @@ interface InputProps {
   disabled?: boolean;
   hint?: string;
   min?: string;
+  style?: CSSProperties;
 }
 
 export function Input({
@@ -21,6 +22,7 @@ export function Input({
   disabled,
   hint,
   min,
+  style,
 }: InputProps) {
   const { theme } = useTheme();
 
@@ -34,6 +36,7 @@ export function Input({
         placeholder={placeholder}
         disabled={disabled}
         min={min}
+        style={style}
         className={theme.input}
       />
       {hint && <p className={`text-xs mt-1 ${theme.textMuted}`}>{hint}</p>}

@@ -95,8 +95,8 @@ contract LPStaking is ERC20Upgradeable, OwnableUpgradeable, IERC721Receiver {
     ///////////////////////////////////////
     //           Constants              //
     ///////////////////////////////////////
-    uint256 public constant MIN_APY = 80;              // 0.08% (higher due to IL risk)
-    uint256 public constant MAX_APY = 800;              // 0.8%
+    uint256 public constant MIN_APY = 8_000;            // 8% (higher due to IL risk)
+    uint256 public constant MAX_APY = 80_000;           // 80%
     uint256 public constant LOCKED_STAKE_BONUS_APY = 5_000; // 5%
     uint256 public constant PERCENTAGE_SCALE = 1e5;
     uint256 public constant SCALE = 1e18;

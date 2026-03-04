@@ -224,6 +224,13 @@ contract PayEmployeeDebugTest is BaseTest {
         companiesHouse.depositToCompany(companyId, address(werewolfToken), wlfDeposit);
         vm.stopPrank();
 
+        uint256 usdtNeeded = companiesHouse.getTotalPendingUSDT(companyId) + companiesHouse.getRequiredReserveUSDT(companyId);
+        vm.startPrank(founder);
+        mockUSDT.mint(founder, usdtNeeded);
+        mockUSDT.approve(address(companiesHouse), usdtNeeded);
+        companiesHouse.depositToCompany(companyId, address(mockUSDT), usdtNeeded);
+        vm.stopPrank();
+
         _logState("PATH A: before payEmployee(employee1)", companyId, employee1);
 
         uint256 emp1Before = werewolfToken.balanceOf(employee1);
@@ -293,6 +300,13 @@ contract PayEmployeeDebugTest is BaseTest {
         vm.startPrank(founder);
         werewolfToken.approve(address(companiesHouse), wlfDeposit);
         companiesHouse.depositToCompany(companyId, address(werewolfToken), wlfDeposit);
+        vm.stopPrank();
+
+        uint256 usdtNeeded = companiesHouse.getTotalPendingUSDT(companyId) + companiesHouse.getRequiredReserveUSDT(companyId);
+        vm.startPrank(founder);
+        mockUSDT.mint(founder, usdtNeeded);
+        mockUSDT.approve(address(companiesHouse), usdtNeeded);
+        companiesHouse.depositToCompany(companyId, address(mockUSDT), usdtNeeded);
         vm.stopPrank();
 
         console.log(""); console.log("====== BATCH PAY AUTH CHECK ======");

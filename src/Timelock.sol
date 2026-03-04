@@ -90,8 +90,8 @@ contract Timelock is Initializable {
 
     function setPendingAdmin(address pendingAdmin_) public {
         require(
-            msg.sender == address(this),
-            "Timelock::setPendingAdmin: Call must come from Timelock."
+            msg.sender == admin || msg.sender == address(this),
+            "Timelock::setPendingAdmin: Call must come from admin or Timelock."
         );
         pendingAdmin = pendingAdmin_;
 

@@ -13,6 +13,7 @@ interface ButtonProps {
   fullWidth?: boolean;
   onClick?: () => void;
   type?: 'button' | 'submit';
+  title?: string;
   children: ReactNode;
 }
 
@@ -36,6 +37,7 @@ export function Button({
   fullWidth = false,
   onClick,
   type = 'button',
+  title,
   children,
 }: ButtonProps) {
   const { theme } = useTheme();
@@ -54,6 +56,7 @@ export function Button({
       type={type}
       onClick={onClick}
       disabled={disabled || loading}
+      title={title}
       className={[
         variantClass,
         SIZE_CLASSES[size],

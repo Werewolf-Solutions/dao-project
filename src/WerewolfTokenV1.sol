@@ -75,12 +75,12 @@ contract WerewolfTokenV1 is ERC20Upgradeable, OwnableUpgradeable {
     }
 
     // Function to authorize an external contract (like CompaniesHouseV1)
-    function _authorizeCaller(address _caller) external onlyTimelock {
+    function _authorizeCaller(address _caller) external onlyOwner {
         authorizedCallers[_caller] = true;
     }
 
     // Function to deauthorize an external contract
-    function _deauthorizeCaller(address _caller) external onlyTimelock {
+    function _deauthorizeCaller(address _caller) external onlyOwner {
         authorizedCallers[_caller] = false;
     }
 

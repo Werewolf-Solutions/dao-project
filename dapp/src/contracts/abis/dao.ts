@@ -545,6 +545,11 @@ export const daoABI = [
         "name": "executed",
         "type": "bool",
         "internalType": "bool"
+      },
+      {
+        "name": "snapshotBlock",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"

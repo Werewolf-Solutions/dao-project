@@ -60,7 +60,7 @@ type Employee = {
   salaryItems: readonly SalaryItem[];
 };
 type Company = {
-  companyId: number;
+  companyId: bigint;
   owner: `0x${string}`;
   companyWallet: `0x${string}`;
   industry: string;
@@ -81,7 +81,7 @@ function DepositUSDTForm({
   usdtAddress,
   onDeposited,
 }: {
-  companyId: number;
+  companyId: bigint;
   companiesHouseAddress: `0x${string}`;
   usdtAddress: `0x${string}` | undefined;
   onDeposited: () => void;
@@ -194,7 +194,7 @@ function DepositWLFForm({
   wlfAddress,
   onDeposited,
 }: {
-  companyId: number;
+  companyId: bigint;
   companiesHouseAddress: `0x${string}`;
   wlfAddress: `0x${string}` | undefined;
   onDeposited: () => void;
@@ -369,11 +369,8 @@ function EmployeeCard({
   company,
   isAuthorized,
   companyUsdtBalance,
-  companyWlfBalance,
   requiredReserve,
   wlfPrice,
-  swapRouterSet,
-  swapRouterLoading,
   connectedAddress,
   companiesHouseAddress,
 }: {
@@ -643,7 +640,7 @@ function CompanyCard({
   wlfPrice,
   onRefetch,
 }: {
-  companyId: number;
+  companyId: bigint;
   address: `0x${string}`;
   companiesHouseAddress: `0x${string}`;
   usdtAddress: `0x${string}` | undefined;
@@ -701,13 +698,6 @@ function CompanyCard({
     functionName: 'companyTokenBalances',
     args: [companyId, wlfAddress ?? '0x0000000000000000000000000000000000000000'],
     query: { enabled: !!wlfAddress, refetchInterval: 5_000 },
-  });
-
-  const { data: swapRouterAddress, isLoading: isSwapRouterLoading } = useReadContract({
-    address: companiesHouseAddress,
-    abi: companiesHouseABI,
-    functionName: 'swapRouter',
-    query: { refetchInterval: 60_000 },
   });
 
   const { data: minReserveMonthsData } = useReadContract({
@@ -1099,70 +1089,6 @@ function CompanyCard({
   );
 }
 
-// ─── GeneratedWalletPanel ─────────────────────────────────────────────────────
-
-function GeneratedWalletPanel({
-  address,
-  privateKey,
-  onConfirmed,
-}: {
-  address: string;
-  privateKey: string;
-  onConfirmed: () => void;
-}) {
-  const [copied, setCopied] = useState(false);
-  const [confirmed, setConfirmed] = useState(false);
-
-  function copyKey() {
-    navigator.clipboard.writeText(privateKey);
-    setCopied(true);
-  }
-
-  function handleConfirm() {
-    setConfirmed(true);
-    onConfirmed();
-  }
-
-  return (
-    <div className="rounded-lg border border-red-600/60 bg-red-950/30 p-4 space-y-3">
-      <div className="flex items-center gap-2">
-        <span className="text-red-400 text-lg">⚠</span>
-        <p className="font-bold text-red-300 text-sm">Private Key — copy now, never shown again</p>
-      </div>
-      <p className="text-xs text-red-300/80">
-        This key controls your company wallet. Store it in a password manager or hardware wallet.
-        If you lose it, you lose access to the company wallet forever.
-      </p>
-
-      <div className="flex items-center gap-2">
-        <code className="flex-1 bg-black/60 border border-red-700/40 rounded px-3 py-2 text-xs font-mono text-red-200 break-all select-all">
-          {privateKey}
-        </code>
-        <button
-          onClick={copyKey}
-          className={`shrink-0 px-3 py-2 rounded text-xs font-medium transition-colors ${
-            copied ? 'bg-green-800/60 text-green-300' : 'bg-red-900/60 text-red-300 hover:bg-red-800/60'
-          }`}
-        >
-          {copied ? '✓ Copied' : 'Copy'}
-        </button>
-      </div>
-
-      <p className={`text-xs ${theme.textMuted}`}>
-        Company address: <span className="font-mono text-white/70">{address}</span>
-      </p>
-
-      <button
-        onClick={handleConfirm}
-        disabled={confirmed}
-        className="w-full py-2 rounded text-sm font-medium bg-green-900/40 text-green-300 border border-green-700/40 hover:bg-green-800/50 transition-colors disabled:opacity-50"
-      >
-        {confirmed ? '✓ Confirmed' : "I've safely stored the private key"}
-      </button>
-    </div>
-  );
-}
-
 // ─── CreateCompanyForm ────────────────────────────────────────────────────────
 
 function CreateCompanyForm({
@@ -1359,7 +1285,7 @@ export default function Companies() {
     query: { enabled: !!companiesHouseAddress },
   });
 
-  const ids = companyIds ? [...companyIds].map(Number) : [];
+  const ids = companyIds ? [...companyIds] : [];
 
   if (!isConnected) {
     return (

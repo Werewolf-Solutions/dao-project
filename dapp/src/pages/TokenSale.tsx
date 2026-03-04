@@ -127,7 +127,7 @@ function PastSalesSection({
   saleIdCounter: bigint;
   chainId: number | undefined;
 }) {
-  const publicClient = usePublicClient({ chainId });
+  const publicClient = usePublicClient({ chainId: chainId as 31337 | 11155111 | 1337 | undefined });
   const pastCount = Number(saleIdCounter);
   const pastIds = Array.from({ length: pastCount }, (_, i) => BigInt(i));
 

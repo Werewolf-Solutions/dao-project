@@ -282,17 +282,11 @@ function LPSaleCard({ saleId, userAddress, lpStakingAddress, tokenSaleAddress }:
   const { data: usdtLPCreated, refetch: refetchUsdtLPCreated } = useReadContract({
     address: tokenSaleAddress, abi: tokenSaleABI, functionName: 'saleLPCreated', args: [saleId],
   });
-  const { data: ethLPCreated } = useReadContract({
-    address: tokenSaleAddress, abi: tokenSaleABI, functionName: 'saleLPETHCreated', args: [saleId],
-  });
   const { data: purchaseAmount, refetch: refetchPurchase } = useReadContract({
     address: tokenSaleAddress, abi: tokenSaleABI, functionName: 'purchases', args: [saleId, userAddress],
   });
   const { data: usdtLP } = useReadContract({
     address: lpStakingAddress, abi: lpStakingABI, functionName: 'lpPositions', args: [saleId],
-  });
-  const { data: ethLP } = useReadContract({
-    address: lpStakingAddress, abi: lpStakingABI, functionName: 'ethLPPositions', args: [saleId],
   });
 
   const { writeContract: writeEndSale, data: endSaleTxHash, isPending: isEndSalePending } = useWriteContract();
@@ -306,16 +300,13 @@ function LPSaleCard({ saleId, userAddress, lpStakingAddress, tokenSaleAddress }:
   }, [isEndSaleConfirmed, refetchUsdtLPCreated, refetchPurchase]);
 
   const isEndSaleLoading = isEndSalePending || isEndSaleConfirming;
-  const anyLPExists = usdtLPCreated || ethLPCreated;
+  const anyLPExists = usdtLPCreated;
 
   if (!anyLPExists && (!purchaseAmount || purchaseAmount === 0n)) return null;
 
   const usdtActive  = !!usdtLP?.[4];
   const usdtPending = !!usdtLPCreated && usdtLP !== undefined && !usdtLP[4];
   const showUsdtRow = usdtLPCreated || usdtActive;
-  const ethActive   = !!ethLP?.[4];
-  const ethPending  = !!ethLPCreated && ethLP !== undefined && !ethLP[4];
-  const showEthRow  = ethLPCreated || ethActive;
 
   const statusChip = (active: boolean, pending: boolean, nftId?: bigint) => {
     if (active)  return <span className="text-sm font-semibold" style={{ color: '#52b788' }}>● Active · NFT #{nftId?.toString()}</span>;
@@ -327,7 +318,6 @@ function LPSaleCard({ saleId, userAddress, lpStakingAddress, tokenSaleAddress }:
     <Card title={`Sale #${saleId.toString()}`}>
       <div className="space-y-0.5">
         {showUsdtRow && <Row label="WLF/USDT LP" value={statusChip(usdtActive, usdtPending, usdtLP?.[0])} />}
-        {showEthRow  && <Row label="WLF/ETH LP"  value={statusChip(ethActive,  ethPending,  ethLP?.[0])}  />}
         {purchaseAmount !== undefined && purchaseAmount > 0n && (
           <Row label="Your purchase" value={`${fmt18(purchaseAmount)} WLF`} />
         )}
@@ -663,9 +653,6 @@ export default function Staking() {
     ? activePositions.some((p) => p.unlockAt === 0n)
     : activePositions.some((p) => p.unlockAt > 0n && p.bonusApy === selectedBonusApy);
 
-  const hasUnlockedPositions = activePositions.some(
-    (p) => p.unlockAt === 0n || now >= p.unlockAt,
-  );
 
   // Total rewards earned across all active positions (live, includes positionTick).
   // Uses share-based value (pos.shares * tickedAssets / totalShares) so the number stays correct

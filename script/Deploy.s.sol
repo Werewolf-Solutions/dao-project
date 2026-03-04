@@ -112,76 +112,31 @@ contract Deploy is Script {
             treasury.setSwapRouter(netConfig.swapRouter, netConfig.usdt, 500);
         }
 
+        // Wire Staking.treasury while founder still owns Staking
+        staking.setTreasury(address(treasury));
+
+        // Authorize LPStaking and CompaniesHouse as WLF payEmployee callers
+        // (must happen before werewolfToken.transferOwnership — onlyOwner check)
+        werewolfToken._authorizeCaller(address(lpStaking));
+        werewolfToken._authorizeCaller(address(companiesHouse));
 
         // Transfer ownership to Timelock
         werewolfToken.transferOwnership(address(timelock));
         treasury.transferOwnership(address(timelock));
         tokenSale.transferOwnership(address(timelock));
-
-        // Wire Staking.treasury while founder is still Timelock admin
-        _setStakingTreasury();
-
-        // Authorize LPStaking and CompaniesHouse to call werewolfToken.payEmployee
-        _authorizePayEmployeeCallers();
+        staking.transferOwnership(address(timelock));
 
         // Transfer Timelock admin to DAO (must be last action as founder)
-        _setTimelockAdmin();
+        // setPendingAdmin now accepts msg.sender == admin, no queue needed
+        timelock.setPendingAdmin(address(dao));
+        dao.__acceptAdmin();
+
+        console.log("Timelock admin transferred to DAO. Timelock.delay =", timelock.delay());
 
         vm.stopBroadcast();
 
         //Write the address to file
         _writeDeploymentData();
-    }
-
-    /**
-     * @dev Atomically transfers Timelock admin to DAO.
-     *      Requires delay = 0 (queue and execute in the same block).
-     *      Must be called LAST — after this, founder is no longer Timelock admin.
-     */
-    function _setTimelockAdmin() internal {
-        bytes memory callData = abi.encode(address(dao));
-        uint256 eta = block.timestamp; // delay = 0 → immediately executable
-
-        timelock.queueTransaction(address(timelock), "setPendingAdmin(address)", callData, eta);
-        timelock.executeTransaction(address(timelock), "setPendingAdmin(address)", callData, eta);
-
-        // DAO is now pendingAdmin; guardian (founder) calls acceptAdmin via DAO
-        dao.__acceptAdmin();
-
-        console.log("Timelock admin transferred to DAO. Timelock.delay =", timelock.delay());
-    }
-
-    /**
-     * @dev Authorizes LPStaking and CompaniesHouse to call werewolfToken.payEmployee().
-     *      _authorizeCaller is onlyTimelock, so we queue+execute via Timelock (delay=0 on testnet).
-     *      Must be called BEFORE _setTimelockAdmin() while founder is still Timelock admin.
-     */
-    function _authorizePayEmployeeCallers() internal {
-        uint256 eta = block.timestamp;
-
-        bytes memory lpCallData = abi.encode(address(lpStaking));
-        timelock.queueTransaction(address(werewolfToken), "_authorizeCaller(address)", lpCallData, eta);
-        timelock.executeTransaction(address(werewolfToken), "_authorizeCaller(address)", lpCallData, eta);
-
-        bytes memory chCallData = abi.encode(address(companiesHouse));
-        timelock.queueTransaction(address(werewolfToken), "_authorizeCaller(address)", chCallData, eta);
-        timelock.executeTransaction(address(werewolfToken), "_authorizeCaller(address)", chCallData, eta);
-
-        console.log("Authorized LPStaking and CompaniesHouse as WLF payEmployee callers");
-    }
-
-    /**
-     * @dev Wires up Staking.treasury via Timelock (Staking.owner = Timelock).
-     *      Must be called BEFORE _setTimelockAdmin() while founder is still admin.
-     */
-    function _setStakingTreasury() internal {
-        bytes memory callData = abi.encode(address(treasury));
-        uint256 eta = block.timestamp;
-
-        timelock.queueTransaction(address(staking), "setTreasury(address)", callData, eta);
-        timelock.executeTransaction(address(staking), "setTreasury(address)", callData, eta);
-
-        console.log("Staking.treasury set to:", address(treasury));
     }
 
     function _deployTreasury() internal {
@@ -258,7 +213,7 @@ contract Deploy is Script {
         bytes memory initDataStaking = abi.encodeWithSelector(
             Staking.initialize.selector,
             address(werewolfToken),
-            address(timelock)
+            founder  // founder owns initially so setTreasury() can be called before timelock transfer
         );
         TransparentUpgradeableProxy stakingProxy = new TransparentUpgradeableProxy(
                 address(stakingImpl),
