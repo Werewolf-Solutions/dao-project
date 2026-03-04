@@ -127,9 +127,12 @@ interface ProposalCardProps {
   daoAddress: `0x${string}`;
   isGuardian: boolean;
   visibleStates: Set<string>;
+  wlfAddress?: `0x${string}`;
+  stakingAddress?: `0x${string}`;
+  lpStakingAddress?: `0x${string}`;
 }
 
-export function ProposalCard({ id, daoAddress, isGuardian, visibleStates }: ProposalCardProps) {
+export function ProposalCard({ id, daoAddress, isGuardian, visibleStates, wlfAddress, stakingAddress, lpStakingAddress }: ProposalCardProps) {
   const { address } = useAccount();
   const { theme } = useTheme();
   const [showDetails, setShowDetails] = useState(false);
@@ -172,6 +175,30 @@ export function ProposalCard({ id, daoAddress, isGuardian, visibleStates }: Prop
     functionName: 'getVotingPower',
     args: [address!],
     query: { enabled: !!address },
+  });
+
+  const { data: wlfBalance } = useReadContract({
+    address: wlfAddress,
+    abi: [{ type: 'function', name: 'balanceOf', inputs: [{ name: 'account', type: 'address' }], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view' }] as const,
+    functionName: 'balanceOf',
+    args: [address!],
+    query: { enabled: !!address && !!wlfAddress },
+  });
+
+  const { data: sWlfShares } = useReadContract({
+    address: stakingAddress,
+    abi: [{ type: 'function', name: 'balanceOf', inputs: [{ name: 'account', type: 'address' }], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view' }] as const,
+    functionName: 'balanceOf',
+    args: [address!],
+    query: { enabled: !!address && !!stakingAddress },
+  });
+
+  const { data: lpVotingPower } = useReadContract({
+    address: lpStakingAddress,
+    abi: [{ type: 'function', name: 'getWLFVotingPower', inputs: [{ name: 'user', type: 'address' }], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view' }] as const,
+    functionName: 'getWLFVotingPower',
+    args: [address!],
+    query: { enabled: !!address && !!lpStakingAddress },
   });
 
   // ── Writes ─────────────────────────────────────────────────────────────────
@@ -397,13 +424,28 @@ export function ProposalCard({ id, daoAddress, isGuardian, visibleStates }: Prop
 
         {label === 'Active' && !votingClosed && !hasVoted && (
           <>
-            <p className={`text-xs w-full ${theme.textMuted}`}>
-              Your voting power:{' '}
-              <span className={votingPower === 0n ? 'text-red-400' : theme.textSecondary}>
-                {fmtWlf(votingPower ?? 0n)} WLF
-              </span>
-              {votingPower === 0n && <span className="text-red-400"> (no power)</span>}
-            </p>
+            <div className={`text-xs w-full space-y-0.5`}>
+              <p className={theme.textMuted}>
+                Your voting power:{' '}
+                <span className={votingPower === 0n ? 'text-red-400' : theme.textSecondary}>
+                  {fmtWlf(votingPower ?? 0n)} WLF
+                </span>
+                {votingPower === 0n && <span className="text-red-400"> (no power)</span>}
+              </p>
+              {(wlfBalance !== undefined || sWlfShares !== undefined || lpVotingPower !== undefined) && (
+                <div className={`pl-3 space-y-0.5 border-l-2 border-white/10`}>
+                  {wlfBalance !== undefined && (
+                    <p className={theme.textMuted}>WLF wallet: <span className="font-mono text-white/60">{fmtWlf(wlfBalance)}</span></p>
+                  )}
+                  {sWlfShares !== undefined && sWlfShares > 0n && (
+                    <p className={theme.textMuted}>Staked (sWLF): <span className="font-mono text-white/60">{fmtWlf(sWlfShares)}</span></p>
+                  )}
+                  {lpVotingPower !== undefined && lpVotingPower > 0n && (
+                    <p className={theme.textMuted}>LP: <span className="font-mono text-white/60">{fmtWlf(lpVotingPower)}</span></p>
+                  )}
+                </div>
+              )}
+            </div>
             <Button
               size="sm"
               variant="success"

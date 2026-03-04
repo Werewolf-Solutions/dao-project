@@ -157,7 +157,7 @@ contract CompaniesHouseTest is BaseTest {
 
         vm.startPrank(employee1);
         werewolfToken.approve(address(companiesHouse), CREATION_FEE - 1);
-        vm.expectRevert("Token balance must be more than creation fee.");
+        vm.expectRevert(CompaniesHouseV1.InsufficientFee.selector);
         companiesHouse.createCompany(CompaniesHouseV1.CreateCompany({
             name: "Broke Inc", industry: "None", domain: "x.io",
             roles: roles, powerRoles: powerRoles,
@@ -281,7 +281,7 @@ contract CompaniesHouseTest is BaseTest {
 
         // Second call immediately should revert — nothing owed yet
         vm.prank(founder);
-        vm.expectRevert("Nothing to pay yet");
+        vm.expectRevert(CompaniesHouseV1.NothingToPay.selector);
         companiesHouse.payEmployee(employee1, id);
     }
 
@@ -292,7 +292,7 @@ contract CompaniesHouseTest is BaseTest {
 
         // No time has passed → 0 USDT owed
         vm.prank(founder);
-        vm.expectRevert("Nothing to pay yet");
+        vm.expectRevert(CompaniesHouseV1.NothingToPay.selector);
         companiesHouse.payEmployee(employee1, id);
     }
 
@@ -308,7 +308,7 @@ contract CompaniesHouseTest is BaseTest {
         vm.warp(block.timestamp + 730 hours);
 
         vm.prank(founder);
-        vm.expectRevert("CompaniesHouse: below minimum reserve threshold");
+        vm.expectRevert(CompaniesHouseV1.BelowReserve.selector);
         companiesHouse.payEmployee(employee1, id);
     }
 
@@ -338,7 +338,7 @@ contract CompaniesHouseTest is BaseTest {
 
         address stranger = makeAddr("stranger");
         vm.prank(stranger);
-        vm.expectRevert("Not authorized to pay employees in this company");
+        vm.expectRevert(CompaniesHouseV1.NotAuthorized.selector);
         companiesHouse.payEmployee(employee1, id);
     }
 
@@ -370,7 +370,7 @@ contract CompaniesHouseTest is BaseTest {
         vm.warp(block.timestamp + 730 hours);
 
         vm.prank(employee1); // not authorized
-        vm.expectRevert("Not authorized to pay employees in this company");
+        vm.expectRevert(CompaniesHouseV1.NotAuthorized.selector);
         companiesHouse.payEmployees(id);
     }
 

@@ -428,6 +428,11 @@ export default function Staking() {
     query: { enabled: !!address && !!wlfAddress && !!stakingAddress },
   });
 
+  const { data: stakingRewards } = useReadContract({
+    address: stakingAddress, abi: stakingABI, functionName: 'stakingRewards',
+    query: { enabled: !!stakingAddress, refetchInterval: 30_000 },
+  });
+
   // ── LP staking reads ─────────────────────────────────────────────────────
 
   const { data: lpApy } = useReadContract({
@@ -617,6 +622,14 @@ export default function Staking() {
 
   // APY schedule band index (0–9, each band = 10% of circulating supply)
   const stakingExponent = Math.min(9, Math.floor(stakingRatioFrac * 10));
+
+  // Reward reserve: months remaining at current payout rate
+  const rewardMonthsRemaining = (() => {
+    if (!stakingRewards || !totalAssets || totalAssets === 0n || !apy || apy === 0n) return null;
+    const monthlyPayout = totalAssets * apy / (12n * 100_000n);
+    if (monthlyPayout === 0n) return null;
+    return Number(stakingRewards / monthlyPayout);
+  })();
 
   const stakingRatioDisplay = ((): string => {
     if (!wlfTotalSupply) return '—';
@@ -812,6 +825,16 @@ export default function Staking() {
             }
           />
           <Row
+            label="Reward reserve"
+            value={
+              rewardMonthsRemaining !== null
+                ? <span style={{ color: rewardMonthsRemaining > 12 ? '#52b788' : rewardMonthsRemaining > 3 ? '#e9c46a' : '#f87171' }}>
+                    {`${fmt18(stakingRewards ?? 0n, 0)} WLF (${rewardMonthsRemaining} mo)`}
+                  </span>
+                : <span style={{ color: theme.textMuted }}>—</span>
+            }
+          />
+          <Row
             label="10-year lock multiplier"
             value={
               <span className="font-semibold" style={{ color: '#e9c46a' }}>
@@ -1003,6 +1026,40 @@ export default function Staking() {
                   placeholder="0.00"
                   disabled={isLoading}
                 />
+
+                {/* APY impact preview */}
+                {(() => {
+                  if (!stakeAmount || !wlfTotalSupply || wlfTotalSupply === 0n || !contractMinApy || !contractMaxApy) return null;
+                  let stakeWei: bigint;
+                  try { stakeWei = parseUnits(stakeAmount, 18); } catch { return null; }
+                  if (stakeWei <= 0n) return null;
+
+                  const minA = Number(contractMinApy);
+                  const maxA = Number(contractMaxApy);
+
+                  const currentPct = stakingRatioFrac * 100;
+                  const newTotalWLF = totalCommittedWLF + stakeWei;
+                  const newRatio = wlfTotalSupply > 0n
+                    ? Number(newTotalWLF / 10n ** 9n) / Number(wlfTotalSupply / 10n ** 9n)
+                    : 0;
+                  const newExponent = Math.min(9, Math.floor(newRatio * 10));
+                  const newApy = minA + (maxA - minA) / Math.pow(2, newExponent);
+                  const currentApyNum = apy !== undefined ? Number(apy) : 0;
+
+                  const newPct = newRatio * 100;
+                  const apyDiff = newApy - currentApyNum;
+
+                  return (
+                    <p className="text-xs mt-1" style={{ color: theme.textMuted }}>
+                      Staking {stakeAmount} WLF: ratio{' '}
+                      <span style={{ color: '#e9c46a' }}>{currentPct.toFixed(2)}% → {newPct.toFixed(2)}%</span>
+                      {', '}APY{' '}
+                      <span style={{ color: apyDiff < 0 ? '#f87171' : '#52b788' }}>
+                        {(currentApyNum / 1_000).toFixed(2)}% → {(newApy / 1_000).toFixed(2)}%
+                      </span>
+                    </p>
+                  );
+                })()}
 
                 {/* Duration picker */}
                 <div className="mt-3">

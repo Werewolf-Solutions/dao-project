@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useAccount, useBalance, useChainId, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useAccount, useBalance, useChainId, useReadContract, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi';
 import { formatEther, parseUnits } from 'viem';
 import { theme } from '@/contexts/ThemeContext';
 import { companiesHouseABI, erc20ABI, getAddress } from '@/contracts';
@@ -72,6 +72,17 @@ type Company = {
   roles: readonly string[];
   powerRoles: readonly string[];
 };
+
+// ─── EmployeePaid event ABI ───────────────────────────────────────────────────
+
+const employeePaidEventAbi = {
+  type: 'event',
+  name: 'EmployeePaid',
+  inputs: [
+    { name: 'employee', type: 'address', indexed: true },
+    { name: 'usdtAmount', type: 'uint256', indexed: false },
+  ],
+} as const;
 
 // ─── DepositUSDTForm ──────────────────────────────────────────────────────────
 
@@ -388,6 +399,11 @@ function EmployeeCard({
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>();
   const [payError, setPayError] = useState<string | null>(null);
   const [showEditForm, setShowEditForm] = useState(false);
+  const [showFireConfirm, setShowFireConfirm] = useState(false);
+  const [fireTxHash, setFireTxHash] = useState<`0x${string}` | undefined>();
+  const [showHistory, setShowHistory] = useState(false);
+  const [payHistory, setPayHistory] = useState<{ date: Date; usdt: bigint }[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   // Tick every 5s so pending-USDT recalculates from Date.now() without a contract call
   const [, setTick] = useState(0);
@@ -398,6 +414,46 @@ function EmployeeCard({
 
   const { writeContract, isPending } = useWriteContract();
   const { isSuccess, isLoading: isMining } = useWaitForTransactionReceipt({ hash: txHash });
+
+  const { writeContract: writeFire, isPending: isFirePending } = useWriteContract();
+  const { isLoading: isFireMining, isSuccess: isFireSuccess } = useWaitForTransactionReceipt({ hash: fireTxHash });
+
+  useEffect(() => { if (isFireSuccess) onRefetch(); }, [isFireSuccess]);
+
+  const publicClient = usePublicClient();
+
+  async function loadHistory() {
+    if (!publicClient) return;
+    setHistoryLoading(true);
+    try {
+      const logs = await publicClient.getLogs({
+        address: companiesHouseAddress,
+        event: employeePaidEventAbi,
+        args: { employee: employee.employeeId },
+        fromBlock: 0n,
+        toBlock: 'latest',
+      });
+      const entries = await Promise.all(
+        logs.slice(-20).reverse().map(async (log) => {
+          const block = await publicClient.getBlock({ blockNumber: log.blockNumber! });
+          return {
+            date: new Date(Number(block.timestamp) * 1000),
+            usdt: (log.args as { usdtAmount?: bigint }).usdtAmount ?? 0n,
+          };
+        })
+      );
+      setPayHistory(entries);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  function handleToggleHistory() {
+    if (!showHistory && payHistory.length === 0) {
+      loadHistory();
+    }
+    setShowHistory(v => !v);
+  }
   const isLoading = isPending || isMining;
 
   // USDT owed (6 dec)
@@ -438,6 +494,18 @@ function EmployeeCard({
     );
   }
 
+  function handleFire() {
+    writeFire(
+      {
+        address: companiesHouseAddress,
+        abi: companiesHouseABI,
+        functionName: 'fireEmployee',
+        args: [employee.employeeId, company.companyId],
+      },
+      { onSuccess: (hash) => setFireTxHash(hash) }
+    );
+  }
+
   const roles = employee.salaryItems.map(s => s.role).join(', ') || '—';
   const totalMonthlyUSD = employee.salaryItems.reduce(
     (acc, item) => acc + Number(item.salaryPerHour * 730n) / 1_000_000,
@@ -469,6 +537,22 @@ function EmployeeCard({
             >
               {showEditForm ? 'Cancel' : 'Edit'}
             </button>
+          )}
+          {isAuthorized && employee.employeeId.toLowerCase() !== connectedAddress.toLowerCase() && (
+            showFireConfirm ? (
+              <div className="flex items-center gap-1">
+                <button onClick={handleFire} className="px-2 py-0.5 rounded text-xs font-medium bg-red-700/60 text-white hover:bg-red-600/70">
+                  {isFirePending || isFireMining ? 'Firing…' : 'Confirm'}
+                </button>
+                <button onClick={() => setShowFireConfirm(false)} className="px-2 py-0.5 rounded text-xs text-white/40 hover:text-white/70">
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button onClick={() => setShowFireConfirm(true)} className="px-2 py-0.5 rounded text-xs font-medium bg-white/5 text-white/40 hover:bg-red-900/30 hover:text-red-300 transition-colors">
+                Fire
+              </button>
+            )
           )}
         </div>
       </div>
@@ -548,6 +632,34 @@ function EmployeeCard({
           onCancel={() => setShowEditForm(false)}
         />
       )}
+
+      {/* Payment History */}
+      <div className="pt-1">
+        <button
+          onClick={handleToggleHistory}
+          className={`text-xs transition-colors ${showHistory ? 'text-white/60' : 'text-white/30 hover:text-white/60'}`}
+        >
+          Payment History {showHistory ? '▴' : '▾'}
+        </button>
+        {showHistory && (
+          <div className="mt-2 pt-2 border-t border-white/10">
+            {historyLoading ? (
+              <p className="text-xs text-white/40">Loading…</p>
+            ) : payHistory.length === 0 ? (
+              <p className="text-xs text-white/40">No payments recorded.</p>
+            ) : (
+              <div className="space-y-0.5">
+                {payHistory.map((entry, i) => (
+                  <div key={i} className="flex justify-between text-xs">
+                    <span className="text-white/50">{entry.date.toLocaleDateString()}</span>
+                    <span className="font-mono text-green-300">${fmtUSDT(entry.usdt)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -732,7 +844,7 @@ function EditEmployeeForm({
         </div>
         <div>
           <label className={`block text-xs mb-1 ${theme.textMuted}`}>Payable Address</label>
-          <input className={`${theme.input} font-mono text-xs`} value={payableAddress} onChange={e => setPayableAddress(e.target.value)} />
+          <input className={`${theme.input} font-mono text-xs`} value={payableAddress} onChange={e => setPayableAddress(e.target.value as `0x${string}`)} />
         </div>
       </div>
 
@@ -886,7 +998,7 @@ function EditCompanyForm({
         </div>
         <div>
           <label className={`block text-xs mb-1 ${theme.textMuted}`}>Company Wallet</label>
-          <input className={`${theme.input} font-mono text-xs`} value={wallet} onChange={e => setWallet(e.target.value)} />
+          <input className={`${theme.input} font-mono text-xs`} value={wallet} onChange={e => setWallet(e.target.value as `0x${string}`)} />
         </div>
       </div>
 
@@ -997,6 +1109,8 @@ function CompanyCard({
   const [showEditForm, setShowEditForm] = useState(false);
   const [showDepositForm, setShowDepositForm] = useState(false);
   const [showDepositWlfForm, setShowDepositWlfForm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteTxHash, setDeleteTxHash] = useState<`0x${string}` | undefined>();
   const [payAllTxHash, setPayAllTxHash] = useState<`0x${string}` | undefined>();
   const [payAllError, setPayAllError] = useState<string | null>(null);
   const [copiedWallet, setCopiedWallet] = useState(false);
@@ -1005,6 +1119,11 @@ function CompanyCard({
   const isPayAllLoading = isPayAllPending || isPayAllMining;
 
   useEffect(() => { if (isPayAllSuccess) { refetchCompany(); setPayAllError(null); } }, [isPayAllSuccess]);
+
+  const { writeContract: writeDelete, isPending: isDeletePending } = useWriteContract();
+  const { isLoading: isDeleteMining, isSuccess: isDeleteSuccess } = useWaitForTransactionReceipt({ hash: deleteTxHash });
+
+  useEffect(() => { if (isDeleteSuccess) onRefetch(); }, [isDeleteSuccess]);
 
   const { data: company, refetch: refetchCompany } = useReadContract({
     address: companiesHouseAddress,
@@ -1060,6 +1179,18 @@ function CompanyCard({
     refetchReserve();
     refetchBalance();
     refetchWlfBalance();
+  }
+
+  function handleDelete() {
+    writeDelete(
+      {
+        address: companiesHouseAddress,
+        abi: companiesHouseABI,
+        functionName: 'deleteCompany',
+        args: [companyId],
+      },
+      { onSuccess: (hash) => setDeleteTxHash(hash) }
+    );
   }
 
   const zeroAddr = '0x0000000000000000000000000000000000000000';
@@ -1137,16 +1268,32 @@ function CompanyCard({
               {company.active ? 'Active' : 'Inactive'}
             </span>
             {company.owner.toLowerCase() === addrLower && (
-              <button
-                onClick={() => setShowEditForm(v => !v)}
-                className={`px-2.5 py-0.5 rounded text-xs font-medium transition-colors ${
-                  showEditForm
-                    ? 'bg-white/15 text-white/80'
-                    : 'bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/80'
-                }`}
-              >
-                {showEditForm ? 'Cancel Edit' : 'Edit'}
-              </button>
+              <>
+                <button
+                  onClick={() => setShowEditForm(v => !v)}
+                  className={`px-2.5 py-0.5 rounded text-xs font-medium transition-colors ${
+                    showEditForm
+                      ? 'bg-white/15 text-white/80'
+                      : 'bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/80'
+                  }`}
+                >
+                  {showEditForm ? 'Cancel Edit' : 'Edit'}
+                </button>
+                {showDeleteConfirm ? (
+                  <div className="flex items-center gap-1">
+                    <button onClick={handleDelete} className="px-2.5 py-0.5 rounded text-xs font-medium bg-red-700/60 text-white hover:bg-red-600/70">
+                      {isDeletePending || isDeleteMining ? 'Deleting…' : 'Confirm Delete'}
+                    </button>
+                    <button onClick={() => setShowDeleteConfirm(false)} className="px-2.5 py-0.5 rounded text-xs text-white/40 hover:text-white/70">
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button onClick={() => setShowDeleteConfirm(true)} className="px-2.5 py-0.5 rounded text-xs font-medium bg-white/5 text-red-400/50 hover:bg-red-900/30 hover:text-red-300 transition-colors">
+                    Delete
+                  </button>
+                )}
+              </>
             )}
           </div>
         </div>

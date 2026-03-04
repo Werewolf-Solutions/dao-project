@@ -284,8 +284,8 @@ contract PayEmployeeDebugTest is BaseTest {
         // This logs the shortfall without reverting the test itself
         _logState("PATH B RESERVE FAIL: expected shortfall shown above", companyId, employee1);
 
-        vm.expectRevert(bytes("CompaniesHouse: below minimum reserve threshold"));
         vm.prank(founder);
+        vm.expectRevert(CompaniesHouseV1.BelowReserve.selector);
         companiesHouse.payEmployee(employee1, companyId);
         console.log("PATH B RESERVE FAIL TEST: PASSED (revert confirmed)");
     }

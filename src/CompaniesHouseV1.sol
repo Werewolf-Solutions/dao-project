@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "./Treasury.sol";
 import "./WerewolfTokenV1.sol";
 import "./DAO.sol";
@@ -42,7 +43,7 @@ import "./interfaces/ITokenSale.sol";
  Private Functions
 */
 
-contract CompaniesHouseV1 is AccessControlUpgradeable {
+contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     ///////////////////////////////////////
     //           Data Types              //
     ///////////////////////////////////////
@@ -128,6 +129,27 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
     }
 
     ///////////////////////////////////////
+    //           Custom Errors           //
+    ///////////////////////////////////////
+
+    error NotAdmin();
+    error NotEmployee();
+    error NoPowerRole();
+    error CompanyNotFound();
+    error NotOwner();
+    error CompanyNotActive();
+    error NotAuthorized();
+    error NotMember();
+    error EmployeeNotActive();
+    error BelowReserve();
+    error InsufficientFee();
+    error TransferFailed();
+    error NothingToPay();
+    error InvalidSalaryIndex();
+    error RoleNotFound();
+    error InsufficientWLF();
+
+    ///////////////////////////////////////
     //           State Variables         //
     ///////////////////////////////////////
 
@@ -181,13 +203,13 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
     ///////////////////////////////////////
 
     modifier onlyAdmin() {
-        require(msg.sender == admin, "CompaniesHouse: not admin");
+        if (msg.sender != admin) revert NotAdmin();
         _;
     }
 
     modifier onlyRoleWithPower(uint96 _companyId) {
         EmployeeBrief memory empBrief = employeeBrief[msg.sender][_companyId];
-        require(empBrief.isMember, "Not an employee of this company");
+        if (!empBrief.isMember) revert NotEmployee();
 
         CompanyBrief memory compBrief = companyBrief[_companyId];
         CompanyStruct storage s_company = ownerToCompanies[compBrief.owner][compBrief.index];
@@ -203,7 +225,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
                 }
             }
         }
-        require(hasPower, "You do not have a power role in this company.");
+        if (!hasPower) revert NoPowerRole();
         _;
     }
 
@@ -236,6 +258,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         address _swapRouter,
         uint256 _minReserveMonths
     ) public initializer {
+        __Pausable_init();
         werewolfToken = WerewolfTokenV1(_token);
         dao = DAO(_daoAddress);
         tokenSale = TokenSale(payable(tokenSaleAddress));
@@ -262,7 +285,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
      * @param amount Amount to deposit (token decimals)
      */
     function depositToCompany(uint96 companyId, address token, uint256 amount) external {
-        require(companyBrief[companyId].owner != address(0), "CompaniesHouse: company not found");
+        if (companyBrief[companyId].owner == address(0)) revert CompanyNotFound();
         IERC20(token).transferFrom(msg.sender, address(this), amount);
         companyTokenBalances[companyId][token] += amount;
         emit CompanyFunded(companyId, token, amount);
@@ -279,7 +302,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
      * @param amount Amount to credit (token decimals)
      */
     function creditToCompany(uint96 companyId, address token, uint256 amount) external onlyAdmin {
-        require(companyBrief[companyId].owner != address(0), "CompaniesHouse: company not found");
+        if (companyBrief[companyId].owner == address(0)) revert CompanyNotFound();
         companyTokenBalances[companyId][token] += amount;
         emit CompanyFunded(companyId, token, amount);
     }
@@ -310,14 +333,30 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
     }
 
     /**
+     * @notice Emergency pause — halts employee hiring, payments, and company creation.
+     * @dev Callable by admin.
+     */
+    function pause() external onlyAdmin {
+        _pause();
+    }
+
+    /**
+     * @notice Resume normal operation.
+     * @dev Callable by admin.
+     */
+    function unpause() external onlyAdmin {
+        _unpause();
+    }
+
+    /**
      * @notice Pays all active employees in a company in one transaction.
      * @dev Performs a single reserve check against the total batch amount before paying
      *      anyone, so the balance drawdown from earlier payments does not block later ones.
      */
-    function payEmployees(uint96 _companyId) external {
-        require(companyBrief[_companyId].owner != address(0), "CompaniesHouse: company does not exist");
+    function payEmployees(uint96 _companyId) external whenNotPaused {
+        if (companyBrief[_companyId].owner == address(0)) revert CompanyNotFound();
         CompanyBrief memory compBrief = companyBrief[_companyId];
-        require(_isAuthorized(msg.sender, _companyId), "Not authorized to pay employees in this company");
+        if (!_isAuthorized(msg.sender, _companyId)) revert NotAuthorized();
 
         Employee[] storage employees = ownerToCompanies[compBrief.owner][compBrief.index].employees;
 
@@ -334,10 +373,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
 
         // ── 2. Single reserve check for the whole batch ──────────────────────
         uint256 minReserve = getMonthlyBurnUSDT(_companyId) * minReserveMonths;
-        require(
-            companyTokenBalances[_companyId][usdtAddress] >= totalUSDTAll + minReserve,
-            "CompaniesHouse: below minimum reserve threshold"
-        );
+        if (companyTokenBalances[_companyId][usdtAddress] < totalUSDTAll + minReserve) revert BelowReserve();
 
         // ── 3. Pay each employee (no per-employee reserve re-check) ─────────
         for (uint256 i = 0; i < employees.length; i++) {
@@ -357,15 +393,9 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
      *      Company wallet is a separate EOA the user controls — store the private key securely.
      * @param _params CreateCompany struct with all company details
      */
-    function createCompany(CreateCompany memory _params) public {
-        require(
-            werewolfToken.balanceOf(msg.sender) >= creationFee,
-            "Token balance must be more than creation fee."
-        );
-        require(
-            werewolfToken.transferFrom(msg.sender, treasuryAddress, creationFee),
-            "Transfer failed."
-        );
+    function createCompany(CreateCompany memory _params) public whenNotPaused {
+        if (werewolfToken.balanceOf(msg.sender) < creationFee) revert InsufficientFee();
+        if (!werewolfToken.transferFrom(msg.sender, treasuryAddress, creationFee)) revert TransferFailed();
 
         // Bug 2 fix: push empty slot first, then get the index
         ownerToCompanies[msg.sender].push();
@@ -422,10 +452,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
      * @dev Uses soft delete to avoid storage issues with nested dynamic arrays.
      */
     function deleteCompany(uint96 _companyId) public {
-        require(
-            companyBrief[_companyId].owner == msg.sender,
-            "CompaniesHouse::deleteCompany not owner"
-        );
+        if (companyBrief[_companyId].owner != msg.sender) revert NotOwner();
         uint96 companyIndex = companyBrief[_companyId].index;
         ownerToCompanies[msg.sender][companyIndex].active = false;
         delete companyBrief[_companyId];
@@ -440,13 +467,10 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
      * @param _params New values for name, industry, domain, roles, powerRoles, companyWallet
      */
     function updateCompany(uint96 _companyId, UpdateCompany memory _params) public {
-        require(
-            companyBrief[_companyId].owner == msg.sender,
-            "CompaniesHouse: not owner"
-        );
+        if (companyBrief[_companyId].owner != msg.sender) revert NotOwner();
         uint96 idx = companyBrief[_companyId].index;
         CompanyStruct storage compPtr = ownerToCompanies[msg.sender][idx];
-        require(compPtr.active, "CompaniesHouse: company not active");
+        if (!compPtr.active) revert CompanyNotActive();
 
         compPtr.name = _params.name;
         compPtr.industry = _params.industry;
@@ -476,15 +500,15 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         uint96 _companyId,
         UpdateEmployee memory _params
     ) public {
-        require(_isAuthorized(msg.sender, _companyId), "Not authorized to update employees in this company");
+        if (!_isAuthorized(msg.sender, _companyId)) revert NotAuthorized();
 
         EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
-        require(empBrief.isMember, "CompaniesHouse: not a member");
+        if (!empBrief.isMember) revert NotMember();
 
         CompanyBrief memory compBrief = companyBrief[_companyId];
         CompanyStruct storage s_company = ownerToCompanies[compBrief.owner][compBrief.index];
         Employee storage emp = s_company.employees[empBrief.employeeIndex];
-        require(emp.active, "CompaniesHouse: employee not active");
+        if (!emp.active) revert EmployeeNotActive();
 
         _validateSalaryItemRoles(_params.salaryItems, s_company.roles);
 
@@ -519,9 +543,9 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
      * @dev All roles in salaryItems must exist in the company's roles[]. Each salary
      *      item represents a separate role + pay stream (e.g., CTO at $300/mo, HR at $200/mo).
      */
-    function hireEmployee(HireEmployee memory _hireParams) public {
+    function hireEmployee(HireEmployee memory _hireParams) public whenNotPaused {
         CompanyBrief memory compBrief = companyBrief[_hireParams.companyId];
-        require(_isAuthorized(msg.sender, _hireParams.companyId), "Not authorized to hire in this company");
+        if (!_isAuthorized(msg.sender, _hireParams.companyId)) revert NotAuthorized();
 
         CompanyStruct storage compPtr = ownerToCompanies[compBrief.owner][compBrief.index];
         _validateSalaryItemRoles(_hireParams.salaryItems, compPtr.roles);
@@ -546,10 +570,10 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         SalaryItem memory _item
     ) public {
         CompanyBrief memory compBrief = companyBrief[_companyId];
-        require(_isAuthorized(msg.sender, _companyId), "Not authorized to add roles in this company");
+        if (!_isAuthorized(msg.sender, _companyId)) revert NotAuthorized();
 
         EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
-        require(empBrief.isMember, "CompaniesHouse:addRoleToEmployee not a member");
+        if (!empBrief.isMember) revert NotMember();
 
         CompanyStruct storage compPtr = ownerToCompanies[compBrief.owner][compBrief.index];
         _requireRoleExists(_item.role, compPtr.roles);
@@ -569,10 +593,10 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
      */
     function fireEmployee(address _employeeAddress, uint96 _companyId) public {
         CompanyBrief memory compBrief = companyBrief[_companyId];
-        require(_isAuthorized(msg.sender, _companyId), "Not authorized to fire employees in this company");
+        if (!_isAuthorized(msg.sender, _companyId)) revert NotAuthorized();
 
         EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
-        require(empBrief.isMember, "CompaniesHouse:fireEmployee not a member");
+        if (!empBrief.isMember) revert NotMember();
 
         ownerToCompanies[compBrief.owner][compBrief.index].employees[empBrief.employeeIndex].active = false;
         delete employeeBrief[_employeeAddress][_companyId];
@@ -591,15 +615,15 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
      * @param _employeeAddress the employee to pay
      * @param _companyId company the employee belongs to
      */
-    function payEmployee(address _employeeAddress, uint96 _companyId) public {
-        require(_isAuthorized(msg.sender, _companyId), "Not authorized to pay employees in this company");
+    function payEmployee(address _employeeAddress, uint96 _companyId) public whenNotPaused {
+        if (!_isAuthorized(msg.sender, _companyId)) revert NotAuthorized();
 
         EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
-        require(empBrief.isMember, "CompaniesHouse:payEmployee Employee not found");
+        if (!empBrief.isMember) revert NotMember();
 
         CompanyBrief memory compBrief = companyBrief[_companyId];
         Employee storage s_emp = ownerToCompanies[compBrief.owner][compBrief.index].employees[empBrief.employeeIndex];
-        require(s_emp.active, "CompaniesHouse:payEmployee Employee not active");
+        if (!s_emp.active) revert EmployeeNotActive();
 
         // ── 1. Checks ────────────────────────────────────────────────────────
 
@@ -608,13 +632,10 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
             uint256 payPeriod = block.timestamp - s_emp.salaryItems[i].lastPayDate;
             totalUSDT += (payPeriod * s_emp.salaryItems[i].salaryPerHour) / 1 hours;
         }
-        require(totalUSDT > 0, "Nothing to pay yet");
+        if (totalUSDT == 0) revert NothingToPay();
 
         uint256 minReserve = getMonthlyBurnUSDT(_companyId) * minReserveMonths;
-        require(
-            companyTokenBalances[_companyId][usdtAddress] >= totalUSDT + minReserve,
-            "CompaniesHouse: below minimum reserve threshold"
-        );
+        if (companyTokenBalances[_companyId][usdtAddress] < totalUSDT + minReserve) revert BelowReserve();
 
         // ── 2+3. Effects + Interactions ───────────────────────────────────────
 
@@ -639,30 +660,24 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         address _wlfToken,
         uint256 _wlfAmount
     ) public {
-        require(_isAuthorized(msg.sender, _companyId), "Not authorized to pay employees in this company");
+        if (!_isAuthorized(msg.sender, _companyId)) revert NotAuthorized();
 
         EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
-        require(empBrief.isMember, "CompaniesHouse:payEmployeeWithTokens Employee not found");
+        if (!empBrief.isMember) revert NotMember();
 
         CompanyBrief memory compBrief = companyBrief[_companyId];
         Employee storage s_emp = ownerToCompanies[compBrief.owner][compBrief.index].employees[empBrief.employeeIndex];
-        require(s_emp.active, "CompaniesHouse:payEmployeeWithTokens Employee not active");
-        require(_usdtAmount > 0 || _wlfAmount > 0, "Nothing to pay");
+        if (!s_emp.active) revert EmployeeNotActive();
+        if (_usdtAmount == 0 && _wlfAmount == 0) revert NothingToPay();
 
         // ── 1. Checks ────────────────────────────────────────────────────────
         if (_usdtAmount > 0) {
             uint256 minReserve = getMonthlyBurnUSDT(_companyId) * minReserveMonths;
             uint256 companyUsdtBal = companyTokenBalances[_companyId][usdtAddress];
-            require(
-                companyUsdtBal >= _usdtAmount + minReserve,
-                "CompaniesHouse: below minimum USDT reserve threshold"
-            );
+            if (companyUsdtBal < _usdtAmount + minReserve) revert BelowReserve();
         }
         if (_wlfAmount > 0) {
-            require(
-                companyTokenBalances[_companyId][_wlfToken] >= _wlfAmount,
-                "CompaniesHouse: insufficient company WLF balance"
-            );
+            if (companyTokenBalances[_companyId][_wlfToken] < _wlfAmount) revert InsufficientWLF();
         }
 
         // ── 2. Effects ────────────────────────────────────────────────────────
@@ -691,16 +706,16 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
         uint96 _companyId
     ) public {
         CompanyBrief memory compBrief = companyBrief[_companyId];
-        require(_isAuthorized(msg.sender, _companyId), "Not authorized to update roles in this company");
+        if (!_isAuthorized(msg.sender, _companyId)) revert NotAuthorized();
 
         EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
-        require(empBrief.isMember, "CompaniesHouse:setCompanyRole not member");
+        if (!empBrief.isMember) revert NotMember();
 
         CompanyStruct storage s_company = ownerToCompanies[compBrief.owner][compBrief.index];
         _requireRoleExists(_newRole, s_company.roles);
 
         Employee storage emp = s_company.employees[empBrief.employeeIndex];
-        require(_salaryItemIndex < emp.salaryItems.length, "Invalid salary item index");
+        if (_salaryItemIndex >= emp.salaryItems.length) revert InvalidSalaryIndex();
         emp.salaryItems[_salaryItemIndex].role = _newRole;
     }
 
@@ -724,7 +739,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
 
     function retrieveCompany(uint96 _companyId) public view returns (CompanyStruct memory) {
         CompanyBrief memory compBrief = companyBrief[_companyId];
-        require(compBrief.owner != address(0), "CompaniesHouse:retrieveCompany company not found");
+        if (compBrief.owner == address(0)) revert CompanyNotFound();
         return ownerToCompanies[compBrief.owner][compBrief.index];
     }
 
@@ -734,7 +749,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
     ) public view returns (Employee memory) {
         CompanyBrief memory compBrief = companyBrief[_companyId];
         EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
-        require(empBrief.isMember, "CompaniesHouse:retrieveEmployee not member");
+        if (!empBrief.isMember) revert NotMember();
         return ownerToCompanies[compBrief.owner][compBrief.index].employees[empBrief.employeeIndex];
     }
 
@@ -833,7 +848,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
                 break;
             }
         }
-        require(found, "Role is not present in company's roles.");
+        if (!found) revert RoleNotFound();
     }
 
     /**

@@ -42,6 +42,20 @@ export const treasuryABI = [
     "stateMutability": "view"
   },
   {
+    "type": "function",
+    "name": "distributeRewards",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "distributeRewardsToLP",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "WLFBuyback",
     "inputs": [

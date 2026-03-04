@@ -4,6 +4,7 @@ pragma solidity ^0.8.27;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC4626Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 
 /* Contract layout:
  Data types: structs, enums, and type declarations
@@ -17,7 +18,7 @@ import "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC4626Upgrad
  Internal functions
  Private Functions
 */
-contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
+contract Staking is ERC4626Upgradeable, OwnableUpgradeable, PausableUpgradeable {
     ///////////////////////////////////////
     //           Constants               //
     ///////////////////////////////////////
@@ -71,7 +72,9 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
     // Read this directly from the frontend instead of calling calculateApy().
     uint256 public currentApy;
 
-    uint256[40] private __gap;
+    address public guardian;
+
+    uint256[39] private __gap;
 
     ///////////////////////////////////////
     //           Events                  //
@@ -113,6 +116,7 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
         stakingToken = IERC20(_stakingToken);
         __ERC4626_init(stakingToken);
         __Ownable_init(_timelock);
+        __Pausable_init();
 
         // Default APY bounds
         minApy = 6_000;   // 6%
@@ -132,15 +136,48 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
     }
 
     ///////////////////////////////////////
+    //           Modifiers               //
+    ///////////////////////////////////////
+
+    modifier onlyGuardian() {
+        require(msg.sender == guardian || msg.sender == owner(), "Staking: not guardian or owner");
+        _;
+    }
+
+    ///////////////////////////////////////
     //           External Functions      //
     ///////////////////////////////////////
+
+    /**
+     * @notice Sets the guardian address (emergency pause controller).
+     * @dev Only owner (Timelock). Called during initial setup.
+     */
+    function setGuardian(address _guardian) external onlyOwner {
+        guardian = _guardian;
+    }
+
+    /**
+     * @notice Emergency pause — halts all staking deposits and withdrawals.
+     * @dev Callable by guardian or owner.
+     */
+    function pause() external onlyGuardian {
+        _pause();
+    }
+
+    /**
+     * @notice Resume normal operation.
+     * @dev Callable by guardian or owner.
+     */
+    function unpause() external onlyGuardian {
+        _unpause();
+    }
 
     /**
      * @notice Stake WLF with no lock (flexible).
      *         Adds to the caller's existing flexible position if one exists; otherwise creates a new one.
      * @param _amount WLF amount to stake
      */
-    function stakeFlexible(uint256 _amount) external {
+    function stakeFlexible(uint256 _amount) external whenNotPaused {
         StakePosition[] storage userPositions = stakePositions[msg.sender];
         for (uint256 i = 0; i < userPositions.length; i++) {
             if (userPositions[i].active && userPositions[i].unlockAt == 0) {
@@ -156,7 +193,7 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
      * @param _index  Position index in stakePositions[msg.sender]
      * @param _amount WLF amount to add
      */
-    function addToPosition(uint256 _index, uint256 _amount) external {
+    function addToPosition(uint256 _index, uint256 _amount) external whenNotPaused {
         StakePosition storage pos = stakePositions[msg.sender][_index];
         require(pos.active, "Staking: position inactive");
         _addToPosition(msg.sender, _index, _amount);
@@ -168,7 +205,7 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
      * @param _amount   WLF amount to stake
      * @param _duration One of the DURATION_* constants (seconds)
      */
-    function stakeFixed(uint256 _amount, uint256 _duration) external {
+    function stakeFixed(uint256 _amount, uint256 _duration) external whenNotPaused {
         uint256 bonus = _bonusApyForDuration(_duration);
         require(bonus > 0, "Staking: invalid duration");
         StakePosition[] storage userPositions = stakePositions[msg.sender];

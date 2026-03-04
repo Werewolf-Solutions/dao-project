@@ -3,6 +3,7 @@ pragma solidity ^0.8.27;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 
 import "./WerewolfTokenV1.sol";
 import "./Treasury.sol";
@@ -42,7 +43,7 @@ interface IUniswapHelper {
     function positionManager() external view returns (address);
 }
 
-contract TokenSale is OwnableUpgradeable {
+contract TokenSale is OwnableUpgradeable, PausableUpgradeable {
     WerewolfTokenV1 private werewolfToken;
     Treasury private treasury;
     address public usdtTokenAddress;
@@ -84,7 +85,9 @@ contract TokenSale is OwnableUpgradeable {
 
     mapping(uint256 => Sale) public sales;
 
-    uint256[25] private __gap;
+    address public guardian;
+
+    uint256[24] private __gap;
 
     event SaleStarted(uint256 saleId, uint256 tokensAvailable, uint256 price);
     event SaleEnded(uint256 saleId);
@@ -111,6 +114,7 @@ contract TokenSale is OwnableUpgradeable {
         address _uniswapHelper
     ) public initializer {
         __Ownable_init(newOwner); //we do not want the msg.sender to be the owner since that will be the proxyAdmin
+        __Pausable_init();
         founder = newOwner; // persists after ownership is transferred to Timelock
         require(_usdtTokenAddress != address(0), "USDT address cannot be zero");
         usdtTokenAddress = _usdtTokenAddress;
@@ -137,6 +141,23 @@ contract TokenSale is OwnableUpgradeable {
 
     function setDaoContract(address _dao) external onlyOwner {
         daoContract = _dao;
+    }
+
+    modifier onlyGuardian() {
+        require(msg.sender == guardian || msg.sender == owner(), "TokenSale: not guardian or owner");
+        _;
+    }
+
+    function setGuardian(address _guardian) external onlyOwner {
+        guardian = _guardian;
+    }
+
+    function pause() external onlyGuardian {
+        _pause();
+    }
+
+    function unpause() external onlyGuardian {
+        _unpause();
     }
 
     function setUniswapHelper(address _uniswapHelper) external onlyOwner {
@@ -196,7 +217,7 @@ contract TokenSale is OwnableUpgradeable {
         uint256 _amount,
         uint256 amount0Desired,
         uint256 amount1Desired
-    ) external {
+    ) external whenNotPaused {
         require(saleActive, "Sale is not active");
         Sale storage currentSale = sales[saleIdCounter];
         require(

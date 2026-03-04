@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAccount, useReadContract, useReadContracts, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { parseUnits, encodeAbiParameters, parseAbiParameters, formatEther, formatUnits } from 'viem';
-import { daoABI, werewolfTokenABI, erc20ABI, treasuryABI, tokenSaleABI, companiesHouseABI, getAddress } from '@/contracts';
+import { daoABI, werewolfTokenABI, erc20ABI, treasuryABI, tokenSaleABI, companiesHouseABI, stakingABI, getAddress } from '@/contracts';
 import { useTheme } from '@/contexts/ThemeContext';
 import { PageContainer } from '@/components/PageContainer';
 import { Button } from '@/components/Button';
@@ -22,6 +22,7 @@ export default function DAO() {
   const wlfAddress = getAddress(chainId, 'WerewolfToken');
   const tokenSaleAddress = getAddress(chainId, 'TokenSale');
   const lpStakingAddress = getAddress(chainId, 'LPStaking');
+  const stakingAddress = getAddress(chainId, 'Staking');
   const treasuryAddress = getAddress(chainId, 'Treasury');
   const usdtAddress = getAddress(chainId, 'USDT');
   const companiesHouseAddress = getAddress(chainId, 'CompaniesHouse');
@@ -404,6 +405,28 @@ export default function DAO() {
     setIsModalOpen(false);
   };
 
+  const handleDistributeRewards = () => {
+    if (!treasuryAddress) return;
+    setLastAction('distribute-rewards');
+    writeContract({
+      address: treasuryAddress,
+      abi: treasuryABI,
+      functionName: 'distributeRewards',
+      args: [],
+    });
+  };
+
+  const handleDistributeRewardsToLP = () => {
+    if (!treasuryAddress) return;
+    setLastAction('distribute-rewards-lp');
+    writeContract({
+      address: treasuryAddress,
+      abi: treasuryABI,
+      functionName: 'distributeRewardsToLP',
+      args: [],
+    });
+  };
+
   // Airdrop entry helpers
   const addAirdropRow = () =>
     setAirdropEntries(prev => [...prev, { address: '', amount: '' }]);
@@ -593,6 +616,105 @@ export default function DAO() {
         </div>
       )}
 
+      {/* ── Guardian: Direct Reward Distribution ── */}
+      {isGuardian && (
+        <div className={`${theme.card} p-4 mt-4`}>
+          <p className="text-xs font-semibold uppercase tracking-wider text-amber-400/70 mb-3">
+            Guardian: Direct Distribution (early bootstrapping)
+          </p>
+          <p className={`text-xs ${theme.textMuted} mb-3`}>
+            Distribute staking rewards directly without a governance proposal. Use during early bootstrapping only — once the DAO matures, this should go through proposals.
+          </p>
+          <div className="flex gap-3 flex-wrap">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleDistributeRewards}
+              loading={isPending || isConfirming}
+              disabled={isPending || isConfirming}
+            >
+              Distribute to WLF Staking
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleDistributeRewardsToLP}
+              loading={isPending || isConfirming}
+              disabled={isPending || isConfirming}
+            >
+              Distribute to LP Staking
+            </Button>
+          </div>
+          <TxStatus isPending={isPending} isConfirming={isConfirming} isConfirmed={isConfirmed} txHash={txHash} label={lastAction} />
+        </div>
+      )}
+
+      {/* ── Guardian: Emergency Pause Controls ── */}
+      {isGuardian && (
+        <div className={`${theme.card} p-4 mt-4 border border-red-900/30`}>
+          <p className="text-xs font-semibold uppercase tracking-wider text-red-400/70 mb-3">
+            Guardian: Emergency Pause Controls
+          </p>
+          <p className={`text-xs mb-3 ${theme.textMuted}`}>
+            Pause protocol contracts to halt activity during emergencies. Use with extreme caution — pausing blocks all staking and employee payments.
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => {
+                if (!stakingAddress) return;
+                setLastAction('pause-staking');
+                writeContract({ address: stakingAddress, abi: stakingABI, functionName: 'pause', args: [] });
+              }}
+              loading={lastAction === 'pause-staking' && (isPending || isConfirming)}
+              disabled={isPending || isConfirming}
+            >
+              Pause Staking
+            </Button>
+            <Button
+              variant="info"
+              size="sm"
+              onClick={() => {
+                if (!stakingAddress) return;
+                setLastAction('unpause-staking');
+                writeContract({ address: stakingAddress, abi: stakingABI, functionName: 'unpause', args: [] });
+              }}
+              loading={lastAction === 'unpause-staking' && (isPending || isConfirming)}
+              disabled={isPending || isConfirming}
+            >
+              Unpause Staking
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => {
+                if (!companiesHouseAddress) return;
+                setLastAction('pause-companies');
+                writeContract({ address: companiesHouseAddress, abi: companiesHouseABI, functionName: 'pause', args: [] });
+              }}
+              loading={lastAction === 'pause-companies' && (isPending || isConfirming)}
+              disabled={isPending || isConfirming}
+            >
+              Pause CompaniesHouse
+            </Button>
+            <Button
+              variant="info"
+              size="sm"
+              onClick={() => {
+                if (!companiesHouseAddress) return;
+                setLastAction('unpause-companies');
+                writeContract({ address: companiesHouseAddress, abi: companiesHouseABI, functionName: 'unpause', args: [] });
+              }}
+              loading={lastAction === 'unpause-companies' && (isPending || isConfirming)}
+              disabled={isPending || isConfirming}
+            >
+              Unpause CompaniesHouse
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* ── Status filter chips ── */}
       {proposalIds.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mt-3 mb-1">
@@ -631,6 +753,9 @@ export default function DAO() {
               daoAddress={daoAddress}
               isGuardian={isGuardian}
               visibleStates={visibleStates}
+              wlfAddress={wlfAddress}
+              stakingAddress={stakingAddress}
+              lpStakingAddress={lpStakingAddress}
             />
           ))}
         </div>
