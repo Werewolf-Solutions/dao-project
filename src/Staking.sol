@@ -71,6 +71,8 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
     // Read this directly from the frontend instead of calling calculateApy().
     uint256 public currentApy;
 
+    uint256[40] private __gap;
+
     ///////////////////////////////////////
     //           Events                  //
     ///////////////////////////////////////
@@ -135,20 +137,47 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
 
     /**
      * @notice Stake WLF with no lock (flexible).
+     *         Adds to the caller's existing flexible position if one exists; otherwise creates a new one.
      * @param _amount WLF amount to stake
      */
     function stakeFlexible(uint256 _amount) external {
+        StakePosition[] storage userPositions = stakePositions[msg.sender];
+        for (uint256 i = 0; i < userPositions.length; i++) {
+            if (userPositions[i].active && userPositions[i].unlockAt == 0) {
+                _addToPosition(msg.sender, i, _amount);
+                return;
+            }
+        }
         _createPosition(msg.sender, _amount, 0, 0);
     }
 
     /**
+     * @notice Add WLF to an existing active position (flexible or fixed).
+     * @param _index  Position index in stakePositions[msg.sender]
+     * @param _amount WLF amount to add
+     */
+    function addToPosition(uint256 _index, uint256 _amount) external {
+        StakePosition storage pos = stakePositions[msg.sender][_index];
+        require(pos.active, "Staking: position inactive");
+        _addToPosition(msg.sender, _index, _amount);
+    }
+
+    /**
      * @notice Stake WLF for a fixed lock duration.
+     *         Adds to the caller's existing position for that duration if one exists; otherwise creates a new one.
      * @param _amount   WLF amount to stake
      * @param _duration One of the DURATION_* constants (seconds)
      */
     function stakeFixed(uint256 _amount, uint256 _duration) external {
         uint256 bonus = _bonusApyForDuration(_duration);
         require(bonus > 0, "Staking: invalid duration");
+        StakePosition[] storage userPositions = stakePositions[msg.sender];
+        for (uint256 i = 0; i < userPositions.length; i++) {
+            if (userPositions[i].active && userPositions[i].unlockAt > 0 && userPositions[i].bonusApy == bonus) {
+                _addToPosition(msg.sender, i, _amount);
+                return;
+            }
+        }
         _createPosition(msg.sender, _amount, block.timestamp + _duration, bonus);
     }
 
@@ -156,17 +185,34 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
 
     /**
      * @notice Stake tokens for a fixed 30-day duration (legacy interface).
+     *         Adds to _owner's existing 30-day position if one exists; otherwise creates a new one.
      * @dev msg.sender supplies the tokens; _owner receives the position.
      */
     function stakeFixedDuration(address _owner, uint256 _amount) external {
-        _createPosition(_owner, _amount, block.timestamp + DURATION_30D, durationBonus[DURATION_30D]);
+        uint256 bonus = durationBonus[DURATION_30D];
+        StakePosition[] storage ownerPositions = stakePositions[_owner];
+        for (uint256 i = 0; i < ownerPositions.length; i++) {
+            if (ownerPositions[i].active && ownerPositions[i].unlockAt > 0 && ownerPositions[i].bonusApy == bonus) {
+                _addToPosition(_owner, i, _amount);
+                return;
+            }
+        }
+        _createPosition(_owner, _amount, block.timestamp + DURATION_30D, bonus);
     }
 
     /**
      * @notice Stake tokens with no lock (legacy interface).
+     *         Adds to _owner's existing flexible position if one exists; otherwise creates a new one.
      * @dev msg.sender supplies the tokens; _owner receives the position.
      */
     function stakeFlexibleDuration(address _owner, uint256 _amount) external {
+        StakePosition[] storage ownerPositions = stakePositions[_owner];
+        for (uint256 i = 0; i < ownerPositions.length; i++) {
+            if (ownerPositions[i].active && ownerPositions[i].unlockAt == 0) {
+                _addToPosition(_owner, i, _amount);
+                return;
+            }
+        }
         _createPosition(_owner, _amount, 0, 0);
     }
 
@@ -262,10 +308,20 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
         require(totalRewards > 0, "Staking: no rewards to withdraw");
         _burn(msg.sender, totalSharesBurned);
 
-        // Re-stake rewards as a new flexible position
+        // Compound rewards into existing flexible position, or create a new one.
+        // No token transfer — WLF stays in the contract.
         uint256 newShares = _convertToShares(totalRewards, Math.Rounding.Floor);
         stakedBalance += totalRewards;
         _mint(msg.sender, newShares);
+        for (uint256 i = 0; i < userPositions.length; i++) {
+            if (userPositions[i].active && userPositions[i].unlockAt == 0) {
+                userPositions[i].shares += newShares;
+                userPositions[i].assets += totalRewards;
+                emit TokensStaked(msg.sender, i, totalRewards, newShares, false, 0, 0);
+                return;
+            }
+        }
+        // No active flexible position — create new
         uint256 newIdx = stakePositions[msg.sender].length;
         stakePositions[msg.sender].push(StakePosition({
             shares:   newShares,
@@ -302,10 +358,18 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
         require(totalAssets_ > 0, "Staking: no unlocked positions");
         _burn(msg.sender, totalSharesBurned);
 
-        // Re-stake the total as a new flexible position
+        // Merge into existing active flexible position, or create a new one.
         uint256 newShares = _convertToShares(totalAssets_, Math.Rounding.Floor);
         stakedBalance += totalAssets_;
         _mint(msg.sender, newShares);
+        for (uint256 i = 0; i < userPositions.length; i++) {
+            if (userPositions[i].active && userPositions[i].unlockAt == 0) {
+                userPositions[i].shares += newShares;
+                userPositions[i].assets += totalAssets_;
+                emit TokensStaked(msg.sender, i, totalAssets_, newShares, false, 0, 0);
+                return;
+            }
+        }
         uint256 newIdx = stakePositions[msg.sender].length;
         stakePositions[msg.sender].push(StakePosition({
             shares:   newShares,
@@ -471,6 +535,23 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
     ///////////////////////////////////////
 
     /**
+     * @dev Adds _amount to an existing position. msg.sender supplies the tokens; _receiver owns the position.
+     *      Increases pos.shares and pos.assets so new tokens become part of the principal watermark.
+     */
+    function _addToPosition(address _receiver, uint256 _index, uint256 _amount) internal {
+        require(_amount > 0, "Staking: amount must be > 0");
+        require(stakingToken.transferFrom(msg.sender, address(this), _amount), "Staking: transfer failed");
+        _updateRewardPerToken();
+        uint256 sharesToMint = _convertToShares(_amount, Math.Rounding.Floor);
+        stakedBalance += _amount;
+        StakePosition storage pos = stakePositions[_receiver][_index];
+        pos.shares += sharesToMint;
+        pos.assets += _amount;
+        _mint(_receiver, sharesToMint);
+        emit TokensStaked(_receiver, _index, _amount, sharesToMint, pos.unlockAt > 0, pos.unlockAt, pos.bonusApy);
+    }
+
+    /**
      * @dev Core staking logic: transfers tokens, mints shares, records the position.
      *      msg.sender supplies the tokens; _receiver owns the position.
      */
@@ -569,6 +650,14 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable {
         // sWLF sent directly to this contract is not a valid withdrawal path
         require(_to != address(this), "Staking: use withdrawPosition");
         super._update(_from, _to, _value);
+    }
+
+    /**
+     * @notice Returns the implementation version. Callable only after v2.0.0 upgrade.
+     * @return Version string "2.0.0"
+     */
+    function version() external pure returns (string memory) {
+        return "2.0.0";
     }
 
     // ── Deprecated stubs kept for ABI compat ──────────────────────────────

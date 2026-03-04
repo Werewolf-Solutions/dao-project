@@ -44,6 +44,51 @@ deploy-sepolia:
 		--verify --etherscan-api-key $(ETHERSCAN_API_KEY) \
 		--resume --private-key $(PRIVATE_KEY)
 
+# ─── Upgrade (Sepolia) ────────────────────────────────────────────────────────
+# Usage: make upgrade-sepolia
+# Auto-detects changed contracts by comparing on-chain bytecode vs local artifacts.
+# Only upgrades contracts whose bytecode has changed — skips everything else.
+# Requires MULTISIG_PRIVATE_KEY in .env (private key for MULTISIG_ADDRESS)
+#
+# Proxy env vars are read automatically from script/output/deployed-addresses.txt
+PROXY_ENVS = \
+  TREASURY_PROXY=$(shell grep '^Treasury:' script/output/deployed-addresses.txt | cut -d: -f2) \
+  TIMELOCK_PROXY=$(shell grep '^TimeLock:' script/output/deployed-addresses.txt | cut -d: -f2) \
+  WLF_PROXY=$(shell grep '^WerewolfToken:' script/output/deployed-addresses.txt | cut -d: -f2) \
+  STAKING_PROXY=$(shell grep '^Staking:' script/output/deployed-addresses.txt | cut -d: -f2) \
+  LP_STAKING_PROXY=$(shell grep '^LPStaking:' script/output/deployed-addresses.txt | cut -d: -f2) \
+  DAO_PROXY=$(shell grep '^DAO:' script/output/deployed-addresses.txt | cut -d: -f2) \
+  TOKEN_SALE_PROXY=$(shell grep '^TokenSale:' script/output/deployed-addresses.txt | cut -d: -f2) \
+  COMPANIES_HOUSE_PROXY=$(shell grep '^CompaniesHouse:' script/output/deployed-addresses.txt | cut -d: -f2)
+
+upgrade-sepolia-dry:
+	$(PROXY_ENVS) forge script script/Upgrade.s.sol:Upgrade --rpc-url $(SEPOLIA_RPC_URL)
+
+upgrade-sepolia:
+	$(PROXY_ENVS) forge script script/Upgrade.s.sol:Upgrade \
+		--rpc-url $(SEPOLIA_RPC_URL) --broadcast \
+		--private-key $(MULTISIG_PRIVATE_KEY)
+	node scripts/sync-dapp.mjs
+	$(PROXY_ENVS) forge script script/Upgrade.s.sol:Upgrade \
+		--rpc-url $(SEPOLIA_RPC_URL) \
+		--verify --etherscan-api-key $(ETHERSCAN_API_KEY) \
+		--resume --private-key $(MULTISIG_PRIVATE_KEY)
+
+# ─── Upgradability PoC (Sepolia) ─────────────────────────────────────────────
+# Step 2: Create 3 staking positions (establishes on-chain state before upgrade)
+#   Deployer must hold ≥ 600 WLF (received from WerewolfTokenV1.initialize at deploy)
+stake-sepolia:
+	$(PROXY_ENVS) forge script script/InteractStaking.s.sol:InteractStaking \
+		--rpc-url $(SEPOLIA_RPC_URL) --broadcast \
+		--private-key $(PRIVATE_KEY)
+
+# Step 5: Verify state survived upgrade and version() returns "2.0.0"
+#   Run AFTER make upgrade-sepolia
+verify-upgrade-sepolia:
+	$(PROXY_ENVS) forge script script/VerifyUpgrade.s.sol:VerifyUpgrade \
+		--rpc-url $(SEPOLIA_RPC_URL) \
+		--private-key $(PRIVATE_KEY)
+
 # ─── Test Proposal: Start Sale #1 (Sepolia) ──────────────────────────────────
 # Set env vars from script/output/deployed-addresses.txt before running:
 #   export DAO_ADDRESS=0x... WEREWOLF_TOKEN_ADDRESS=0x... TOKEN_SALE_ADDRESS=0x...
@@ -64,6 +109,37 @@ queue-proposal-sepolia:
 execute-proposal-sepolia:
 	STEP=execute forge script script/TestProposal_StartSale1.s.sol:TestProposalStartSale1 \
 		--rpc-url $(SEPOLIA_RPC_URL) --broadcast --private-key $(PRIVATE_KEY)
+
+# ─── Mainnet ──────────────────────────────────────────────────────────────────
+# Requires MAINNET_RPC_URL, PRIVATE_KEY, MULTISIG_ADDRESS, ETHERSCAN_API_KEY in .env
+
+deploy-mainnet-dry:
+	forge script script/Deploy.s.sol:Deploy --rpc-url $(MAINNET_RPC_URL)
+
+deploy-mainnet:
+	@echo "⚠️  MAINNET DEPLOYMENT — double-check .env before proceeding"
+	forge script script/Deploy.s.sol:Deploy \
+		--rpc-url $(MAINNET_RPC_URL) --broadcast \
+		--private-key $(PRIVATE_KEY)
+	node scripts/sync-dapp.mjs
+	forge script script/Deploy.s.sol:Deploy \
+		--rpc-url $(MAINNET_RPC_URL) \
+		--verify --etherscan-api-key $(ETHERSCAN_API_KEY) \
+		--resume --private-key $(PRIVATE_KEY)
+
+upgrade-mainnet-dry:
+	$(PROXY_ENVS) forge script script/Upgrade.s.sol:Upgrade --rpc-url $(MAINNET_RPC_URL)
+
+upgrade-mainnet:
+	@echo "⚠️  MAINNET UPGRADE — double-check .env before proceeding"
+	$(PROXY_ENVS) forge script script/Upgrade.s.sol:Upgrade \
+		--rpc-url $(MAINNET_RPC_URL) --broadcast \
+		--private-key $(MULTISIG_PRIVATE_KEY)
+	node scripts/sync-dapp.mjs
+	$(PROXY_ENVS) forge script script/Upgrade.s.sol:Upgrade \
+		--rpc-url $(MAINNET_RPC_URL) \
+		--verify --etherscan-api-key $(ETHERSCAN_API_KEY) \
+		--resume --private-key $(MULTISIG_PRIVATE_KEY)
 
 # ─── Debug / Diagnose ─────────────────────────────────────────────────────────
 # Run with: make fork-debug

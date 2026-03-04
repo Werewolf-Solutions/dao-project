@@ -42,6 +42,8 @@ contract Treasury is OwnableUpgradeable {
     address public usdtToken;
     uint24 public buybackPoolFee;
 
+    uint256[42] private __gap;
+
     event RewardsDistributed(address indexed stakingContract, uint256 amount);
     event WLFBuyback(uint256 usdtSpent, uint256 wlfReceived);
 
@@ -104,6 +106,7 @@ contract Treasury is OwnableUpgradeable {
 
     // Check if the treasury balance is above the threshold
     function isAboveThreshold() public view returns (bool) {
+        if (address(werewolfToken) == address(0)) return false;
         uint256 treasuryBalance = werewolfToken.balanceOf(address(this));
         uint256 threshold = (treasuryBalance * thresholdPercentage) / 100;
         return treasuryBalance > threshold; //note the threshold will never be false
@@ -169,6 +172,7 @@ contract Treasury is OwnableUpgradeable {
     function buybackWLF(uint256 usdtAmount, uint256 minWLFOut) external onlyOwner returns (uint256 wlfReceived) {
         require(swapRouter != address(0), "Swap router not set");
         require(usdtAmount > 0, "Amount must be > 0");
+        require(minWLFOut > 0, "Treasury: minWLFOut must be > 0");
         require(IERC20(usdtToken).balanceOf(address(this)) >= usdtAmount, "Insufficient USDT");
 
         IERC20(usdtToken).approve(swapRouter, usdtAmount);

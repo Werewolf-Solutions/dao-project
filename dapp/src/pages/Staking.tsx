@@ -44,6 +44,19 @@ function bonusApyToMultiplierLabel(bonusApy: bigint): string {
   return '3x APY';
 }
 
+function durationSecondsToBonus(seconds: number): bigint {
+  const map: Record<number, bigint> = {
+    [30   * 24 * 3600]:  5_000n,
+    [90   * 24 * 3600]: 10_000n,
+    [180  * 24 * 3600]: 15_000n,
+    [365  * 24 * 3600]: 25_000n,
+    [730  * 24 * 3600]: 40_000n,
+    [1825 * 24 * 3600]: 60_000n,
+    [3650 * 24 * 3600]: 80_000n,
+  };
+  return map[seconds] ?? 0n;
+}
+
 function durationLabel(stakedAt: bigint, unlockAt: bigint): string {
   if (unlockAt === 0n) return 'Flexible';
   const days = Math.round(Number(unlockAt - stakedAt) / 86400);
@@ -71,24 +84,33 @@ interface WlfPositionCardProps {
   index:                    number;
   pos:                      StakePosition;
   apy:                      bigint | undefined;
+  totalAssets:              bigint | undefined;
+  totalShares:              bigint | undefined;
   positionTick:             number;
   withdrawInput:            string;
+  stakeMoreInput:           string;
   onWithdrawInputChange:    (val: string) => void;
+  onStakeMoreInputChange:   (val: string) => void;
   onWithdrawAll:            () => void;
   onWithdrawAmount:         () => void;
   onWithdrawRewards:        (reward: bigint) => void;
-  onStakeMore:              () => void;
+  onAddToPosition:          () => void;
+  needsApprovalForAdd:      boolean;
   isWithdrawAllLoading:     boolean;
   isWithdrawAmountLoading:  boolean;
   isWithdrawRewardsLoading: boolean;
+  isAddToPositionLoading:   boolean;
   anyLoading:               boolean;
 }
 
 function WlfPositionCard({
-  index, pos, apy, positionTick,
-  withdrawInput, onWithdrawInputChange, onWithdrawAll, onWithdrawAmount,
-  onWithdrawRewards, onStakeMore,
-  isWithdrawAllLoading, isWithdrawAmountLoading, isWithdrawRewardsLoading, anyLoading,
+  index, pos, apy, totalAssets, totalShares, positionTick,
+  withdrawInput, stakeMoreInput,
+  onWithdrawInputChange, onStakeMoreInputChange,
+  onWithdrawAll, onWithdrawAmount, onWithdrawRewards, onAddToPosition,
+  needsApprovalForAdd,
+  isWithdrawAllLoading, isWithdrawAmountLoading, isWithdrawRewardsLoading, isAddToPositionLoading,
+  anyLoading,
 }: WlfPositionCardProps) {
   const now = BigInt(Math.floor(Date.now() / 1000));
   const isFixed   = pos.unlockAt > 0n;
@@ -96,20 +118,26 @@ function WlfPositionCard({
   const label           = durationLabel(pos.stakedAt, pos.unlockAt);
   const multiplierLabel = bonusApyToMultiplierLabel(pos.bonusApy);
 
-  // Earned since deposit — calculated from on-chain stakedAt + assets, never resets to 0.
-  // elapsed = seconds since stake was created + seconds ticked since last chain refresh.
-  const nowSecs = BigInt(Math.floor(Date.now() / 1000));
-  const elapsedBase = nowSecs > pos.stakedAt ? nowSecs - pos.stakedAt : 0n;
-  const elapsedTotal = elapsedBase + BigInt(positionTick);
-  const earned = apy && apy > 0n
-    ? pos.assets * apy * elapsedTotal / (31_536_000n * 100_000n)
+  // Current value from actual on-chain shares × vault exchange rate (pos.shares * totalAssets / totalShares).
+  // Live tick growth: simulate reward accrual since last chain refresh by advancing totalAssets.
+  const perSecond = totalAssets && apy && apy > 0n
+    ? totalAssets * apy / (31_536_000n * 100_000n)
     : 0n;
+  const tickedAssets = totalAssets !== undefined
+    ? totalAssets + perSecond * BigInt(positionTick)
+    : undefined;
+  const currentValue = tickedAssets !== undefined && totalShares && totalShares > 0n
+    ? pos.shares * tickedAssets / totalShares
+    : pos.assets;
 
-  // WLF value = original deposit + all rewards earned since staking
-  const displayValue = pos.assets + earned;
+  // Rewards = value above original principal (pos.assets never changes on-chain after partial withdrawals).
+  const earned = currentValue > pos.assets ? currentValue - pos.assets : 0n;
+
+  // WLF value = current share-based value (principal + accumulated rewards)
+  const displayValue = currentValue;
 
   const wlfPerDay = apy && apy > 0n
-    ? pos.assets * apy / (365n * 100_000n)
+    ? currentValue * apy / (365n * 100_000n)
     : 0n;
 
   const unlockDate = isFixed
@@ -202,24 +230,36 @@ function WlfPositionCard({
           </Button>
         )}
 
-        {/* Withdraw all + Stake more */}
-        <div className="flex gap-2">
-          <Button
-            variant="danger"
-            fullWidth
-            onClick={onWithdrawAll}
-            loading={isWithdrawAllLoading}
-            disabled={anyLoading || !canWithdraw}
-          >
-            {isLocked ? `Locked until ${unlockDate}` : 'Withdraw All'}
-          </Button>
+        {/* Withdraw all */}
+        <Button
+          variant="danger"
+          fullWidth
+          onClick={onWithdrawAll}
+          loading={isWithdrawAllLoading}
+          disabled={anyLoading || !canWithdraw}
+        >
+          {isLocked ? `Locked until ${unlockDate}` : 'Withdraw All'}
+        </Button>
+
+        {/* Stake More — inline add to this position */}
+        <div className="flex gap-2 items-end">
+          <div className="flex-1">
+            <Input
+              label="Add stake (WLF)"
+              type="number"
+              value={stakeMoreInput}
+              onChange={(e) => onStakeMoreInputChange(e.target.value)}
+              placeholder="0.00"
+              disabled={anyLoading}
+            />
+          </div>
           <Button
             variant="primary"
-            fullWidth
-            onClick={onStakeMore}
-            disabled={anyLoading}
+            onClick={onAddToPosition}
+            loading={isAddToPositionLoading}
+            disabled={anyLoading || !stakeMoreInput || parseFloat(stakeMoreInput) <= 0}
           >
-            Stake More
+            {needsApprovalForAdd ? 'Approve' : 'Stake More'}
           </Button>
         </div>
       </div>
@@ -342,9 +382,10 @@ export default function Staking() {
   const [stakeAmount, setStakeAmount] = useState('');
   const [selectedDuration, setSelectedDuration] = useState<typeof DURATIONS[number]>(DURATIONS[0]);
 
-  // ── Per-position withdraw inputs ────────────────────────────────────────
+  // ── Per-position withdraw / stake-more inputs ────────────────────────────
 
   const [posWithdrawInputs, setPosWithdrawInputs] = useState<Record<number, string>>({});
+  const [posStakeInputs, setPosStakeInputs]       = useState<Record<number, string>>({});
   const [showRewardsBreakdown, setShowRewardsBreakdown] = useState(false);
 
   // ── WLF staking reads ────────────────────────────────────────────────────
@@ -501,11 +542,26 @@ export default function Staking() {
   const [lastAction, setLastAction] = useState('');
 
   useEffect(() => {
-    if (isConfirmed) {
-      void refetchPositions();
-      void refetchAllowance();
+    if (!isConfirmed) return;
+    void refetchPositions();
+    void refetchAllowance();
+    // After approve-add-N confirms, fire the actual addToPosition call
+    const match = lastAction.match(/^approve-add-(\d+)$/);
+    if (match && stakingAddress) {
+      const idx = parseInt(match[1], 10);
+      const raw = posStakeInputs[idx];
+      if (raw) {
+        try {
+          const amount = parseUnits(raw, 18);
+          if (amount > 0n) {
+            setLastAction(`add-to-${idx}`);
+            writeContract({ address: stakingAddress, abi: stakingABI, functionName: 'addToPosition', args: [BigInt(idx), amount] });
+          }
+        } catch { /* invalid input */ }
+      }
     }
-  }, [isConfirmed, refetchPositions, refetchAllowance]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConfirmed]);
 
   // ── LP write contracts ───────────────────────────────────────────────────
 
@@ -601,16 +657,29 @@ export default function Staking() {
 
   const activePositions = (positions ?? []).filter((p) => p.active);
 
+  // Detect whether the selected duration already has an active position
+  const selectedBonusApy = durationSecondsToBonus(selectedDuration.seconds);
+  const willAddToExisting = selectedDuration.seconds === 0
+    ? activePositions.some((p) => p.unlockAt === 0n)
+    : activePositions.some((p) => p.unlockAt > 0n && p.bonusApy === selectedBonusApy);
+
   const hasUnlockedPositions = activePositions.some(
     (p) => p.unlockAt === 0n || now >= p.unlockAt,
   );
 
-  // Total rewards earned across all active positions (live, includes positionTick)
-  const totalEarned = activePositions.reduce((acc, pos) => {
-    const elapsed = now > pos.stakedAt ? (now - pos.stakedAt + BigInt(positionTick)) : BigInt(positionTick);
-    const e = apy && apy > 0n ? pos.assets * apy * elapsed / (31_536_000n * 100_000n) : 0n;
-    return acc + e;
-  }, 0n);
+  // Total rewards earned across all active positions (live, includes positionTick).
+  // Uses share-based value (pos.shares * tickedAssets / totalShares) so the number stays correct
+  // after partial withdrawals (pos.assets is never updated on-chain).
+  const totalEarned = (() => {
+    if (!totalAssets || !totalShares || totalShares === 0n) return 0n;
+    const perSecond = apy && apy > 0n ? totalAssets * apy / (31_536_000n * 100_000n) : 0n;
+    const tickedAssets = totalAssets + perSecond * BigInt(positionTick);
+    return activePositions.reduce((acc, pos) => {
+      const cv = pos.shares * tickedAssets / totalShares;
+      const e = cv > pos.assets ? cv - pos.assets : 0n;
+      return acc + e;
+    }, 0n);
+  })();
 
   // ── New position handlers ────────────────────────────────────────────────
 
@@ -653,6 +722,22 @@ export default function Staking() {
     if (!stakingAddress || rewardAmount <= 0n) return;
     setLastAction(`withdraw-rewards-${index}`);
     writeContract({ address: stakingAddress, abi: stakingABI, functionName: 'withdrawAmountFromPosition', args: [BigInt(index), rewardAmount] });
+  };
+
+  const handleAddToPosition = (index: number) => {
+    const raw = posStakeInputs[index];
+    if (!stakingAddress || !wlfAddress || !raw) return;
+    let amount: bigint;
+    try { amount = parseUnits(raw, 18); } catch { return; }
+    if (amount <= 0n) return;
+    if (wlfAllowance !== undefined && wlfAllowance < amount) {
+      // Approve first — same approval target (staking contract)
+      setLastAction(`approve-add-${index}`);
+      writeContract({ address: wlfAddress, abi: erc20ABI, functionName: 'approve', args: [stakingAddress, amount] });
+    } else {
+      setLastAction(`add-to-${index}`);
+      writeContract({ address: stakingAddress, abi: stakingABI, functionName: 'addToPosition', args: [BigInt(index), amount] });
+    }
   };
 
   const handleWithdrawAllRewards = () => {
@@ -784,12 +869,13 @@ export default function Staking() {
                     {activePositions.map((pos, i) => {
                       const trueIdx = (positions ?? []).findIndex((p) => p === pos);
                       const idx = trueIdx >= 0 ? trueIdx : i;
-                      const elapsed = now > pos.stakedAt
-                        ? (now - pos.stakedAt + BigInt(positionTick))
-                        : BigInt(positionTick);
-                      const e = apy && apy > 0n
-                        ? pos.assets * apy * elapsed / (31_536_000n * 100_000n)
-                        : 0n;
+                      const e = (() => {
+                        if (!totalAssets || !totalShares || totalShares === 0n) return 0n;
+                        const perSecond = apy && apy > 0n ? totalAssets * apy / (31_536_000n * 100_000n) : 0n;
+                        const tickedAssets = totalAssets + perSecond * BigInt(positionTick);
+                        const cv = pos.shares * tickedAssets / totalShares;
+                        return cv > pos.assets ? cv - pos.assets : 0n;
+                      })();
                       const isFixed = pos.unlockAt > 0n;
                       const typeLabel = isFixed
                         ? `Fixed · ${bonusApyToMultiplierLabel(pos.bonusApy)}`
@@ -894,22 +980,30 @@ export default function Staking() {
                     index={idx}
                     pos={pos}
                     apy={apy}
+                    totalAssets={totalAssets}
+                    totalShares={totalShares}
                     positionTick={positionTick}
                     withdrawInput={posWithdrawInputs[idx] ?? ''}
+                    stakeMoreInput={posStakeInputs[idx] ?? ''}
                     onWithdrawInputChange={(val) =>
                       setPosWithdrawInputs((prev) => ({ ...prev, [idx]: val }))
+                    }
+                    onStakeMoreInputChange={(val) =>
+                      setPosStakeInputs((prev) => ({ ...prev, [idx]: val }))
                     }
                     onWithdrawAll={() => handleWithdrawAll(idx)}
                     onWithdrawAmount={() => handleWithdrawAmount(idx)}
                     onWithdrawRewards={(reward) => handleWithdrawRewards(idx, reward)}
-                    onStakeMore={() => {
-                      // Stake More always opens flexible form
-                      setSelectedDuration(DURATIONS[0]);
-                      newPositionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                    }}
+                    onAddToPosition={() => handleAddToPosition(idx)}
+                    needsApprovalForAdd={(() => {
+                      const raw = posStakeInputs[idx];
+                      if (!raw) return false;
+                      try { const a = parseUnits(raw, 18); return wlfAllowance !== undefined && a > 0n && wlfAllowance < a; } catch { return false; }
+                    })()}
                     isWithdrawAllLoading={isLoading && lastAction === `withdraw-all-${idx}`}
                     isWithdrawAmountLoading={isLoading && lastAction === `withdraw-${idx}`}
                     isWithdrawRewardsLoading={isLoading && lastAction === `withdraw-rewards-${idx}`}
+                    isAddToPositionLoading={isLoading && (lastAction === `add-to-${idx}` || lastAction === `approve-add-${idx}`)}
                     anyLoading={isLoading}
                   />
                 );
@@ -918,7 +1012,7 @@ export default function Staking() {
 
             {/* ── New position form ── */}
             <div ref={newPositionRef}>
-              <Card title="New Position">
+              <Card title={willAddToExisting ? `Add to ${selectedDuration.seconds === 0 ? 'Flexible' : selectedDuration.label} Position` : 'New Position'}>
                 <Input
                   label="Amount (WLF)"
                   type="number"
@@ -961,12 +1055,12 @@ export default function Staking() {
                 {/* Summary line */}
                 <p className="text-xs mt-2" style={{ color: theme.textMuted }}>
                   {selectedDuration.seconds === 0
-                    ? `Flexible — no lock. Current base APY: ${apyDisplay}.`
-                    : `Fixed ${selectedDuration.label} lock. ${selectedDuration.multiplierLabel} × base APY${
-                        apy !== undefined
-                          ? ` ≈ ${(Number(apy) * selectedDuration.multiplier / 1_000).toFixed(2)}%`
-                          : ''
-                      }.`}
+                    ? willAddToExisting
+                      ? `Adds to your existing flexible position. Current base APY: ${apyDisplay}.`
+                      : `Creates a new flexible position. Current base APY: ${apyDisplay}.`
+                    : willAddToExisting
+                      ? `Adds to your existing ${selectedDuration.label} position. ${selectedDuration.multiplierLabel} × base APY${apy !== undefined ? ` ≈ ${(Number(apy) * selectedDuration.multiplier / 1_000).toFixed(2)}%` : ''}.`
+                      : `Creates a new ${selectedDuration.label} locked position. ${selectedDuration.multiplierLabel} × base APY${apy !== undefined ? ` ≈ ${(Number(apy) * selectedDuration.multiplier / 1_000).toFixed(2)}%` : ''}.`}
                 </p>
 
                 <div className="mt-3">
@@ -983,8 +1077,8 @@ export default function Staking() {
                       disabled={isLoading || stakeAmountBig <= 0n}
                     >
                       {selectedDuration.seconds === 0
-                        ? 'Stake (Flexible)'
-                        : `Stake (Fixed ${selectedDuration.label})`}
+                        ? willAddToExisting ? 'Add to Flexible Position' : 'Stake (Flexible)'
+                        : willAddToExisting ? `Add to ${selectedDuration.label} Position` : `Stake (Fixed ${selectedDuration.label})`}
                     </Button>
                   )}
                 </div>
@@ -1115,7 +1209,7 @@ export default function Staking() {
 
               <p className={`text-xs mt-4 ${theme.textMuted}`}>
                 Rewards accrue continuously. <strong>Withdraw to Wallet</strong> sends WLF to your address.{' '}
-                <strong>Stake WLF (Flexible)</strong> compounds rewards into a new flexible WLF staking position.
+                <strong>Stake WLF (Flexible)</strong> compounds rewards into your existing flexible WLF staking position (or creates one if none exists).
                 Withdrawing LP shares does <strong>not</strong> auto-claim rewards — always claim first.
                 LP shares are locked for 5 years from sale end.
               </p>

@@ -35,7 +35,8 @@ interface IUniswapHelper {
         int24 tickLower,
         int24 tickUpper,
         uint256 amount0Desired,
-        uint256 amount1Desired
+        uint256 amount1Desired,
+        uint16 slippageBps
     ) external returns (uint256 tokenId);
 
     function positionManager() external view returns (address);
@@ -82,6 +83,8 @@ contract TokenSale is OwnableUpgradeable {
     }
 
     mapping(uint256 => Sale) public sales;
+
+    uint256[25] private __gap;
 
     event SaleStarted(uint256 saleId, uint256 tokensAvailable, uint256 price);
     event SaleEnded(uint256 saleId);
@@ -280,7 +283,8 @@ contract TokenSale is OwnableUpgradeable {
                 tickLower,
                 tickUpper,
                 wlfForUSDT,
-                totalUSDT
+                totalUSDT,
+                100  // 1% slippage tolerance
             );
 
             // Actual amounts consumed by Uniswap (desired minus what was returned as excess)

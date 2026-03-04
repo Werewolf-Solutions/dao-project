@@ -30,7 +30,8 @@ contract MockConsumeUniswapHelper {
         int24,
         int24,
         uint256 amount0Desired,
-        uint256 amount1Desired
+        uint256 amount1Desired,
+        uint16
     ) external returns (uint256 tokenId) {
         IERC20(token0).transferFrom(msg.sender, address(this), amount0Desired);
         IERC20(token1).transferFrom(msg.sender, address(this), amount1Desired);

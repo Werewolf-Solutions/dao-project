@@ -55,6 +55,8 @@ contract DAO is Initializable {
         bool canceled;
         /// @notice Flag marking whether the proposal has been executed
         bool executed;
+        /// @notice Block number when proposal was created — voting power snapshot
+        uint256 snapshotBlock;
     }
 
     struct Receipt {
@@ -125,6 +127,8 @@ contract DAO is Initializable {
     mapping(bytes32 => bool) public queuedTransactions;
     mapping(address => uint256) public latestProposalIds;
 
+    uint256[23] private __gap;
+
     ///////////////////////////////////////
     //           Events                  //
     ///////////////////////////////////////
@@ -180,7 +184,7 @@ contract DAO is Initializable {
         delegationCooldown = 180 days; // 6 months initial cooldown; adjustable via DAO proposal
         proposalCount = 1;
         votingPeriodDuration = 1 hours;
-        votingDelayDuration = 1;
+        votingDelayDuration = 1 days;
         //guardian = msg.sender;
         // _authorizeCaller(_timelock);
     }
@@ -228,7 +232,7 @@ contract DAO is Initializable {
         receipt.hasVoted = true;
         receipt.support = _support;
 
-        uint256 _voteAmount = _getVotingPower(msg.sender);
+        uint256 _voteAmount = _getVotingPower(msg.sender, proposal.snapshotBlock);
         receipt.votes = uint96(_voteAmount);
 
         if (_support) {
@@ -335,6 +339,7 @@ contract DAO is Initializable {
         }
         delegatedVotingPower[currentDelegate] += newPower;
         userDelegatedPower[user] = newPower;
+        emit DelegateChanged(user, currentDelegate, currentDelegate);
     }
 
     ///////////////////////////////////////
@@ -418,7 +423,8 @@ contract DAO is Initializable {
             endTime: endTime,
             eta: 0,
             canceled: false,
-            executed: false
+            executed: false,
+            snapshotBlock: block.number
         });
 
         emit ProposalCreated(proposalCount, msg.sender);
@@ -581,8 +587,26 @@ contract DAO is Initializable {
         return own + delegatedVotingPower[voter];
     }
 
+    /// @dev Snapshot version: uses getPriorVotes for WLF to prevent flash-loan attacks.
+    function _getVotingPower(address voter, uint256 snapshotBlock) internal view returns (uint256) {
+        uint256 own = voteDelegate[voter] == address(0) ? _getRawVotingPower(voter, snapshotBlock) : 0;
+        return own + delegatedVotingPower[voter];
+    }
+
     function _getRawVotingPower(address voter) internal view returns (uint256) {
         uint256 power = werewolfToken.balanceOf(voter);
+        if (stakingContract != address(0)) {
+            power += IStaking(stakingContract).getStakedWLF(voter);
+        }
+        if (lpStakingContract != address(0)) {
+            power += ILPStaking(lpStakingContract).getWLFVotingPower(voter);
+        }
+        return power;
+    }
+
+    /// @dev Snapshot version: reads WLF balance at snapshotBlock to prevent flash-loan voting.
+    function _getRawVotingPower(address voter, uint256 snapshotBlock) internal view returns (uint256) {
+        uint256 power = werewolfToken.getPriorVotes(voter, snapshotBlock);
         if (stakingContract != address(0)) {
             power += IStaking(stakingContract).getStakedWLF(voter);
         }

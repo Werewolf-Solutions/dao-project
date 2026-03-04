@@ -12,12 +12,6 @@ import { LPDelegation } from '@/components/LPDelegation';
 
 const ALL_STATES = ['Pending', 'Active', 'Succeeded', 'Queued', 'Defeated', 'Canceled', 'Expired', 'Executed'];
 
-// Token sale roadmap — sale #0 is the founder sale handled at deploy time
-const TOKEN_SALE_CONFIGS = [
-  { saleIdx: 1, amount: '25000000', price: '0.004', amountLabel: '25M WLF', priceLabel: '0.004 USDT/WLF', totalLabel: '~100k USDT', locked: '5 years' },
-  { saleIdx: 2, amount: '25000000', price: '0.04',  amountLabel: '25M WLF', priceLabel: '0.04 USDT/WLF',  totalLabel: '~1M USDT',   locked: null },
-  { saleIdx: 3, amount: '25000000', price: '0.4',   amountLabel: '25M WLF', priceLabel: '0.4 USDT/WLF',   totalLabel: '~10M USDT',  locked: null },
-] as const;
 
 
 export default function DAO() {
@@ -105,6 +99,13 @@ export default function DAO() {
     query: { enabled: !!tokenSaleAddress, refetchInterval: 15_000 },
   });
 
+  const { data: tokenSalePrice } = useReadContract({
+    address: tokenSaleAddress,
+    abi: tokenSaleABI,
+    functionName: 'price',
+    query: { enabled: !!tokenSaleAddress, refetchInterval: 30_000 },
+  });
+
   const { data: treasurySwapRouter } = useReadContract({
     address: treasuryAddress,
     abi: treasuryABI,
@@ -152,77 +153,22 @@ export default function DAO() {
     query: { enabled: !!companiesHouseAddress && companyCount > 1 },
   });
 
-  // Batch-read proposal states + actions to detect active sale-start proposals
-  const allProposalCount = proposalCount ? Number(proposalCount) : 0;
-  const allProposalIds = allProposalCount > 1
-    ? Array.from({ length: allProposalCount - 1 }, (_, i) => i + 1)
-    : [];
-
-  const { data: proposalStatesData } = useReadContracts({
-    contracts: allProposalIds.map(id => ({
-      address: daoAddress as `0x${string}`,
-      abi: daoABI,
-      functionName: 'getProposalState' as const,
-      args: [BigInt(id)] as [bigint],
-    })),
-    query: { enabled: !!daoAddress && allProposalIds.length > 0, refetchInterval: 15_000 },
-  });
-
-  const { data: proposalActionsData } = useReadContracts({
-    contracts: allProposalIds.map(id => ({
-      address: daoAddress as `0x${string}`,
-      abi: daoABI,
-      functionName: 'getProposalActions' as const,
-      args: [BigInt(id)] as [bigint],
-    })),
-    query: { enabled: !!daoAddress && allProposalIds.length > 0, refetchInterval: 15_000 },
-  });
-
   // ── Writes ─────────────────────────────────────────────────────────────────
 
   const { writeContract, data: txHash, isPending } = useWriteContract();
   const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash: txHash });
   const [lastAction, setLastAction] = useState('');
-  const [nextSaleIdx, setNextSaleIdx] = useState(() => {
-    const stored = parseInt(localStorage.getItem('nextTokenSaleIdx') ?? '1');
-    return isNaN(stored) ? 1 : stored;
-  });
 
   useEffect(() => {
     if (isConfirmed) {
       void refetchCount();
       if (lastAction === 'approve-wlf') void refetchWlfAllowance();
       if (lastAction === 'wire-tokensale-into-dao') void refetchDaoTokenSale();
-      if (lastAction === 'create-sale-proposal') {
-        setNextSaleIdx(prev => {
-          const next = prev + 1;
-          localStorage.setItem('nextTokenSaleIdx', String(next));
-          return next;
-        });
-      }
     }
   }, [isConfirmed, lastAction, refetchCount, refetchWlfAllowance, refetchDaoTokenSale]);
 
-  // ── Token sale quick action — advance past on-chain saleIdCounter too ─────
-  const effectiveNextSale = Math.max(
-    nextSaleIdx,
-    saleIdCounter !== undefined ? Number(saleIdCounter) + 1 : nextSaleIdx,
-  );
-  const nextSaleConfig = TOKEN_SALE_CONFIGS.find(s => s.saleIdx === effectiveNextSale);
-
-  const LIVE_STATES = new Set(['Pending', 'Active', 'Succeeded', 'Queued']);
-  const hasSaleStartProposal = (() => {
-    if (!tokenSaleAddress || !proposalStatesData || !proposalActionsData) return false;
-    const tsAddr = tokenSaleAddress.toLowerCase();
-    return allProposalIds.some((_, i) => {
-      const state = proposalStatesData[i]?.result as string | undefined;
-      if (!state || !LIVE_STATES.has(state)) return false;
-      const actions = proposalActionsData[i]?.result as readonly [readonly `0x${string}`[], readonly string[], readonly `0x${string}`[]] | undefined;
-      if (!actions) return false;
-      const [targets, sigs] = actions;
-      return targets.some((t, j) => t.toLowerCase() === tsAddr && (sigs[j] ?? '').startsWith('startSale('));
-    });
-  })();
+  // Next sale number comes purely from chain: last completed sale + 1
+  const nextSaleNumber = saleIdCounter !== undefined ? Number(saleIdCounter) + 1 : undefined;
 
   // ── Modal / form state ─────────────────────────────────────────────────────
 
@@ -239,6 +185,18 @@ export default function DAO() {
 
   // Quick: set voting delay
   const [vdBlocks, setVdBlocks] = useState('1');
+
+  // Quick: token sale
+  const [saleUsdtTarget, setSaleUsdtTarget] = useState('');
+  const [salePriceInput, setSalePriceInput] = useState('');
+
+  // Auto-populate sale price from chain when first loaded (user can override)
+  useEffect(() => {
+    if (tokenSalePrice !== undefined && !salePriceInput) {
+      setSalePriceInput(formatUnits(tokenSalePrice, 18));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tokenSalePrice]);
 
   // Quick: WLF buyback
   const [buybackUsdt, setBuybackUsdt] = useState('');
@@ -275,6 +233,12 @@ export default function DAO() {
 
   const isGuardian = !!(guardian && address && guardian.toLowerCase() === address.toLowerCase());
 
+  // Sale form: price and WLF amount derived from USDT target ÷ sale price
+  const salePriceWei = (() => { try { return salePriceInput ? parseUnits(salePriceInput, 18) : 0n; } catch { return 0n; } })();
+  const saleUsdtWei  = (() => { try { return saleUsdtTarget ? parseUnits(saleUsdtTarget, 6)  : 0n; } catch { return 0n; } })();
+  // wlf = usdt_6dec * 10^30 / price_18dec  (preserves 18-dec WLF precision)
+  const saleWlfAmount = salePriceWei > 0n ? saleUsdtWei * (10n ** 30n) / salePriceWei : 0n;
+
   type CompanyInfo = {
     companyId: number;
     name: string;
@@ -304,15 +268,14 @@ export default function DAO() {
     });
   };
 
-  const handleStartSaleProposal = (cfg: typeof TOKEN_SALE_CONFIGS[number]) => {
+  const handleStartSaleProposal = () => {
     if (!daoAddress || !wlfAddress || !tokenSaleAddress) return;
-    const SALE_AMOUNT = parseUnits(cfg.amount, 18);
-    const SALE_PRICE  = parseUnits(cfg.price, 18);
+    if (saleWlfAmount <= 0n || salePriceWei <= 0n) return;
     const targetArr: `0x${string}`[] = [wlfAddress, tokenSaleAddress];
     const sigArr = ['airdrop(address,uint256)', 'startSale(uint256,uint256)'];
     const dataArr: `0x${string}`[] = [
-      encodeAbiParameters(parseAbiParameters('address, uint256'), [tokenSaleAddress, SALE_AMOUNT]),
-      encodeAbiParameters(parseAbiParameters('uint256, uint256'), [SALE_AMOUNT, SALE_PRICE]),
+      encodeAbiParameters(parseAbiParameters('address, uint256'), [tokenSaleAddress, saleWlfAmount]),
+      encodeAbiParameters(parseAbiParameters('uint256, uint256'), [saleWlfAmount, salePriceWei]),
     ];
     setLastAction('create-sale-proposal');
     writeContract({ address: daoAddress, abi: daoABI, functionName: 'createProposal', args: [targetArr, sigArr, dataArr] });
@@ -734,26 +697,62 @@ export default function DAO() {
                 )}
 
                 {/* ── Start Sale #N — hidden when a sale is active or a proposal for it already exists ── */}
-                {nextSaleConfig && !saleActive && !hasSaleStartProposal && (
-                  <div className={`${theme.cardNested} p-4 space-y-2`}>
-                    <p className="font-semibold text-sm">Start Sale #{nextSaleConfig.saleIdx}</p>
-                    <p className={`text-xs ${theme.textMuted}`}>
-                      Airdrop {nextSaleConfig.amountLabel} to TokenSale and open the sale at {nextSaleConfig.priceLabel}.
-                      {' '}Total raise: {nextSaleConfig.totalLabel}.
-                      {nextSaleConfig.locked && <span className="text-amber-300"> LP locked {nextSaleConfig.locked}.</span>}
-                    </p>
-                    <div className={`text-xs font-mono ${theme.textMuted} space-y-0.5 pt-1`}>
-                      <p>1. werewolfToken.airdrop(tokenSale, {nextSaleConfig.amountLabel})</p>
-                      <p>2. tokenSale.startSale({nextSaleConfig.amountLabel}, {nextSaleConfig.priceLabel})</p>
+                {!saleActive && nextSaleNumber !== undefined && (
+                  <div className={`${theme.cardNested} p-4 space-y-3`}>
+                    <div>
+                      <p className="font-semibold text-sm">Start Sale #{nextSaleNumber}</p>
+                      <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
+                        Enter the USDT target. WLF is calculated automatically from the current token price.
+                        The sale price must be ≥ the current floor price.
+                      </p>
+                      {tokenSalePrice !== undefined && (
+                        <p className={`text-xs mt-1 ${theme.textMuted}`}>
+                          Current floor price:{' '}
+                          <span className="text-white font-mono">{formatUnits(tokenSalePrice, 18)} USDT/WLF</span>
+                        </p>
+                      )}
                     </div>
+
+                    <Input
+                      label="USDT to raise"
+                      type="number"
+                      min="0"
+                      value={saleUsdtTarget}
+                      onChange={e => setSaleUsdtTarget(e.target.value)}
+                      placeholder="100000"
+                    />
+
+                    <Input
+                      label="Sale price (USDT / WLF)"
+                      type="number"
+                      min="0"
+                      value={salePriceInput}
+                      onChange={e => setSalePriceInput(e.target.value)}
+                      placeholder="0.004"
+                    />
+
+                    {saleWlfAmount > 0n && (
+                      <p className={`text-xs ${theme.textMuted}`}>
+                        WLF to allocate:{' '}
+                        <span className="text-white font-mono">
+                          {Number(formatUnits(saleWlfAmount, 18)).toLocaleString(undefined, { maximumFractionDigits: 0 })} WLF
+                        </span>
+                      </p>
+                    )}
+
+                    <div className={`text-xs font-mono ${theme.textMuted} space-y-0.5 pt-1`}>
+                      <p>1. werewolfToken.airdrop(tokenSale, {saleWlfAmount > 0n ? Number(formatUnits(saleWlfAmount, 18)).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '?'} WLF)</p>
+                      <p>2. tokenSale.startSale(…, {salePriceInput || '?'} USDT/WLF)</p>
+                    </div>
+
                     <Button
                       variant="primary"
                       size="sm"
-                      onClick={() => handleStartSaleProposal(nextSaleConfig)}
-                      disabled={!tokenSaleAddress || isPending || isConfirming}
+                      onClick={handleStartSaleProposal}
+                      disabled={!tokenSaleAddress || saleWlfAmount <= 0n || salePriceWei <= 0n || isPending || isConfirming}
                       loading={isPending || isConfirming}
                     >
-                      Submit Start Sale #{nextSaleConfig.saleIdx}
+                      Submit Start Sale #{nextSaleNumber}
                     </Button>
                   </div>
                 )}

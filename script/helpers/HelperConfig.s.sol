@@ -47,6 +47,8 @@ contract HelperConfig is Script, Constants {
             netConfig = getLocalChainConfig();
         } else if (id == SEPOLIA_CHAIN_ID) {
             netConfig = getSepoliaChainConfig();
+        } else if (id == ETH_MAINNET_CHAIN_ID) {
+            netConfig = getMainnetChainConfig();
         } else {
             revert("HelperConfig:getConfig chain not supported");
         }
@@ -79,8 +81,23 @@ contract HelperConfig is Script, Constants {
             positionManager: positionManager,
             swapRouter: swapRouterAddr,
             weth: weth,
-            timelockDelay: 0,
+            timelockDelay: 2 days,
             minReserveMonths: 3  // 3-month reserve for testnet (DAO can raise to 60 via proposal)
+        });
+    }
+
+    function getMainnetChainConfig() public view returns (NetworkConfig memory) {
+        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+        address multiSig = vm.envAddress("MULTISIG_ADDRESS");
+        return NetworkConfig({
+            deployerPrivateKey: deployerPrivateKey,
+            multiSig: multiSig,
+            usdt:            0xdAC17F958D2ee523a2206206994597C13D831ec7, // Tether USDT
+            positionManager: 0xC36442b4a4522E871399CD717aBDD847Ab11FE88, // Uniswap v3 NonfungiblePositionManager
+            swapRouter:      0xE592427A0AEce92De3Edee1F18E0157C05861564, // Uniswap v3 SwapRouter
+            weth:            0xc02AAa39B223fE8d0a0e8E4f27eAd9083c756CC2, // WETH9
+            timelockDelay:   2 days,   // 172800 s — enforces governance delay
+            minReserveMonths: 60       // 5-year reserve floor for CompaniesHouse
         });
     }
 
@@ -103,7 +120,7 @@ contract HelperConfig is Script, Constants {
             positionManager: positionManager,
             swapRouter: address(0),  // No real SwapRouter on local chain
             weth: weth,
-            timelockDelay: 0,
+            timelockDelay: 2 days,
             minReserveMonths: 1  // 1-month reserve for local testing
         });
     }

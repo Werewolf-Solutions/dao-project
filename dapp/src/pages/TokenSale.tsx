@@ -481,28 +481,64 @@ export default function TokenSale() {
           style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.03)' }}
         >
           <p className="font-semibold text-white">How it works</p>
-          <ol className="list-decimal list-inside space-y-2" style={{ color: theme.textMuted }}>
-            <li>
-              You pay USDT — it is held in the sale contract alongside the matching WLF tokens until the sale closes.
-            </li>
-            <li>
-              When the sale ends, the pooled USDT and WLF are deposited together into a{' '}
-              <strong className="text-white">Uniswap v3 WLF/USDT liquidity position</strong>.
-              This is what creates (and deepens) the on-chain market for WLF.
-            </li>
-            <li>
-              Any small remainder of USDT or WLF that could not be perfectly paired — due to the current
-              Uniswap pool price ratio — is forwarded to the{' '}
-              <strong className="text-white">DAO Treasury</strong> rather than being wasted.
-            </li>
-            <li>
-              LP staking shares are automatically distributed to every buyer proportional to their USDT paid,
-              locked for <strong className="text-white">5 years</strong>.
-            </li>
-            <li>
-              Those shares earn <strong className="text-white">WLF rewards continuously</strong> — at the same APY as direct WLF staking.
-            </li>
-          </ol>
+          <div className="space-y-3" style={{ color: theme.textMuted }}>
+
+            {/* ── Sale #0: founding round ── */}
+            {saleIdCounter === 0n && (
+              <div>
+                <p className="font-medium text-white mb-1">Sale #0 — founding round</p>
+                <p>
+                  Buyers contribute USDT and receive WLF. When the sale closes, the collected USDT
+                  and the matching WLF are deposited together into a{' '}
+                  <strong className="text-white">Uniswap v3 WLF/USDT pool</strong> to establish the
+                  initial on-chain price. LP shares are locked for{' '}
+                  <strong className="text-white">5 years</strong>.
+                </p>
+              </div>
+            )}
+
+            {/* ── Sale #N: subsequent round — live values when available ── */}
+            {saleIdCounter !== undefined && saleIdCounter > 0n && (
+              <div>
+                <p className="font-medium text-white mb-1">Sale #{saleIdCounter.toString()}</p>
+                {lpSplitEstimate !== null && usdtCollected !== undefined && poolPrice !== null ? (
+                  <p>
+                    <span className="text-white font-mono">${fmt6(usdtCollected, 2)} USDT</span>{' '}
+                    is sent to the Uniswap WLF/USDT LP{' '}
+                    <span className="text-white/60">
+                      @ {poolPrice < 0.001 ? poolPrice.toFixed(6) : poolPrice.toFixed(4)} USDT/WLF
+                    </span>{' '}
+                    with{' '}
+                    <span className="text-white font-mono">{fmt18(usdtWlfCollected ?? 0n, 0)} WLF</span>.
+                    {lpSplitEstimate.treasuryUsdt > 0.001 && (
+                      <>{' '}The remaining{' '}
+                        <span className="text-white font-mono">
+                          ${lpSplitEstimate.treasuryUsdt.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT
+                        </span>{' '}
+                        goes to the <strong className="text-white">DAO Treasury</strong>.
+                      </>
+                    )}
+                    {lpSplitEstimate.treasuryWlf > 1 && (
+                      <>{' '}The remaining{' '}
+                        <span className="text-white font-mono">
+                          {lpSplitEstimate.treasuryWlf.toLocaleString(undefined, { maximumFractionDigits: 0 })} WLF
+                        </span>{' '}
+                        goes to the <strong className="text-white">DAO Treasury</strong>.
+                      </>
+                    )}
+                  </p>
+                ) : (
+                  <p>
+                    Collected USDT is sent to the Uniswap WLF/USDT LP at the current market price,
+                    paired with the corresponding WLF. The unpaired remainder —{' '}
+                    <span className="font-mono text-white">X − (price × WLF_sold)</span> — goes to
+                    the <strong className="text-white">DAO Treasury</strong>.
+                  </p>
+                )}
+              </div>
+            )}
+
+          </div>
         </div>
 
         {/* ── Sale info ── */}

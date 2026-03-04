@@ -30,7 +30,7 @@ contract Timelock is Initializable {
     );
 
     uint256 public constant GRACE_PERIOD = 14 days;
-    uint256 public constant MINIMUM_DELAY = 0;
+    uint256 public constant MINIMUM_DELAY = 2 days;
     uint256 public constant MAXIMUM_DELAY = 30 days;
 
     address public admin;
@@ -38,6 +38,8 @@ contract Timelock is Initializable {
     uint256 public delay;
 
     mapping(bytes32 => bool) public queuedTransactions;
+
+    uint256[46] private __gap;
 
     constructor() {
         _disableInitializers();
@@ -106,12 +108,10 @@ contract Timelock is Initializable {
             msg.sender == admin,
             "Timelock::queueTransaction: Call must come from admin."
         );
-        if (delay > 0) {
-            require(
-                eta >= (getBlockTimestamp() + delay),
-                "Timelock::queueTransaction: Estimated execution block must satisfy delay."
-            );
-        }
+        require(
+            eta >= (getBlockTimestamp() + delay),
+            "Timelock::queueTransaction: Estimated execution block must satisfy delay."
+        );
 
         bytes32 txHash = keccak256(abi.encode(target, signature, data, eta));
         queuedTransactions[txHash] = true;

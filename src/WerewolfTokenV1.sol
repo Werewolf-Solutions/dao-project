@@ -20,6 +20,8 @@ contract WerewolfTokenV1 is ERC20Upgradeable, OwnableUpgradeable {
     mapping(address => uint32) public numCheckpoints;
     mapping(address => mapping(uint32 => Checkpoint)) public checkpoints;
 
+    uint256[45] private __gap;
+
     // Modifier to ensure that only the Timelock can execute specific functions
     modifier onlyTimelock() {
         require(msg.sender == address(timelock), "Only Timelock can execute");
@@ -102,6 +104,29 @@ contract WerewolfTokenV1 is ERC20Upgradeable, OwnableUpgradeable {
     function setTreasury(address _treasury) external onlyOwner {
         require(_treasury != address(0), "Treasury address cannot be zero");
         treasury = _treasury;
+    }
+
+    function _writeCheckpoint(address account, uint96 newVotes) private {
+        uint32 blockNumber = uint32(block.number);
+        uint32 nCheckpoints = numCheckpoints[account];
+
+        if (nCheckpoints > 0 && checkpoints[account][nCheckpoints - 1].fromBlock == blockNumber) {
+            // Same block: overwrite in place
+            checkpoints[account][nCheckpoints - 1].votes = newVotes;
+        } else {
+            checkpoints[account][nCheckpoints] = Checkpoint({fromBlock: blockNumber, votes: newVotes});
+            numCheckpoints[account] = nCheckpoints + 1;
+        }
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        super._update(from, to, value);
+        if (from != address(0)) {
+            _writeCheckpoint(from, uint96(balanceOf(from)));
+        }
+        if (to != address(0)) {
+            _writeCheckpoint(to, uint96(balanceOf(to)));
+        }
     }
 
     function getPriorVotes(address account, uint256 blockNumber) public view returns (uint96) {

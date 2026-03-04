@@ -142,6 +142,8 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
     /// @notice Uniswap V3 SwapRouter address used to buy WLF when company has no WLF balance
     address public swapRouter;
 
+    uint256[33] private __gap;
+
     ///////////////////////////////////////
     //           Events                  //
     ///////////////////////////////////////
@@ -296,6 +298,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable {
      *      anyone, so the balance drawdown from earlier payments does not block later ones.
      */
     function payEmployees(uint96 _companyId) external {
+        require(companyBrief[_companyId].owner != address(0), "CompaniesHouse: company does not exist");
         CompanyBrief memory compBrief = companyBrief[_companyId];
         require(_isAuthorized(msg.sender, _companyId), "Not authorized to pay employees in this company");
 

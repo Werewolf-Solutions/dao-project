@@ -19,14 +19,15 @@ contract UniswapHelper is IERC721Receiver {
         int24 tickLower,
         int24 tickUpper,
         uint256 amount0Desired,
-        uint256 amount1Desired
+        uint256 amount1Desired,
+        uint16 slippageBps  // e.g. 100 = 1%, 200 = 2%
     ) external returns (uint256 tokenId) {
         // Pull tokens from caller (TokenSale approved us)
         IERC20(token0).transferFrom(msg.sender, address(this), amount0Desired);
         IERC20(token1).transferFrom(msg.sender, address(this), amount1Desired);
 
         // Delegate to internal helper to avoid stack-too-deep
-        tokenId = _sortInitAndMint(token0, token1, fee, tickLower, tickUpper, amount0Desired, amount1Desired);
+        tokenId = _sortInitAndMint(token0, token1, fee, tickLower, tickUpper, amount0Desired, amount1Desired, slippageBps);
     }
 
     /// @dev Sorts tokens for Uniswap v3, initializes pool if needed, mints position,
@@ -38,7 +39,8 @@ contract UniswapHelper is IERC721Receiver {
         int24 tickLower,
         int24 tickUpper,
         uint256 amount0Desired,
-        uint256 amount1Desired
+        uint256 amount1Desired,
+        uint16 slippageBps
     ) private returns (uint256 tokenId) {
         // Uniswap v3 requires token0 < token1 by address
         (address t0, address t1, uint256 a0, uint256 a1) = token0 < token1
@@ -60,10 +62,10 @@ contract UniswapHelper is IERC721Receiver {
             tickUpper: tickUpper,
             amount0Desired: a0,
             amount1Desired: a1,
-            amount0Min: 0,
-            amount1Min: 0,
+            amount0Min: (a0 * (10_000 - slippageBps)) / 10_000,
+            amount1Min: (a1 * (10_000 - slippageBps)) / 10_000,
             recipient: msg.sender,
-            deadline: block.timestamp
+            deadline: block.timestamp + 20 minutes
         }));
 
         // Return any unused tokens to caller

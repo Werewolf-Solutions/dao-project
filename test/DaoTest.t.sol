@@ -294,6 +294,9 @@ contract DaoTest is Test {
         vm.prank(founder);
         dao.approveProposal(proposalId);
 
+        // Advance one block so getPriorVotes can use the snapshotBlock
+        vm.roll(block.number + 1);
+
         console.log("Start voting period:", block.timestamp);
         console.log("Voting period:", dao.votingPeriod());
 
@@ -381,6 +384,9 @@ contract DaoTest is Test {
 
         vm.prank(founder);
         dao.approveProposal(proposalId);
+
+        // Advance one block so getPriorVotes can use the snapshotBlock
+        vm.roll(block.number + 1);
     }
 
     /// @dev founder and addr1 both vote FOR the proposal.
@@ -526,7 +532,7 @@ contract DaoTest is Test {
         _voteFor(proposalId);
 
         // Read votes via auto-getter (arrays skipped, order: state,id,proposer,votesFor,votesAgainst,...)
-        (, , , uint256 votesFor, uint256 votesAgainst, , , , , ) = dao.proposals(proposalId);
+        (, , , uint256 votesFor, uint256 votesAgainst, , , , , , ) = dao.proposals(proposalId);
 
         assertEq(votesFor, founderBalance + addr1Balance, "votesFor should equal sum of token balances");
         assertEq(votesAgainst, 0, "votesAgainst should be zero");
