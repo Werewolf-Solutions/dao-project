@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
 import "./Timelock.sol";
 
-contract WerewolfTokenV1 is ERC20, Ownable {
+contract WerewolfTokenV1 is ERC20Upgradeable, OwnableUpgradeable {
     address public treasury;
     Timelock public timelock;
 
@@ -20,6 +20,8 @@ contract WerewolfTokenV1 is ERC20, Ownable {
     mapping(address => uint32) public numCheckpoints;
     mapping(address => mapping(uint32 => Checkpoint)) public checkpoints;
 
+    uint256[45] private __gap;
+
     // Modifier to ensure that only the Timelock can execute specific functions
     modifier onlyTimelock() {
         require(msg.sender == address(timelock), "Only Timelock can execute");
@@ -32,7 +34,7 @@ contract WerewolfTokenV1 is ERC20, Ownable {
         _;
     }
 
-    constructor(
+    /* constructor(
         address _treasury,
         address _timelock,
         address addr1,
@@ -48,15 +50,37 @@ contract WerewolfTokenV1 is ERC20, Ownable {
         uint256 transferAmount = 1000 * 10 ** decimals();
         _transfer(treasury, addr1, transferAmount);
         _transfer(treasury, addr2, transferAmount);
+    } */
+
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address _owner, address _treasury, address _timelock, address _addr1, address _addr2)
+        public
+        initializer
+    {
+        require(_treasury != address(0), "Treasury address cannot be zero");
+        __Ownable_init(_owner);
+        __ERC20_init("Werewolf Token", "WLF");
+        treasury = _treasury; // Set the Treasury address
+        timelock = Timelock(_timelock);
+        // Mint initial 1B tokens directly to the DAO's Treasury
+        _mint(_treasury, 1_000_000_000 * 10 ** decimals());
+
+        // Transfer tokens from the treasury to specified addresses
+        uint256 transferAmount = 1000 * 10 ** decimals();
+        _transfer(treasury, _addr1, transferAmount);
+        _transfer(treasury, _addr2, transferAmount);
     }
 
     // Function to authorize an external contract (like CompaniesHouseV1)
-    function _authorizeCaller(address _caller) external onlyTimelock {
+    function _authorizeCaller(address _caller) external onlyOwner {
         authorizedCallers[_caller] = true;
     }
 
     // Function to deauthorize an external contract
-    function _deauthorizeCaller(address _caller) external onlyTimelock {
+    function _deauthorizeCaller(address _caller) external onlyOwner {
         authorizedCallers[_caller] = false;
     }
 
@@ -65,10 +89,7 @@ contract WerewolfTokenV1 is ERC20, Ownable {
         _transfer(treasury, to, amount);
     }
 
-    function payEmployee(
-        address to,
-        uint256 amount
-    ) external onlyAuthorizedCaller {
+    function payEmployee(address to, uint256 amount) external onlyAuthorizedCaller {
         require(balanceOf(treasury) >= amount, "Insufficient balance");
         _transfer(treasury, to, amount);
     }
@@ -85,14 +106,31 @@ contract WerewolfTokenV1 is ERC20, Ownable {
         treasury = _treasury;
     }
 
-    function getPriorVotes(
-        address account,
-        uint blockNumber
-    ) public view returns (uint96) {
-        require(
-            blockNumber < block.number,
-            "WerewolfTokenV1::getPriorVotes: not yet determined"
-        );
+    function _writeCheckpoint(address account, uint96 newVotes) private {
+        uint32 blockNumber = uint32(block.number);
+        uint32 nCheckpoints = numCheckpoints[account];
+
+        if (nCheckpoints > 0 && checkpoints[account][nCheckpoints - 1].fromBlock == blockNumber) {
+            // Same block: overwrite in place
+            checkpoints[account][nCheckpoints - 1].votes = newVotes;
+        } else {
+            checkpoints[account][nCheckpoints] = Checkpoint({fromBlock: blockNumber, votes: newVotes});
+            numCheckpoints[account] = nCheckpoints + 1;
+        }
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        super._update(from, to, value);
+        if (from != address(0)) {
+            _writeCheckpoint(from, uint96(balanceOf(from)));
+        }
+        if (to != address(0)) {
+            _writeCheckpoint(to, uint96(balanceOf(to)));
+        }
+    }
+
+    function getPriorVotes(address account, uint256 blockNumber) public view returns (uint96) {
+        require(blockNumber < block.number, "WerewolfTokenV1::getPriorVotes: not yet determined");
 
         uint32 nCheckpoints = numCheckpoints[account];
         if (nCheckpoints == 0) {

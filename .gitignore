@@ -12,3 +12,11 @@ docs/
 
 # Dotenv file
 .env
+
+#ignore personal notes
+notes/
+white-paper.md
+notes.md
+
+# Ignore Visual Studio Code
+.vscode/

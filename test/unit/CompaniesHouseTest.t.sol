@@ -1,0 +1,424 @@
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.28;
+
+import {Test, console} from "forge-std/Test.sol";
+import {BaseTest} from "../BaseTest.t.sol";
+import {CompaniesHouseV1} from "../../src/CompaniesHouseV1.sol";
+import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+
+contract CompaniesHouseTest is BaseTest {
+
+    // ── Contracts ──────────────────────────────────────────────────────────────
+
+    CompaniesHouseV1 companiesHouse;
+
+    // ── Test actors ────────────────────────────────────────────────────────────
+
+    address employee1 = makeAddr("employee1");
+
+    // ── Constants ──────────────────────────────────────────────────────────────
+
+    uint256 constant CREATION_FEE   = 10e18;     // 10 WLF
+
+    // Salary: $10/month (USDT 6 dec)
+    uint256 constant MONTHLY_SALARY = 10e6;          // 10 USDT per month
+    uint256 constant HOURLY_SALARY  = MONTHLY_SALARY / 730; // ≈ 13 698 USDT-wei/hr
+
+    // Deposit budgets (given to founder in setUp)
+    uint256 constant FOUNDER_WLF    = 200_000e18;   // 200 k WLF (covers creation fee + WLF deposits)
+    uint256 constant FOUNDER_USDT   = 10_000e6;     // 10 k USDT
+
+    // ── setUp ──────────────────────────────────────────────────────────────────
+
+    function setUp() public override {
+        super.setUp();
+
+        // Deploy CompaniesHouseV1 proxy (no swap router — USDT-only payment for now)
+        CompaniesHouseV1 impl = new CompaniesHouseV1();
+        bytes memory initData = abi.encodeWithSelector(
+            CompaniesHouseV1.initialize.selector,
+            address(werewolfToken),
+            address(treasury),
+            address(dao),
+            address(tokenSale),
+            founder,           // admin = founder (simplifies test calls)
+            address(mockUSDT),
+            address(0),        // no swap router yet
+            3                  // 3-month reserve (testnet friendly)
+        );
+        address proxy = address(new TransparentUpgradeableProxy(address(impl), multiSig, initData));
+        companiesHouse = CompaniesHouseV1(proxy);
+
+        // Fund founder
+        vm.prank(address(timelock));
+        werewolfToken.airdrop(founder, FOUNDER_WLF);
+
+        mockUSDT.mint(founder, FOUNDER_USDT);
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────────────
+
+    /// @dev Creates a standard company as `founder`. Returns companyId (always 1).
+    function _createCompany() internal returns (uint96 companyId) {
+        string[] memory roles = new string[](2);
+        roles[0] = "CEO";
+        roles[1] = "Engineer";
+
+        string[] memory powerRoles = new string[](1);
+        powerRoles[0] = "CEO";
+
+        vm.startPrank(founder);
+        werewolfToken.approve(address(companiesHouse), CREATION_FEE);
+        companiesHouse.createCompany(CompaniesHouseV1.CreateCompany({
+            name:               "Werewolf Solutions",
+            industry:           "Software",
+            domain:             "werewolf.io",
+            roles:              roles,
+            powerRoles:         powerRoles,
+            companyWallet:      founder,
+            ownerRole:          "CEO",
+            ownerSalaryPerHour: HOURLY_SALARY,
+            ownerName:          "Alice Founder"
+        }));
+        vm.stopPrank();
+        return 1; // currentCompanyIndex starts at 1
+    }
+
+    /// @dev Hires `employee1` as Engineer into `companyId`.
+    function _hireEmployee(uint96 companyId) internal {
+        CompaniesHouseV1.SalaryItem[] memory items = new CompaniesHouseV1.SalaryItem[](1);
+        items[0] = CompaniesHouseV1.SalaryItem({
+            role:          "Engineer",
+            salaryPerHour: HOURLY_SALARY,
+            lastPayDate:   0
+        });
+        vm.prank(founder);
+        companiesHouse.hireEmployee(CompaniesHouseV1.HireEmployee({
+            employeeAddress: employee1,
+            name:            "Bob Engineer",
+            companyId:       companyId,
+            salaryItems:     items
+        }));
+    }
+
+    /// @dev Deposits `amount` WLF from `founder` into `companyId`.
+    function _depositWLF(uint96 companyId, uint256 amount) internal {
+        vm.startPrank(founder);
+        werewolfToken.approve(address(companiesHouse), amount);
+        companiesHouse.depositToCompany(companyId, address(werewolfToken), amount);
+        vm.stopPrank();
+    }
+
+    /// @dev Deposits `amount` USDT from `founder` into `companyId`.
+    function _depositUSDT(uint96 companyId, uint256 amount) internal {
+        vm.startPrank(founder);
+        mockUSDT.approve(address(companiesHouse), amount);
+        companiesHouse.depositToCompany(companyId, address(mockUSDT), amount);
+        vm.stopPrank();
+    }
+
+    /// @dev Returns totalUSDT + reserve — the minimum deposit needed for one payment to go through.
+    function _requiredUSDT(uint96 companyId, uint256 totalUSDT) internal view returns (uint256) {
+        return totalUSDT + companiesHouse.getRequiredReserveUSDT(companyId);
+    }
+
+    // ── Tests: company lifecycle ───────────────────────────────────────────────
+
+    function test_CreateCompany() public {
+        uint96 id = _createCompany();
+        CompaniesHouseV1.CompanyStruct memory co = companiesHouse.retrieveCompany(id);
+
+        assertEq(co.name,     "Werewolf Solutions");
+        assertEq(co.owner,    founder);
+        assertEq(co.industry, "Software");
+        assertEq(co.domain,   "werewolf.io");
+        assertTrue(co.active);
+        assertEq(co.employees.length, 1, "Founder auto-hired");
+        assertEq(companiesHouse.currentCompanyIndex(), 2);
+    }
+
+    function test_CreateCompany_ChargecreationFee() public {
+        uint256 treasuryBefore = werewolfToken.balanceOf(address(treasury));
+        _createCompany();
+        assertEq(
+            werewolfToken.balanceOf(address(treasury)),
+            treasuryBefore + CREATION_FEE,
+            "Creation fee not sent to treasury"
+        );
+    }
+
+    function test_CreateCompany_InsufficientBalance_Reverts() public {
+        vm.prank(address(timelock));
+        werewolfToken.airdrop(employee1, CREATION_FEE - 1);
+
+        string[] memory roles = new string[](1);
+        roles[0] = "CEO";
+        string[] memory powerRoles = new string[](0);
+
+        vm.startPrank(employee1);
+        werewolfToken.approve(address(companiesHouse), CREATION_FEE - 1);
+        vm.expectRevert(CompaniesHouseV1.InsufficientFee.selector);
+        companiesHouse.createCompany(CompaniesHouseV1.CreateCompany({
+            name: "Broke Inc", industry: "None", domain: "x.io",
+            roles: roles, powerRoles: powerRoles,
+            companyWallet: employee1,
+            ownerRole: "CEO", ownerSalaryPerHour: 0, ownerName: "Nobody"
+        }));
+        vm.stopPrank();
+    }
+
+    function test_HireEmployee() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id);
+        CompaniesHouseV1.CompanyStruct memory co = companiesHouse.retrieveCompany(id);
+        assertEq(co.employees.length, 2, "Should have 2 employees");
+        assertEq(co.employees[1].name, "Bob Engineer");
+        assertTrue(co.employees[1].active);
+    }
+
+    function test_FireEmployee() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id);
+
+        vm.prank(founder);
+        companiesHouse.fireEmployee(employee1, id);
+
+        CompaniesHouseV1.CompanyStruct memory co = companiesHouse.retrieveCompany(id);
+        assertFalse(co.employees[1].active, "Employee should be inactive");
+    }
+
+    function test_GetOwnerCompanyIds() public {
+        _createCompany();
+        uint96[] memory ids = companiesHouse.getOwnerCompanyIds(founder);
+        assertEq(ids.length, 1);
+        assertEq(ids[0], 1);
+    }
+
+    // ── Tests: deposits ────────────────────────────────────────────────────────
+
+    function test_DepositUSDT() public {
+        uint96 id = _createCompany();
+        uint256 amount = 500e6;
+        _depositUSDT(id, amount);
+        assertEq(companiesHouse.companyTokenBalances(id, address(mockUSDT)), amount);
+    }
+
+    function test_DepositWLF() public {
+        uint96 id = _createCompany();
+        uint256 amount = 1_000e18;
+        _depositWLF(id, amount);
+        assertEq(companiesHouse.companyTokenBalances(id, address(werewolfToken)), amount);
+    }
+
+    // ── Tests: payEmployee ────────────────────────────────────────────────────
+
+    function test_PayEmployee_USDT_Success() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id);
+
+        uint256 deposit = _requiredUSDT(id, MONTHLY_SALARY) + 1_000e6;
+        _depositUSDT(id, deposit);
+
+        vm.warp(block.timestamp + 730 hours);
+
+        uint256 usdtBefore = mockUSDT.balanceOf(employee1);
+        uint256 companyBefore = companiesHouse.companyTokenBalances(id, address(mockUSDT));
+
+        vm.prank(founder);
+        companiesHouse.payEmployee(employee1, id);
+
+        uint256 usdtAfter = mockUSDT.balanceOf(employee1);
+        uint256 companyAfter = companiesHouse.companyTokenBalances(id, address(mockUSDT));
+
+        assertTrue(usdtAfter > usdtBefore,   "Employee should have received USDT");
+        assertTrue(companyAfter < companyBefore, "Company USDT balance should decrease");
+    }
+
+    function test_PayEmployee_CorrectUSDTAmount() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id);
+
+        uint256 deposit = _requiredUSDT(id, MONTHLY_SALARY) + 1_000e6;
+        _depositUSDT(id, deposit);
+
+        vm.warp(block.timestamp + 730 hours);
+
+        uint256 expectedUSDT = (730 hours * HOURLY_SALARY) / 1 hours;
+
+        vm.prank(founder);
+        companiesHouse.payEmployee(employee1, id);
+
+        assertEq(mockUSDT.balanceOf(employee1), expectedUSDT, "USDT amount should match salary formula");
+    }
+
+    function test_PayEmployee_EmitsEvent() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id);
+
+        uint256 deposit = _requiredUSDT(id, MONTHLY_SALARY) + 1_000e6;
+        _depositUSDT(id, deposit);
+
+        vm.warp(block.timestamp + 730 hours);
+
+        uint256 expectedUSDT = (730 hours * HOURLY_SALARY) / 1 hours;
+
+        vm.expectEmit(true, true, false, false, address(companiesHouse));
+        emit CompaniesHouseV1.EmployeePaid(employee1, expectedUSDT);
+
+        vm.prank(founder);
+        companiesHouse.payEmployee(employee1, id);
+    }
+
+    function test_PayEmployee_UpdatesLastPayDate() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id);
+        _depositUSDT(id, _requiredUSDT(id, MONTHLY_SALARY) + 1_000e6);
+
+        vm.warp(block.timestamp + 730 hours);
+
+        vm.prank(founder);
+        companiesHouse.payEmployee(employee1, id);
+
+        // Second call immediately should revert — nothing owed yet
+        vm.prank(founder);
+        vm.expectRevert(CompaniesHouseV1.NothingToPay.selector);
+        companiesHouse.payEmployee(employee1, id);
+    }
+
+    function test_PayEmployee_NothingOwed_Reverts() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id);
+        _depositUSDT(id, 1_000e6);
+
+        // No time has passed → 0 USDT owed
+        vm.prank(founder);
+        vm.expectRevert(CompaniesHouseV1.NothingToPay.selector);
+        companiesHouse.payEmployee(employee1, id);
+    }
+
+    function test_PayEmployee_BelowReserve_Reverts() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id);
+
+        // Deposit exactly reserve - 1 (adding totalUSDT makes it go below threshold)
+        uint256 reserve = companiesHouse.getRequiredReserveUSDT(id);
+        vm.assume(reserve > 0);
+        _depositUSDT(id, reserve - 1);
+
+        vm.warp(block.timestamp + 730 hours);
+
+        vm.prank(founder);
+        vm.expectRevert(CompaniesHouseV1.BelowReserve.selector);
+        companiesHouse.payEmployee(employee1, id);
+    }
+
+    function test_PayEmployee_ExactlyAtReserve_Passes() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id);
+
+        vm.warp(block.timestamp + 730 hours);
+
+        uint256 totalUSDT = (730 hours * HOURLY_SALARY) / 1 hours;
+        uint256 reserve   = companiesHouse.getRequiredReserveUSDT(id);
+
+        // Deposit exactly totalUSDT + reserve → boundary should succeed
+        _depositUSDT(id, totalUSDT + reserve);
+
+        vm.prank(founder);
+        companiesHouse.payEmployee(employee1, id); // should not revert
+        assertEq(mockUSDT.balanceOf(employee1), totalUSDT, "Employee receives exact USDT owed");
+    }
+
+    function test_PayEmployee_Unauthorized_Reverts() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id);
+        _depositUSDT(id, 5_000e6);
+
+        vm.warp(block.timestamp + 730 hours);
+
+        address stranger = makeAddr("stranger");
+        vm.prank(stranger);
+        vm.expectRevert(CompaniesHouseV1.NotAuthorized.selector);
+        companiesHouse.payEmployee(employee1, id);
+    }
+
+    // ── Tests: payEmployees (batch) ────────────────────────────────────────────
+
+    function test_PayEmployees_USDT() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id);
+
+        // Two employees, each earning MONTHLY_SALARY
+        uint256 twoMonths = _requiredUSDT(id, 2 * MONTHLY_SALARY) + 1_000e6;
+        _depositUSDT(id, twoMonths);
+
+        vm.warp(block.timestamp + 730 hours);
+
+        uint256 founderBefore  = mockUSDT.balanceOf(founder);
+        uint256 employeeBefore = mockUSDT.balanceOf(employee1);
+
+        vm.prank(founder);
+        companiesHouse.payEmployees(id);
+
+        assertGt(mockUSDT.balanceOf(founder),   founderBefore,   "Founder should be paid in USDT");
+        assertGt(mockUSDT.balanceOf(employee1), employeeBefore, "Employee should be paid in USDT");
+    }
+
+    function test_PayEmployees_UnauthorizedCaller_Reverts() public {
+        uint96 id = _createCompany();
+        _depositUSDT(id, 5_000e6);
+        vm.warp(block.timestamp + 730 hours);
+
+        vm.prank(employee1); // not authorized
+        vm.expectRevert(CompaniesHouseV1.NotAuthorized.selector);
+        companiesHouse.payEmployees(id);
+    }
+
+    function test_PayEmployees_SkipsInactiveEmployees() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id);
+
+        // Fire employee1 before payout
+        vm.prank(founder);
+        companiesHouse.fireEmployee(employee1, id);
+
+        _depositUSDT(id, 5_000e6);
+        vm.warp(block.timestamp + 730 hours);
+
+        vm.prank(founder);
+        companiesHouse.payEmployees(id); // should not revert even though employee1 is inactive
+
+        assertEq(mockUSDT.balanceOf(employee1), 0, "Fired employee should receive nothing");
+    }
+
+    // ── Tests: reserve & burn view functions ──────────────────────────────────
+
+    function test_GetMonthlyBurnUSDT() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id);
+
+        // Two employees, each at HOURLY_SALARY, 730 hours/month
+        uint256 expectedMonthly = 2 * HOURLY_SALARY * 730;
+        assertEq(companiesHouse.getMonthlyBurnUSDT(id), expectedMonthly);
+    }
+
+    function test_GetRequiredReserveUSDT() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id);
+
+        uint256 monthly  = companiesHouse.getMonthlyBurnUSDT(id);
+        uint256 expected = monthly * 3; // setUp uses 3-month reserve
+        assertEq(companiesHouse.getRequiredReserveUSDT(id), expected);
+    }
+
+    function test_SetMinReserveMonths() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id);
+
+        vm.prank(founder); // founder is admin in tests
+        companiesHouse.setMinReserveMonths(12);
+
+        uint256 monthly  = companiesHouse.getMonthlyBurnUSDT(id);
+        assertEq(companiesHouse.getRequiredReserveUSDT(id), monthly * 12);
+    }
+}

@@ -14,13 +14,16 @@ contract MockUSDT is ERC20 {
     }
 
     // Optional: Overwrite transfer function to behave like USDT, which does not always revert on failure
-    function transfer(
-        address recipient,
-        uint256 amount
-    ) public override returns (bool) {
+    function transfer(address recipient, uint256 amount) public override returns (bool) {
         bool success = super.transfer(recipient, amount);
         require(success, "MockUSDT: transfer failed");
         return success;
+    }
+
+    ///Overriding the decimals function to return 6 decimals similar to USDT
+    function decimals() public view override returns (uint8) {
+        // func sig : 313ce567
+        return 6;
     }
 
     // // Optional: Overwrite transferFrom to test approval/allowance mechanisms

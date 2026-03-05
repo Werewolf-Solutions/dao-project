@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ADDRESSES_FILE="script/output/deployed-addresses.txt"
+
+# ── Deploy ────────────────────────────────────────────────────────────────────
+echo "Deploying to Sepolia..."
+make deploy-sepolia
+
+# ── Parse deployed addresses ──────────────────────────────────────────────────
+TIMELOCK_ADDRESS=$(grep "^TimeLock:" "$ADDRESSES_FILE" | cut -d: -f2)
+DAO_ADDRESS=$(grep      "^DAO:"      "$ADDRESSES_FILE" | cut -d: -f2)
+ADMIN_ETA=$(grep        "^AdminEta:" "$ADDRESSES_FILE" | cut -d: -f2)
+
+# Human-readable ETA (Linux date -d, macOS date -r as fallback)
+ETA_DATE=$(date -d "@$ADMIN_ETA" '+%Y-%m-%d %H:%M UTC' 2>/dev/null \
+    || date -r "$ADMIN_ETA" '+%Y-%m-%d %H:%M UTC')
+
+echo ""
+echo "====================================================="
+echo "Deploy complete!"
+echo "  TimeLock : $TIMELOCK_ADDRESS"
+echo "  DAO      : $DAO_ADDRESS"
+echo "  AdminEta : $ADMIN_ETA  ($ETA_DATE)"
+echo ""
+echo "After $ETA_DATE run:"
+echo ""
+echo "  TIMELOCK_ADDRESS=$TIMELOCK_ADDRESS \\"
+echo "  DAO_ADDRESS=$DAO_ADDRESS \\"
+echo "  ADMIN_ETA=$ADMIN_ETA \\"
+echo "  ./scripts/accept-admin-sepolia"
+echo "====================================================="

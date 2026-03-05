@@ -1,32 +1,62 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./WerewolfTokenV1.sol";
 import "./Treasury.sol";
 import "./Timelock.sol";
+import {ILPStaking} from "./interfaces/ILPStaking.sol";
+import {IStaking} from "./interfaces/IStaking.sol";
 
-contract DAO {
-    WerewolfTokenV1 public werewolfToken;
-    Treasury public treasury;
-    Timelock public timelock;
-    address public werewolfTokenAddress;
+//For merkle proofs
+import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
-    address public guardian;
-
-    mapping(address => bool) public authorizedCallers;
+/* Contract layout:
+ Data types: structs, enums, and type declarations
+ State Variables
+ Events
+ Function Modifiers
+ Constructor/Initialize
+ Fallback and Receive function
+ External functions
+ Public functions
+ Internal functions
+ Private Functions
+*/
+contract DAO is Initializable {
+    ///////////////////////////////////////
+    //           Data Types              //
+    ///////////////////////////////////////
 
     struct Proposal {
+        /// @notice State of proposal
+        ProposalState state; //current state of the proposal
+        /// @notice Unique id for looking up a proposal
+        uint256 id;
+        /// @notice Creator of the proposal
         address proposer;
-        address[] targets; // Contract to call
-        string[] signatures; // Contract to call
-        bytes[] datas; // Encoded function call with arguments
-        uint256 votesFor; // Votes in favor of the proposal
-        uint256 votesAgainst; // Votes against the proposal
-        uint startBlock;
-        uint endBlock;
-        bool executed; // Whether the proposal has been executed
+        /// @notice the ordered list of target addresses for calls to be made
+        address[] targets;
+        /// @notice The ordered list of function signatures to be called
+        string[] signatures;
+        /// @notice The ordered list of calldata to be passed to each call
+        bytes[] datas;
+        /// @notice Current number of votes in favor of this proposal
+        uint256 votesFor;
+        /// @notice Current number of votes in opposition to this proposal
+        uint256 votesAgainst;
+        /// @notice The block at which voting begins: holders must delegate their votes prior to this block
+        uint256 startTime;
+        /// @notice The block at which voting ends: votes must be cast prior to this block
+        uint256 endTime;
+        /// @notice The timestamp that the proposal will be available for execution, set once the vote succeeds
         uint eta;
+        /// @notice Flag marking whether the proposal has been canceled
+        bool canceled;
+        /// @notice Flag marking whether the proposal has been executed
+        bool executed;
+        /// @notice Block number when proposal was created — voting power snapshot
+        uint256 snapshotBlock;
     }
 
     struct Receipt {
@@ -38,36 +68,17 @@ contract DAO {
         uint96 votes;
     }
 
-    uint256 public proposalCount;
-    mapping(uint256 => Proposal) public proposals;
-    mapping(uint => mapping(address => Receipt)) public proposalReceipts;
-    mapping(address => mapping(uint256 => bool)) public voted; // Tracks votes by user for each proposal
-    address public treasuryAddress;
-    uint256 public proposalCost = 10 * (10 ** 18); // cost to create a proposal in tokens
-    mapping(bytes32 => bool) public queuedTransactions;
-
-    function proposalMaxOperations() public pure returns (uint) {
-        return 10;
-    } // 10 actions
-    function votingDelay() public pure returns (uint) {
-        return 1;
-    } // 1 block
-    function votingPeriod() public pure returns (uint) {
-        return 17280;
-    } // ~3 days in blocks (assuming 15s blocks)
-
-    function quorumVotes() public pure returns (uint256) {
-        return (50 * 10 ** 18) / 100; // 50% represented with a factor of 10**18 for precision
-    }
-
-    function proposalThreshold() public pure returns (uint256) {
-        return (5 * 10 ** 18) / 1000; // 0.5% represented with a factor of 10**18
-    }
-
-    mapping(address => uint) public latestProposalIds;
-
-    /// @notice Possible states that a proposal may be in
+    /**
+     * @notice Enum used to track the lifetime state of a proposal
+     * @notice Pending the proposal has been created, but yet queued for voting
+     * @notice Active the proposal was approved/queued for voting
+     * @notice Canceled the proposal was canceled by the creator or DAO admin
+     * @notice Defeated proposal did not receice enough votes
+     * @notice Succeeded proposal was voted on and passed
+     * @notice
+     */
     enum ProposalState {
+        DONT_USE, //avoid using the zero value of an enum
         Pending,
         Active,
         Canceled,
@@ -78,35 +89,266 @@ contract DAO {
         Executed
     }
 
-    event ProposalCreated(uint256 proposalId, address proposer);
-    event ProposalQueued(uint id, uint eta);
-    event ProposalExecuted(uint256 proposalId);
-    event Voted(uint256 proposalId, address voter, bool support, uint256 votes);
+    ///////////////////////////////////////
+    //           State Variables         //
+    ///////////////////////////////////////
 
+    WerewolfTokenV1 public werewolfToken;
+    Treasury public treasury;
+    address public treasuryAddress;
+    Timelock public timelock;
+    address public werewolfTokenAddress;
+    address public guardian;
+    bytes32 merkleRoot;
+    uint256 minVotesRequired; //minimum votes require to enforce participation
+    uint256 public proposalCount;
+    uint256 public proposalCost; // cost to create a proposal in WLF tokens
+    uint256 public votingPeriodDuration;
+    uint256 public votingDelayDuration;
+
+    address public stakingContract;
+    address public lpStakingContract;
+
+    // ── Delegation ────────────────────────────────────────────────────────────
+    uint256 public constant VALIDATOR_THRESHOLD = 5_000_000 ether;
+    address public tokenSaleContract;
+    uint256 public delegateLockDuration;   // lock applied to auto-delegations (sales #0 and #1)
+    uint256 public delegationCooldown;     // cooldown applied after every manual delegate/undelegate
+    mapping(address delegator => address delegate) public voteDelegate;
+    mapping(address delegator => uint256 expiry) public voteDelegateLockExpiry;
+    mapping(address delegatee => uint256 total) public delegatedVotingPower;
+    mapping(address delegator => uint256 power) public userDelegatedPower;
+
+    mapping(address => bool) public authorizedCallers;
+    mapping(uint256 => Proposal) public proposals;
+    mapping(uint256 => mapping(address => Receipt)) public proposalReceipts;
+    mapping(address => mapping(uint256 => bool)) public voted; // Tracks votes by user for each proposal
+
+    mapping(bytes32 => bool) public queuedTransactions;
+    mapping(address => uint256) public latestProposalIds;
+
+    uint256[23] private __gap;
+
+    ///////////////////////////////////////
+    //           Events                  //
+    ///////////////////////////////////////
+
+    event ProposalCreated(uint256 proposalId, address proposer);
+    event ProposalQueued(uint256 id, uint256 eta);
+    event ProposalExecuted(uint256 proposalId);
+    event ProposalCanceled(uint256 proposalId);
+    event Voted(uint256 proposalId, address voter, bool support, uint256 votes);
+    event DelegateChanged(address indexed delegator, address indexed fromDelegate, address indexed toDelegate);
+    ///////////////////////////////////////
+    //           Modifiers               //
+    ///////////////////////////////////////
     // Modifier to ensure that only the Timelock can execute specific functions
+
     modifier onlyTimelock() {
         require(msg.sender == address(timelock), "Only Timelock can execute");
         _;
     }
 
-    constructor(address _token, address _treasury, address _timelock) {
+    modifier onlyGuardian() {
+        require(msg.sender == guardian, "Only guardian");
+        _;
+    }
+
+    modifier onlyTokenSale() {
+        require(msg.sender == tokenSaleContract, "DAO: Only TokenSale");
+        _;
+    }
+
+    ///////////////////////////////////////
+    //      Constructor/Initializer      //
+    ///////////////////////////////////////
+    constructor() {
+        //disable the implementation contract's initializers
+        _disableInitializers();
+    }
+
+    function initialize(
+        address _token,
+        address _treasury,
+        address _timelock,
+        address _guardian
+    ) public initializer {
         werewolfToken = WerewolfTokenV1(_token);
         treasury = Treasury(_treasury);
         timelock = Timelock(_timelock);
         treasuryAddress = _treasury;
         werewolfTokenAddress = _token;
-        guardian = msg.sender;
+        guardian = _guardian;
+        proposalCost = 10e18; // 10 WLF tokens
+        delegateLockDuration = 2 * 365 days;
+        delegationCooldown = 180 days; // 6 months initial cooldown; adjustable via DAO proposal
+        proposalCount = 1;
+        votingPeriodDuration = 1 hours;
+        votingDelayDuration = 1 days;
+        //guardian = msg.sender;
         // _authorizeCaller(_timelock);
     }
 
+    ///////////////////////////////////////
+    //           External Functions      //
+    ///////////////////////////////////////
+
     // Function to authorize an external contract (like CompaniesHouseV1)
-    function _authorizeCaller(address _caller) external onlyTimelock {
+    function authorizeCaller(address _caller) external onlyTimelock {
         authorizedCallers[_caller] = true;
     }
 
+    function updateMerkleRoot(bytes32 _root) external onlyGuardian {
+        merkleRoot = _root;
+    }
+
     // Function to deauthorize an external contract
-    function _deauthorizeCaller(address _caller) external onlyTimelock {
+    function deauthorizeCaller(address _caller) external onlyTimelock {
         authorizedCallers[_caller] = false;
+    }
+
+    /**
+     * @notice Allows token holders, stakers, and LP's to vote on proposals
+     * @param _proposalId this ID of the proposal they are voting on
+     * @param _support boolean for if the voter is "for" or "against" the proposal
+     */
+    function vote(uint256 _proposalId, bool _support) external {
+        Proposal storage proposal = proposals[_proposalId];
+        require(
+            proposal.endTime >= block.timestamp,
+            "DAO:vote voting period has finished"
+        );
+
+        require(
+            proposal.state == ProposalState.Active,
+            "DAO:vote proposal is not active"
+        );
+
+        //note it is possible for users to vote on multiple proposal
+        Receipt storage receipt = proposalReceipts[_proposalId][msg.sender];
+        //only allowed to vote once for the same proposal
+        require(!receipt.hasVoted, "DAO:vote Already voted.");
+
+        receipt.hasVoted = true;
+        receipt.support = _support;
+
+        uint256 _voteAmount = _getVotingPower(msg.sender, proposal.snapshotBlock);
+        receipt.votes = uint96(_voteAmount);
+
+        if (_support) {
+            proposal.votesFor += _voteAmount;
+        } else {
+            proposal.votesAgainst += _voteAmount;
+        }
+
+        emit Voted(_proposalId, msg.sender, _support, _voteAmount);
+    }
+
+    /**
+     * @dev Using a Merkle proof to verify voting power. The root if generated off-chain
+     * @notice Allows token holders, stakers, and LP's to vote on proposals
+     * @param _proposalId this ID of the proposal being executed
+     */
+    function executeProposal(uint256 _proposalId) external {
+        //@dev need to have a min execution requirement
+
+        Proposal storage proposal = proposals[_proposalId];
+        require(
+            proposal.state == ProposalState.Queued,
+            "DAO:executeProposal proposal is not queued"
+        );
+
+        // Mark the proposal as executed
+        proposal.state = ProposalState.Executed;
+
+        for (uint256 i = 0; i < proposal.targets.length; i++) {
+            timelock.executeTransaction(
+                proposal.targets[i],
+                proposal.signatures[i],
+                proposal.datas[i],
+                proposal.eta
+            );
+            emit ProposalExecuted(_proposalId);
+        }
+    }
+
+    /**
+     * @notice Delegate all your WLF voting power to a validator.
+     * @dev Delegatee must have >= VALIDATOR_THRESHOLD WLF power.
+     *      Applies delegationCooldown so you cannot change delegation again immediately.
+     */
+    function delegate(address delegatee) external {
+        require(block.timestamp >= voteDelegateLockExpiry[msg.sender], "DAO: delegation locked");
+        require(delegatee != address(0), "DAO: zero address");
+        require(isValidator(delegatee), "DAO: delegatee below threshold");
+        _applyDelegate(msg.sender, delegatee, block.timestamp + delegationCooldown);
+    }
+
+    /**
+     * @notice Remove your delegation, reclaiming your own voting power.
+     *         Applies delegationCooldown so you cannot immediately redelegate.
+     */
+    function undelegate() external {
+        require(block.timestamp >= voteDelegateLockExpiry[msg.sender], "DAO: delegation locked");
+        _applyDelegate(msg.sender, address(0), block.timestamp + delegationCooldown);
+    }
+
+    /**
+     * @notice Set the cooldown applied after every manual delegate / undelegate action.
+     */
+    function setDelegationCooldown(uint256 cooldown) external onlyTimelock {
+        delegationCooldown = cooldown;
+    }
+
+    /**
+     * @notice Auto-delegate a buyer's voting power (called by TokenSale for sales #0 and #1).
+     * @dev Bypasses validator threshold. Applies 2-year lock.
+     */
+    function autoDelegate(address user, address delegatee) external onlyTokenSale {
+        _applyDelegate(user, delegatee, block.timestamp + delegateLockDuration);
+    }
+
+    /**
+     * @notice Update the lock duration applied to future auto-delegations.
+     */
+    function setDelegateLockDuration(uint256 duration) external onlyTimelock {
+        delegateLockDuration = duration;
+    }
+
+    /**
+     * @notice Set the TokenSale contract allowed to call autoDelegate.
+     */
+    function setTokenSaleContract(address _tokenSale) external onlyGuardian {
+        tokenSaleContract = _tokenSale;
+    }
+
+    /**
+     * @notice Sync a user's cached delegated power with their current raw voting power.
+     * @dev Call this after a user's staking balance changes significantly.
+     */
+    function syncDelegate(address user) external {
+        address currentDelegate = voteDelegate[user];
+        if (currentDelegate == address(0)) return;
+        uint256 oldCached = userDelegatedPower[user];
+        uint256 newPower = _getRawVotingPower(user);
+        if (newPower == oldCached) return;
+        if (oldCached <= delegatedVotingPower[currentDelegate]) {
+            delegatedVotingPower[currentDelegate] -= oldCached;
+        } else {
+            delegatedVotingPower[currentDelegate] = 0;
+        }
+        delegatedVotingPower[currentDelegate] += newPower;
+        userDelegatedPower[user] = newPower;
+        emit DelegateChanged(user, currentDelegate, currentDelegate);
+    }
+
+    ///////////////////////////////////////
+    //           Public Functions        //
+    ///////////////////////////////////////
+
+    function getEta(uint256 _proposalId) public view returns (uint256 eta) {
+        Proposal storage proposal = proposals[_proposalId];
+        return proposal.eta;
     }
 
     // Function to create a proposal
@@ -115,11 +357,11 @@ contract DAO {
         string[] memory _signatures,
         bytes[] memory _datas
     ) public {
+        // Check if msg.sender has enough tokens to pay proposalCost
         require(
             werewolfToken.balanceOf(msg.sender) >= proposalCost,
             "DAO::createProposal: Insufficient balance to create proposal"
         );
-
         // Transfer the proposal cost to the treasury address
         require(
             werewolfToken.transferFrom(
@@ -130,6 +372,7 @@ contract DAO {
             "DAO::createProposal: WerewolfTokenV1 transfer for proposal cost failed"
         );
 
+        //question not sure what this code is...
         // require(
         //     werewolfToken.getPriorVotes(msg.sender, sub256(block.number, 1)) >
         //         ((werewolfToken.getPriorVotes(
@@ -139,52 +382,91 @@ contract DAO {
         //     "DAO::createProposal: proposer votes below proposal threshold"
         // );
 
-        require(
-            werewolfToken.balanceOf(msg.sender) >
-                (werewolfToken.balanceOf(address(treasury)) *
-                    proposalThreshold()),
-            "DAO::createProposal: proposer votes below proposal threshold"
-        );
+        /*
+         * Requiring the proposal creator to hold a balance of werewolf tokens greater than 0.5% of the total balance within
+         * the treasury. For example, the treasury hold 1000 tokens, then the proposal creator
+         * must hold more than 5 tokens (ignoring decimals).
+         */
+        // require(
+        //     werewolfToken.balanceOf(msg.sender)
+        //         > ((werewolfToken.balanceOf(address(treasury)) * proposalThreshold()) / 1e18),
+        //     "DAO:createProposal proposer votes below proposal threshold"
+        // );
 
         require(
             _targets.length == _signatures.length &&
                 _targets.length == _datas.length,
-            "DAO::createProposal: proposal function information arity mismatch"
+            "DAO:createProposal proposal function information arity mismatch"
         );
         require(
             _targets.length != 0,
-            "DAO::createProposal: must provide actions"
+            "DAO:createProposal must provide actions"
         );
         require(
             _targets.length <= proposalMaxOperations(),
-            "DAO::createProposal: too many actions"
+            "DAO:createProposal too many actions"
         );
 
-        uint startBlock = add256(block.number, votingDelay());
-        uint endBlock = add256(startBlock, votingPeriod());
+        uint256 startTime = (block.timestamp + votingDelay());
+        uint256 endTime = (startTime + votingPeriod());
 
         proposals[proposalCount] = Proposal({
+            state: ProposalState.Pending,
+            id: proposalCount,
             proposer: msg.sender,
             targets: _targets,
             signatures: _signatures,
             datas: _datas,
-            startBlock: startBlock,
-            endBlock: endBlock,
             votesFor: 0,
             votesAgainst: 0,
+            startTime: startTime,
+            endTime: endTime,
+            eta: 0,
+            canceled: false,
             executed: false,
-            eta: 0
+            snapshotBlock: block.number
         });
 
         emit ProposalCreated(proposalCount, msg.sender);
         proposalCount++;
     }
 
-    function queueProposal(uint proposalId) public {
-        Proposal storage proposal = proposals[proposalId];
-        uint eta = add256(block.timestamp, timelock.delay());
+    function approveProposal(uint256 _proposalId) public onlyGuardian {
+        Proposal storage s_proposal = proposals[_proposalId];
+        require(s_proposal.state == ProposalState.Pending);
+        s_proposal.state = ProposalState.Active;
+        //set the proposal deadlines
+        // s_proposal.startTime = block.timestamp;
+        // s_proposal.endTime = block.timestamp + votingPeriod();
+    }
 
-        for (uint i = 0; i < proposal.targets.length; i++) {
+    function cancelProposal(uint256 _proposalId) public onlyGuardian {
+        Proposal storage proposal = proposals[_proposalId];
+        require(
+            proposal.state == ProposalState.Pending ||
+            proposal.state == ProposalState.Active  ||
+            proposal.state == ProposalState.Succeeded ||
+            proposal.state == ProposalState.Queued,
+            "DAO::cancelProposal: proposal is not cancellable"
+        );
+        proposal.state = ProposalState.Canceled;
+        emit ProposalCanceled(_proposalId);
+    }
+
+    function getAdmin() public view returns (address _admin) {
+        return timelock.admin();
+    }
+
+    function queueProposal(uint256 _proposalId) public {
+        Proposal storage proposal = proposals[_proposalId];
+        require(
+            block.timestamp >= proposal.endTime,
+            "DAO::queueProposal: voting period has not ended"
+        );
+        _calculateResult(proposal);
+        if (proposal.state != ProposalState.Succeeded) return;
+        uint256 eta = block.timestamp + timelock.delay();
+        for (uint256 i = 0; i < proposal.targets.length; i++) {
             _queueOrRevert(
                 proposal.targets[i],
                 proposal.signatures[i],
@@ -193,118 +475,8 @@ contract DAO {
             );
         }
         proposal.eta = eta;
-        emit ProposalQueued(proposalId, eta);
-    }
-
-    function _queueOrRevert(
-        address target,
-        string memory signature,
-        bytes memory data,
-        uint eta
-    ) internal {
-        require(
-            !timelock.queuedTransactions(
-                keccak256(abi.encode(target, signature, data))
-            ),
-            "DAO::_queueOrRevert: proposal action already queued at eta"
-        );
-        timelock.queueTransaction(target, signature, data, eta);
-    }
-
-    // Function to execute a proposal
-    function executeProposal(uint256 proposalId) external {
-        Proposal storage proposal = proposals[proposalId];
-        require(
-            !proposal.executed,
-            "DAO::executeProposal: Proposal already executed"
-        );
-
-        // Ensure the proposal has enough "For" votes (must be more than 50% of total votes)
-        uint256 totalVotes = proposal.votesFor + proposal.votesAgainst;
-        require(
-            proposal.votesFor > totalVotes * quorumVotes(),
-            "DAO::executeProposal: Proposal must reach minimum quorum votes to pass."
-        );
-
-        // Mark the proposal as executed
-        proposal.executed = true;
-
-        for (uint i = 0; i < proposal.targets.length; i++) {
-            timelock.executeTransaction(
-                proposal.targets[i],
-                proposal.signatures[i],
-                proposal.datas[i],
-                proposal.eta
-            );
-            emit ProposalExecuted(proposalId);
-        }
-    }
-
-    // Voting function
-    function vote(uint256 proposalId, bool support) external {
-        Proposal storage proposal = proposals[proposalId];
-        Receipt storage receipt = proposalReceipts[proposalId][msg.sender];
-
-        require(!receipt.hasVoted, "Already voted.");
-
-        uint256 voterBalance = werewolfToken.balanceOf(msg.sender);
-        require(voterBalance > 0, "No tokens to vote.");
-
-        uint256 votingPower = _calculateVotingPower(msg.sender);
-        require(votingPower > 0, "Voter doesn't have enough tokens.");
-        receipt.hasVoted = true;
-        receipt.support = support;
-
-        if (support) {
-            proposal.votesFor += votingPower;
-        } else {
-            proposal.votesAgainst += votingPower;
-        }
-
-        emit Voted(proposalId, msg.sender, support, voterBalance);
-    }
-
-    function _calculateVotingPower(address _voter) internal returns (uint256) {
-        uint256 totalSupply = werewolfToken.balanceOf(address(treasury));
-        uint256 balance = werewolfToken.balanceOf(_voter);
-        uint256 holdingPercentage = (balance * 100) / totalSupply;
-
-        // Apply voting weight formula based on holding percentage
-        if (holdingPercentage <= 10) {
-            return (balance * 19) / 10; // 1.9x weight for bottom 10%
-        } else if (holdingPercentage <= 20) {
-            return (balance * 18) / 10; // 1.8x weight for bottom 20%
-        } else if (holdingPercentage <= 70) {
-            return (balance * 7) / 10; // 0.7x weight for top 70%
-        } else if (holdingPercentage <= 80) {
-            return (balance * 6) / 10; // 0.6x weight for top 80%
-        } else {
-            return balance; // Normal voting power for others
-        }
-    }
-
-    function delegate(address delegatee) external {
-        // Implement delegation logic efficiently
-    }
-
-    function undelegate() external {
-        // Implement undelegation logic efficiently
-    }
-
-    function sub256(uint256 a, uint256 b) internal pure returns (uint) {
-        require(b <= a, "subtraction underflow");
-        return a - b;
-    }
-
-    function add256(uint256 a, uint256 b) internal pure returns (uint) {
-        uint c = a + b;
-        require(c >= a, "addition overflow");
-        return c;
-    }
-
-    function getBlockTimestamp() internal view returns (uint) {
-        // solium-disable-next-line security/no-block-members
-        return block.timestamp;
+        proposal.state = ProposalState.Queued;
+        emit ProposalQueued(_proposalId, eta);
     }
 
     function __acceptAdmin() public {
@@ -313,5 +485,191 @@ contract DAO {
             "GovernorAlpha::__acceptAdmin: sender must be gov guardian"
         );
         timelock.acceptAdmin();
+    }
+
+    function setStakingContracts(address _staking, address _lpStaking) external onlyGuardian {
+        stakingContract = _staking;
+        lpStakingContract = _lpStaking;
+    }
+
+    ///////////////////////////////////////
+    //   Public View/Pure Functions      //
+    ///////////////////////////////////////
+
+    function votingDelay() public view returns (uint256) {
+        return votingDelayDuration;
+    }
+
+    function proposalMaxOperations() public pure returns (uint256) {
+        return 10;
+    } // 10 actions
+
+    function votingPeriod() public view returns (uint256) {
+        return votingPeriodDuration;
+    }
+
+    function setVotingPeriod(uint256 _seconds) external onlyTimelock {
+        require(_seconds >= 1 hours, "DAO::setVotingPeriod: period too short");
+        votingPeriodDuration = _seconds;
+    }
+
+    function setVotingDelay(uint256 _blocks) external onlyTimelock {
+        votingDelayDuration = _blocks;
+    }
+
+    function quorumVotes() public pure returns (uint256) {
+        return (50 * 10 ** 18) / 100; // 50% represented with a factor of 10**18 for precision
+    }
+
+    function proposalThreshold() public pure returns (uint256) {
+        return (5 * 10 ** 18) / 1000; // 0.5% represented with a factor of 10**18
+    }
+
+    function getProposalState(
+        uint256 _proposalId
+    ) public view returns (string memory status) {
+        Proposal storage p = proposals[_proposalId];
+
+        // Dynamically compute result for Active proposals past voting deadline
+        if (p.state == ProposalState.Active && block.timestamp >= p.endTime) {
+            uint256 totalVotes = p.votesFor + p.votesAgainst;
+            if (totalVotes < minVotesRequired) return "Canceled";
+            if (p.votesAgainst >= p.votesFor) return "Defeated";
+            return "Succeeded";
+        }
+
+        if (p.state == ProposalState.Pending)   return "Pending";
+        if (p.state == ProposalState.Active)    return "Active";
+        if (p.state == ProposalState.Canceled)  return "Canceled";
+        if (p.state == ProposalState.Defeated)  return "Defeated";
+        if (p.state == ProposalState.Succeeded) return "Succeeded";
+        if (p.state == ProposalState.Queued)    return "Queued";
+        if (p.state == ProposalState.Expired)   return "Expired";
+        if (p.state == ProposalState.Executed)  return "Executed";
+
+        return "Unknown"; // Fallback case (should never be hit)
+    }
+
+    function getVotingPower(address voter) external view returns (uint256) {
+        return _getVotingPower(voter);
+    }
+
+    /**
+     * @notice Returns true if addr has enough own WLF stake to receive delegations.
+     * @dev Only counts the address's own wallet + staking + LP power.
+     *      Power delegated TO addr from others does not count toward this threshold —
+     *      receiving delegations cannot be what qualifies you to receive them.
+     */
+    function isValidator(address addr) public view returns (bool) {
+        return _getRawVotingPower(addr) >= VALIDATOR_THRESHOLD;
+    }
+
+    function getProposalActions(uint256 _proposalId)
+        external
+        view
+        returns (
+            address[] memory targets,
+            string[] memory signatures,
+            bytes[] memory datas
+        )
+    {
+        Proposal storage p = proposals[_proposalId];
+        return (p.targets, p.signatures, p.datas);
+    }
+
+    ///////////////////////////////////////
+    //         Internal Functions        //
+    ///////////////////////////////////////
+
+    function _getVotingPower(address voter) internal view returns (uint256) {
+        // If voter has delegated their power away, they forfeit their raw power
+        uint256 own = voteDelegate[voter] == address(0) ? _getRawVotingPower(voter) : 0;
+        return own + delegatedVotingPower[voter];
+    }
+
+    /// @dev Snapshot version: uses getPriorVotes for WLF to prevent flash-loan attacks.
+    function _getVotingPower(address voter, uint256 snapshotBlock) internal view returns (uint256) {
+        uint256 own = voteDelegate[voter] == address(0) ? _getRawVotingPower(voter, snapshotBlock) : 0;
+        return own + delegatedVotingPower[voter];
+    }
+
+    function _getRawVotingPower(address voter) internal view returns (uint256) {
+        uint256 power = werewolfToken.balanceOf(voter);
+        if (stakingContract != address(0)) {
+            power += IStaking(stakingContract).getStakedWLF(voter);
+        }
+        if (lpStakingContract != address(0)) {
+            power += ILPStaking(lpStakingContract).getWLFVotingPower(voter);
+        }
+        return power;
+    }
+
+    /// @dev Snapshot version: reads WLF balance at snapshotBlock to prevent flash-loan voting.
+    function _getRawVotingPower(address voter, uint256 snapshotBlock) internal view returns (uint256) {
+        uint256 power = werewolfToken.getPriorVotes(voter, snapshotBlock);
+        if (stakingContract != address(0)) {
+            power += IStaking(stakingContract).getStakedWLF(voter);
+        }
+        if (lpStakingContract != address(0)) {
+            power += ILPStaking(lpStakingContract).getWLFVotingPower(voter);
+        }
+        return power;
+    }
+
+    function _applyDelegate(address user, address newDelegate, uint256 lockExpiry) internal {
+        address oldDelegate = voteDelegate[user];
+        uint256 oldCached = userDelegatedPower[user];
+        uint256 newRawPower = _getRawVotingPower(user);
+
+        // Remove contribution from old delegate
+        if (oldDelegate != address(0) && oldCached > 0) {
+            if (oldCached <= delegatedVotingPower[oldDelegate]) {
+                delegatedVotingPower[oldDelegate] -= oldCached;
+            } else {
+                delegatedVotingPower[oldDelegate] = 0;
+            }
+        }
+
+        // Add contribution to new delegate
+        if (newDelegate != address(0) && newRawPower > 0) {
+            delegatedVotingPower[newDelegate] += newRawPower;
+            userDelegatedPower[user] = newRawPower;
+        } else {
+            userDelegatedPower[user] = 0;
+        }
+
+        voteDelegate[user] = newDelegate;
+        if (lockExpiry > voteDelegateLockExpiry[user]) {
+            voteDelegateLockExpiry[user] = lockExpiry;
+        }
+
+        emit DelegateChanged(user, oldDelegate, newDelegate);
+    }
+
+    function _queueOrRevert(
+        address target,
+        string memory signature,
+        bytes memory data,
+        uint256 eta
+    ) internal {
+        require(
+            !timelock.queuedTransactions(
+                keccak256(abi.encode(target, signature, data, eta))
+            ),
+            "DAO::_queueOrRevert: proposal action already queued at eta"
+        );
+        timelock.queueTransaction(target, signature, data, eta);
+    }
+
+    function _calculateResult(Proposal storage s_proposalPtr) internal {
+        uint256 totalVotes = s_proposalPtr.votesAgainst +
+            s_proposalPtr.votesFor;
+        if (totalVotes < minVotesRequired) {
+            s_proposalPtr.state = ProposalState.Canceled;
+        } else if (s_proposalPtr.votesAgainst >= s_proposalPtr.votesFor) {
+            s_proposalPtr.state = ProposalState.Defeated;
+        } else {
+            s_proposalPtr.state = ProposalState.Succeeded;
+        }
     }
 }
