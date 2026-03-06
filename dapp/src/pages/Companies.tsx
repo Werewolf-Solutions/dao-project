@@ -1789,6 +1789,8 @@ export default function Companies() {
   const usdtAddress = getAddress(chainId, 'USDT');
 
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [employeeCompanyIds, setEmployeeCompanyIds] = useState<bigint[]>([]);
+  const publicClient = usePublicClient();
 
   const { data: companyIds, refetch: refetchIds } = useReadContract({
     address: companiesHouseAddress,
@@ -1804,6 +1806,44 @@ export default function Companies() {
     functionName: 'creationFee',
     query: { enabled: !!companiesHouseAddress },
   });
+
+  const { data: totalCompanies } = useReadContract({
+    address: companiesHouseAddress,
+    abi: companiesHouseABI,
+    functionName: 'currentCompanyIndex',
+    query: { enabled: !!companiesHouseAddress, refetchInterval: 30_000 },
+  });
+
+  // Scan all companies to find ones where the connected user is an active employee (but not owner)
+  useEffect(() => {
+    if (!address || !totalCompanies || !publicClient || !companiesHouseAddress) return;
+    const total = Number(totalCompanies);
+    if (total === 0) return;
+    const ownerIds = new Set((companyIds ?? []).map(id => id.toString()));
+    const scanIds = Array.from({ length: Math.min(total, 200) }, (_, i) => BigInt(i + 1));
+    publicClient.multicall({
+      contracts: scanIds.map(id => ({
+        address: companiesHouseAddress as `0x${string}`,
+        abi: companiesHouseABI,
+        functionName: 'retrieveCompany' as const,
+        args: [id] as [bigint],
+      })),
+    }).then(results => {
+      const addrLower = address.toLowerCase();
+      const empIds: bigint[] = [];
+      results.forEach((result, i) => {
+        if (result.status !== 'success') return;
+        const company = result.result as Company;
+        if (!company.active) return;
+        if (ownerIds.has(scanIds[i].toString())) return;
+        const isEmp = company.employees.some(
+          e => e.active && e.employeeId.toLowerCase() === addrLower
+        );
+        if (isEmp) empIds.push(scanIds[i]);
+      });
+      setEmployeeCompanyIds(empIds);
+    });
+  }, [address, totalCompanies, publicClient, companiesHouseAddress, companyIds]);
 
   const ids = companyIds ? [...companyIds] : [];
 
@@ -1854,7 +1894,7 @@ export default function Companies() {
         />
       )}
 
-      {ids.length === 0 && !showCreateForm && (
+      {ids.length === 0 && !showCreateForm && employeeCompanyIds.length === 0 && (
         <div className={`${theme.card} p-8 text-center`}>
           <p className="text-white/60 mb-4">You don't have any registered companies yet.</p>
           <button
@@ -1881,6 +1921,29 @@ export default function Companies() {
           onRefetch={refetchIds}
         />
       ))}
+
+      {employeeCompanyIds.length > 0 && (
+        <>
+          <div className="pt-2 border-t border-white/10">
+            <h2 className="text-xl font-bold text-white">My Employment</h2>
+            <p className={`text-sm mt-1 ${theme.textMuted}`}>
+              Companies where you are employed.
+            </p>
+          </div>
+          {employeeCompanyIds.map((id) => (
+            <CompanyCard
+              key={id}
+              companyId={id}
+              address={address!}
+              companiesHouseAddress={companiesHouseAddress}
+              usdtAddress={usdtAddress}
+              wlfAddress={wlfAddress}
+              wlfPrice={wlfPrice}
+              onRefetch={refetchIds}
+            />
+          ))}
+        </>
+      )}
     </main>
   );
 }
