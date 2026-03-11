@@ -486,7 +486,8 @@ function EmployeeCard({
         account: connectedAddress,
       });
       writeContract(
-        { ...result.request, gas: result.request.gas ? result.request.gas * 12n / 10n : undefined },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { ...result.request, gas: result.request.gas ? result.request.gas * 12n / 10n : undefined } as any,
         {
           onSuccess: (hash) => setTxHash(hash),
           onError: (err) => {
@@ -1288,7 +1289,8 @@ function CompanyCard({
         account: address,
       });
       writePayAll(
-        { ...result.request, gas: result.request.gas ? result.request.gas * 12n / 10n : undefined },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { ...result.request, gas: result.request.gas ? result.request.gas * 12n / 10n : undefined } as any,
         {
           onSuccess: (hash) => { setPayAllError(null); setPayAllTxHash(hash); },
           onError: (err) => {
