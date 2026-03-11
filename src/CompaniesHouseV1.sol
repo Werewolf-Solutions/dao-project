@@ -66,7 +66,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         string domain;
         string[] roles;
         string[] powerRoles;
-        address companyWallet; // dedicated ETH wallet the user controls (store private key separately)
+        address operatorAddress; // address authorized to operate the company (call payEmployee, hire, etc.) — not a fund holder
         string ownerRole;      // role assigned to the creator (auto-added to roles[] if missing)
         uint256 ownerSalaryPerHour; // USDT 6-dec wei per hour for the creator's first salary stream
         string ownerName;
@@ -78,7 +78,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         string domain;
         string[] roles;
         string[] powerRoles;
-        address companyWallet;
+        address operatorAddress;
     }
 
     struct UpdateEmployee {
@@ -97,7 +97,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     struct CompanyStruct {
         uint96 companyId;     // slot 0
         address owner;        // slot 0
-        address companyWallet;// slot 1
+        address operatorAddress;// slot 1
         string industry;      // slot 2
         string name;          // slot 3
         uint256 createdAt;    // slot 4
@@ -179,7 +179,13 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     /// @notice Uniswap V3 SwapRouter address used to buy WLF when company has no WLF balance
     address public swapRouter;
 
-    uint256[33] private __gap;
+    uint256 public wlfFeeBps    = 50;   // 0.5% on WLF payments
+    uint256 public nonWlfFeeBps = 500;  // 5%   on USDT / other payments
+
+    /// @notice Company ID of the canonical WLF DAO company (set by admin after creation)
+    uint96 public daoCompanyId;
+
+    uint256[30] private __gap;
 
     ///////////////////////////////////////
     //           Events                  //
@@ -197,6 +203,10 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     /// @param token ERC20 token address deposited
     /// @param amount Amount deposited (token decimals)
     event CompanyFunded(uint96 indexed companyId, address indexed token, uint256 amount);
+    /// @param companyId  Company that paid the fee
+    /// @param token      Token the fee was taken in
+    /// @param feeAmount  Fee sent to treasury
+    event ProtocolFeePaid(uint96 indexed companyId, address indexed token, uint256 feeAmount);
 
     ///////////////////////////////////////
     //           Modifiers               //
@@ -270,6 +280,8 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         minReserveMonths = _minReserveMonths;
         creationFee = 10e18;
         currentCompanyIndex = 1;
+        wlfFeeBps    = 50;   // 0.5%
+        nonWlfFeeBps = 500;  // 5%
     }
 
     ///////////////////////////////////////
@@ -333,6 +345,29 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     }
 
     /**
+     * @notice Update protocol fee rates for employee payments.
+     * @dev onlyAdmin. DAO can adjust via governance proposal through Timelock.
+     * @param _wlfFeeBps    Fee in basis points for WLF payments  (e.g. 50 = 0.5%)
+     * @param _nonWlfFeeBps Fee in basis points for non-WLF payments (e.g. 500 = 5%)
+     */
+    function setFees(uint256 _wlfFeeBps, uint256 _nonWlfFeeBps) external onlyAdmin {
+        require(_wlfFeeBps    <= 1_000, "CompaniesHouse: wlf fee > 10%");
+        require(_nonWlfFeeBps <= 1_000, "CompaniesHouse: non-wlf fee > 10%");
+        wlfFeeBps    = _wlfFeeBps;
+        nonWlfFeeBps = _nonWlfFeeBps;
+    }
+
+    /**
+     * @notice Set the canonical WLF DAO company ID so the protocol can identify
+     *         which CompaniesHouse entry represents the DAO itself.
+     * @param _id Company ID of the Werewolf DAO company (must exist).
+     */
+    function setDaoCompanyId(uint96 _id) external onlyAdmin {
+        require(_id < currentCompanyIndex, "CompaniesHouse: company does not exist");
+        daoCompanyId = _id;
+    }
+
+    /**
      * @notice Emergency pause — halts employee hiring, payments, and company creation.
      * @dev Callable by admin.
      */
@@ -377,7 +412,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
 
         // ── 3. Pay each employee (no per-employee reserve re-check) ─────────
         for (uint256 i = 0; i < employees.length; i++) {
-            if (employees[i].active && _hasPendingPay(employees[i])) {
+            if (employees[i].active) {
                 _payEmployeeUSDT(employees[i], _companyId);
             }
         }
@@ -404,7 +439,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
 
         compPtr.companyId = currentCompanyIndex;
         compPtr.owner = msg.sender;
-        compPtr.companyWallet = _params.companyWallet;
+        compPtr.operatorAddress = _params.operatorAddress;
         compPtr.industry = _params.industry;
         compPtr.name = _params.name;
         compPtr.createdAt = block.timestamp;
@@ -464,7 +499,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
      * @notice Updates mutable company metadata.
      * @dev Only the company owner may call this. Replaces roles[] and powerRoles[] entirely.
      * @param _companyId ID of the company to update
-     * @param _params New values for name, industry, domain, roles, powerRoles, companyWallet
+     * @param _params New values for name, industry, domain, roles, powerRoles, operatorAddress
      */
     function updateCompany(uint96 _companyId, UpdateCompany memory _params) public {
         if (companyBrief[_companyId].owner != msg.sender) revert NotOwner();
@@ -475,7 +510,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         compPtr.name = _params.name;
         compPtr.industry = _params.industry;
         compPtr.domain = _params.domain;
-        compPtr.companyWallet = _params.companyWallet;
+        compPtr.operatorAddress = _params.operatorAddress;
 
         delete compPtr.roles;
         for (uint256 i = 0; i < _params.roles.length; i++) {
@@ -689,10 +724,19 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         if (_wlfAmount > 0) companyTokenBalances[_companyId][_wlfToken] -= _wlfAmount;
 
         // ── 3. Interactions ───────────────────────────────────────────────────
-        if (_usdtAmount > 0) IERC20(usdtAddress).transfer(s_emp.payableAddress, _usdtAmount);
-        if (_wlfAmount > 0) IERC20(_wlfToken).transfer(s_emp.payableAddress, _wlfAmount);
+        uint256 usdtFee = _usdtAmount > 0 ? _usdtAmount * nonWlfFeeBps / 10_000 : 0;
+        uint256 usdtNet = _usdtAmount - usdtFee;
+        uint256 wlfFee  = _wlfAmount  > 0 ? _wlfAmount  * wlfFeeBps    / 10_000 : 0;
+        uint256 wlfNet  = _wlfAmount  - wlfFee;
 
-        emit EmployeePaid(_employeeAddress, _usdtAmount);
+        if (usdtFee > 0) IERC20(usdtAddress).transfer(treasuryAddress, usdtFee);
+        if (usdtNet > 0) IERC20(usdtAddress).transfer(s_emp.payableAddress, usdtNet);
+        if (wlfFee  > 0) IERC20(_wlfToken).transfer(treasuryAddress, wlfFee);
+        if (wlfNet  > 0) IERC20(_wlfToken).transfer(s_emp.payableAddress, wlfNet);
+
+        emit EmployeePaid(_employeeAddress, usdtNet);
+        if (usdtFee > 0) emit ProtocolFeePaid(_companyId, usdtAddress, usdtFee);
+        if (wlfFee  > 0) emit ProtocolFeePaid(_companyId, _wlfToken,   wlfFee);
     }
 
     /**
@@ -863,9 +907,21 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
             s_emp.salaryItems[i].lastPayDate = payTimestamp;
         }
         if (totalUSDT == 0) return;
-        companyTokenBalances[_companyId][usdtAddress] -= totalUSDT;
-        IERC20(usdtAddress).transfer(s_emp.payableAddress, totalUSDT);
-        emit EmployeePaid(s_emp.employeeId, totalUSDT);
+
+        if (daoCompanyId > 0 && _companyId == daoCompanyId) {
+            // DAO company: pay from internal balance — no fee (would be circular)
+            companyTokenBalances[_companyId][usdtAddress] -= totalUSDT;
+            IERC20(usdtAddress).transfer(s_emp.payableAddress, totalUSDT);
+            emit EmployeePaid(s_emp.employeeId, totalUSDT);
+        } else {
+            uint256 fee    = totalUSDT * nonWlfFeeBps / 10_000;
+            uint256 netPay = totalUSDT - fee;
+            companyTokenBalances[_companyId][usdtAddress] -= totalUSDT;
+            if (fee > 0) IERC20(usdtAddress).transfer(treasuryAddress, fee);
+            IERC20(usdtAddress).transfer(s_emp.payableAddress, netPay);
+            emit EmployeePaid(s_emp.employeeId, netPay);
+            if (fee > 0) emit ProtocolFeePaid(_companyId, usdtAddress, fee);
+        }
     }
 
     function _hasPendingPay(Employee storage _emp) internal view returns (bool) {
@@ -891,7 +947,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         CompanyStruct storage s_company = ownerToCompanies[compBrief.owner][compBrief.index];
 
         // Company wallet authorized (e.g., automated scripts using its private key)
-        if (_caller == s_company.companyWallet) return true;
+        if (_caller == s_company.operatorAddress) return true;
 
         // Active employee with a power role
         EmployeeBrief memory empBrief = employeeBrief[_caller][_companyId];

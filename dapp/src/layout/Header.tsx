@@ -351,6 +351,16 @@ export default function Header() {
                 Connect
               </button>
             )}
+
+            {/* Mobile account link — rightmost */}
+            <Link
+              to="/account"
+              className="md:hidden p-2 rounded-lg transition-colors"
+              style={{ color: 'rgba(255,255,255,0.6)' }}
+              title="Account"
+            >
+              <i className="fa-solid fa-user text-base" />
+            </Link>
           </div>
         </div>
       </header>

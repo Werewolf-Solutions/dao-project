@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Script, console} from "forge-std/Script.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {HelperConfig} from "./helpers/HelperConfig.s.sol";
 
 import {WerewolfTokenV1} from "../src/WerewolfTokenV1.sol";
@@ -15,6 +16,10 @@ import {UniswapHelper} from "../src/UniswapHelper.sol";
 import {CompaniesHouseV1} from "../src/CompaniesHouseV1.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
+interface IMintable {
+    function mint(address to, uint256 amount) external;
+}
+
 contract Deploy is Script {
     //helper contract for chain settings
     HelperConfig helperConfig;
@@ -23,8 +28,10 @@ contract Deploy is Script {
     // Constants
     // votingPeriod is hardcoded in DAO.sol::votingPeriod() — 1 hour for testnet
     // timelockDelay comes from netConfig (0 for local/Sepolia, 2 days for mainnet)
-    uint256 constant tokenSaleAirdrop = 5_000_000 ether;
-    uint256 constant tokenPrice = 0.0004 ether;
+    uint256 constant tokenSaleAirdrop    = 5_000_000 ether;
+    uint256 constant tokenPrice          = 0.0004 ether;
+    uint256 constant tokenSaleOneAirdrop = 25_000_000 ether;
+    uint256 constant tokenSaleOnePrice   = 0.004 ether;   // 0.004 USDT/WLF → 25M * 0.004 = 100K USDT
 
     // Addresses
     address multiSig;
@@ -94,12 +101,21 @@ contract Deploy is Script {
         // Wire TokenSale into DAO so DAO.autoDelegate() accepts calls from TokenSale
         dao.setTokenSaleContract(address(tokenSale));
 
+        // Auto-delegations from sales #0 and #1 are locked for 2 years
+        dao.setDelegateLockDuration(2 * 365 days);
+
         // Set TokenSale contract in LPStaking (can only be set once)
         lpStaking.setTokenSaleContract(address(tokenSale));
         lpStaking.transferOwnership(address(timelock));
 
         // Deploy CompaniesHouseV1
         _deployCompaniesHouse();
+
+        // Authorize CompaniesHouseV1 to pay DAO company employees from Treasury
+        treasury.setCompaniesHouse(address(companiesHouse));
+
+        // Authorize CompaniesHouseV1 to record governance fees in DAO (for voting power)
+        dao.authorizeCaller(address(companiesHouse));
 
         // Airdrop tokens to TokenSale
         werewolfToken.airdrop(address(tokenSale), tokenSaleAirdrop);
@@ -112,13 +128,24 @@ contract Deploy is Script {
             treasury.setSwapRouter(netConfig.swapRouter, netConfig.usdt, 500);
         }
 
-        // Wire Staking.treasury while founder still owns Staking
+        // Wire Staking.treasury and LPStaking reference while founder still owns Staking
         staking.setTreasury(address(treasury));
+        staking.setLPStakingContract(address(lpStaking));
 
         // Authorize LPStaking and CompaniesHouse as WLF payEmployee callers
         // (must happen before werewolfToken.transferOwnership — onlyOwner check)
         werewolfToken._authorizeCaller(address(lpStaking));
         werewolfToken._authorizeCaller(address(companiesHouse));
+
+        // Create the Werewolf DAO company — must happen before werewolfToken.transferOwnership
+        // so we can still call werewolfToken.airdrop (onlyOwner) for the creation fee seed
+        _createDaoCompany();
+
+        // Deployer buys all sale #0 tokens → Uniswap LP created + staked
+        _buyFounderSale();
+
+        // Start Token Sale #1 — must happen before ownership transfer (startSale is onlyOwner)
+        _startSaleOne();
 
         // Transfer ownership to Timelock
         werewolfToken.transferOwnership(address(timelock));
@@ -177,7 +204,7 @@ contract Deploy is Script {
             address(treasury),
             address(dao),
             address(tokenSale),
-            address(timelock),         // admin — Timelock controls company treasury admin functions
+            founder,                   // admin starts as founder; transferred to Timelock after _createDaoCompany()
             netConfig.usdt,            // USDT token for employee payouts
             netConfig.swapRouter,      // Uniswap V3 router (address(0) on local chain)
             netConfig.minReserveMonths // 1 local / 3 testnet / 60 mainnet
@@ -188,6 +215,8 @@ contract Deploy is Script {
                 initDataCompaniesHouse
             );
         companiesHouse = CompaniesHouseV1(address(companiesHouseProxy));
+        // Admin starts as founder so we can call setDaoCompanyId after createCompany.
+        // Transferred to Timelock at end of _createDaoCompany().
     }
 
     function _deployWereWolfToken() internal {
@@ -277,6 +306,78 @@ contract Deploy is Script {
                 initDataTokenSale
             );
         tokenSale = TokenSale(payable(address(tokenSaleProxy)));
+    }
+
+    function _createDaoCompany() internal {
+        // 1. Approve creation fee from deployer's own WLF balance (1000 WLF pre-funded)
+        uint256 creationFee = companiesHouse.creationFee();
+        werewolfToken.approve(address(companiesHouse), creationFee);
+
+        // 2. Salary: $10,000/month on local/Sepolia, $500/month on mainnet
+        //    Formula: $monthly * 1_000_000 / 730  (USDT 6-dec wei per hour)
+        uint256 hourlyWei = block.chainid == 1
+            ? uint256(   500 * 1_000_000) / 730   // ≈    684,931 USDT-wei/hr on mainnet
+            : uint256(10_000 * 1_000_000) / 730;  // ≈ 13,698,630 USDT-wei/hr on local/Sepolia
+
+        // 3. Build the Werewolf DAO company params
+        string[] memory roles = new string[](7);
+        roles[0] = "Founder";
+        roles[1] = "CEO";
+        roles[2] = "CTO";
+        roles[3] = "HR";
+        roles[4] = "SMM";
+        roles[5] = "Developer";
+        roles[6] = "Tester";
+
+        string[] memory powerRoles = new string[](2);
+        powerRoles[0] = "Founder";
+        powerRoles[1] = "CEO";
+
+        CompaniesHouseV1.CreateCompany memory params = CompaniesHouseV1.CreateCompany({
+            name:               "Werewolf DAO",
+            industry:           "software",
+            domain:             "dao.werewolf.solutions",
+            roles:              roles,
+            powerRoles:         powerRoles,
+            operatorAddress:      founder,
+            ownerRole:          "Founder",
+            ownerSalaryPerHour: hourlyWei,
+            ownerName:          "Lorenzo"
+        });
+
+        companiesHouse.createCompany(params);
+
+        // 4. Mark this as the canonical DAO company
+        uint96 daoId = companiesHouse.currentCompanyIndex() - 1;
+        companiesHouse.setDaoCompanyId(daoId);
+
+        // 5. Mint 1T mock USDT to deployer (MockUSDT on local/Sepolia)
+        //    1T USDT = 1_000_000_000_000 * 1_000_000 = 1e18 USDT-wei
+        IMintable(netConfig.usdt).mint(founder, 1_000_000_000_000 * 1_000_000);
+
+        // 6. Transfer CompaniesHouse admin to Timelock
+        companiesHouse.setAdmin(address(timelock));
+
+        console.log("Werewolf DAO company created. ID:", daoId);
+    }
+
+    function _startSaleOne() internal {
+        werewolfToken.airdrop(address(tokenSale), tokenSaleOneAirdrop);
+        tokenSale.startSale(tokenSaleOneAirdrop, tokenSaleOnePrice);
+    }
+
+    function _buyFounderSale() internal {
+        // price is USDT/WLF with 18-decimal scaling; USDT has 6 decimals
+        uint256 usdtRequired = tokenSaleAirdrop * tokenPrice / 1 ether / 1e12;
+
+        // Approve TokenSale to spend the USDT
+        IERC20(netConfig.usdt).approve(address(tokenSale), usdtRequired);
+
+        // Buy all tokens — auto-closes sale when tokensAvailable hits 0
+        tokenSale.buyTokens(0, tokenSaleAirdrop, usdtRequired);
+
+        // Create Uniswap LP + stake with 5-yr lock (callable by anyone after auto-close)
+        tokenSale.endSale();
     }
 
     function _writeDeploymentData() internal {

@@ -62,5 +62,19 @@ export const treasuryABI = [
       { "name": "usdtSpent",    "type": "uint256", "indexed": false },
       { "name": "wlfReceived",  "type": "uint256", "indexed": false }
     ]
+  },
+  {
+    "type": "function",
+    "name": "companiesHouse",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "address", "internalType": "address" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "setCompaniesHouse",
+    "inputs": [{ "name": "_companiesHouse", "type": "address", "internalType": "address" }],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   }
 ] as const;

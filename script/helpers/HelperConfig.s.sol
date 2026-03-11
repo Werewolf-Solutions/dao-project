@@ -81,7 +81,7 @@ contract HelperConfig is Script, Constants {
             positionManager: positionManager,
             swapRouter: swapRouterAddr,
             weth: weth,
-            timelockDelay: 2 days,
+            timelockDelay: 0,
             minReserveMonths: 3  // 3-month reserve for testnet (DAO can raise to 60 via proposal)
         });
     }
@@ -120,7 +120,7 @@ contract HelperConfig is Script, Constants {
             positionManager: positionManager,
             swapRouter: address(0),  // No real SwapRouter on local chain
             weth: weth,
-            timelockDelay: 2 days,
+            timelockDelay: 0,
             minReserveMonths: 1  // 1-month reserve for local testing
         });
     }

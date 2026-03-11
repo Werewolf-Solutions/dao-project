@@ -42,7 +42,10 @@ contract Treasury is OwnableUpgradeable {
     address public usdtToken;
     uint24 public buybackPoolFee;
 
-    uint256[42] private __gap;
+    /// @notice CompaniesHouseV1 address — authorized to call payDaoEmployee()
+    address public companiesHouse;
+
+    uint256[41] private __gap;
 
     event RewardsDistributed(address indexed stakingContract, uint256 amount);
     event WLFBuyback(uint256 usdtSpent, uint256 wlfReceived);
@@ -191,6 +194,29 @@ contract Treasury is OwnableUpgradeable {
         );
 
         emit WLFBuyback(usdtAmount, wlfReceived);
+    }
+
+    /**
+     * @notice Set the CompaniesHouseV1 contract address authorized to pay DAO employees.
+     * @dev onlyOwner. Call once after deploying CompaniesHouseV1.
+     */
+    function setCompaniesHouse(address _companiesHouse) external onlyOwner {
+        require(_companiesHouse != address(0), "Invalid address");
+        companiesHouse = _companiesHouse;
+    }
+
+    /**
+     * @notice Pay a DAO company employee directly from the Treasury.
+     * @dev Only callable by the registered CompaniesHouseV1 contract.
+     *      Used when `companyId == daoCompanyId` so payroll draws from Treasury
+     *      rather than the company's internal balance.
+     * @param token   ERC20 token to pay in (USDT)
+     * @param amount  Amount to transfer (token decimals)
+     * @param to      Employee's payable address
+     */
+    function payDaoEmployee(address token, uint256 amount, address to) external {
+        require(msg.sender == companiesHouse, "Treasury: caller not CompaniesHouse");
+        IERC20(token).transfer(to, amount);
     }
 
     /**

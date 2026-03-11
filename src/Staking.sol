@@ -6,6 +6,10 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC4626Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 
+interface ILPStakingForApy {
+    function totalWLFStaked() external view returns (uint256);
+}
+
 /* Contract layout:
  Data types: structs, enums, and type declarations
  State Variables
@@ -73,8 +77,9 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable, PausableUpgradeable 
     uint256 public currentApy;
 
     address public guardian;
+    address public lpStakingContract;
 
-    uint256[39] private __gap;
+    uint256[38] private __gap;
 
     ///////////////////////////////////////
     //           Events                  //
@@ -122,14 +127,14 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable, PausableUpgradeable 
         minApy = 6_000;   // 6%
         maxApy = 80_000;  // 80%
 
-        // Default duration bonuses
-        durationBonus[DURATION_30D]  = 5_000;   // 1.05x
-        durationBonus[DURATION_3MO]  = 10_000;  // 1.1x
-        durationBonus[DURATION_6MO]  = 15_000;  // 1.2x (approx)
-        durationBonus[DURATION_1YR]  = 25_000;  // 1.5x
-        durationBonus[DURATION_2YR]  = 40_000;  // 2x
-        durationBonus[DURATION_5YR]  = 60_000;  // 2.5x
-        durationBonus[DURATION_10YR] = 80_000;  // 3x
+        // Default duration bonuses — formula: (multiplier - 1) * PERCENTAGE_SCALE
+        durationBonus[DURATION_30D]  =   5_000;  // 1.05x
+        durationBonus[DURATION_3MO]  =  10_000;  // 1.10x
+        durationBonus[DURATION_6MO]  =  20_000;  // 1.20x
+        durationBonus[DURATION_1YR]  =  50_000;  // 1.50x
+        durationBonus[DURATION_2YR]  = 100_000;  // 2.00x
+        durationBonus[DURATION_5YR]  = 150_000;  // 2.50x
+        durationBonus[DURATION_10YR] = 200_000;  // 3.00x
 
         // Seed the cache: nothing staked yet → maxApy
         currentApy = maxApy;
@@ -500,7 +505,7 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable, PausableUpgradeable 
      * @param _bonus    Bonus APY in PERCENTAGE_SCALE units (e.g. 25_000 = 25%)
      */
     function setBonusForDuration(uint256 _duration, uint256 _bonus) external onlyOwner {
-        require(_bonus <= PERCENTAGE_SCALE, "Staking: bonus > 100%");
+        require(_bonus <= 10 * PERCENTAGE_SCALE, "Staking: bonus too high");
         durationBonus[_duration] = _bonus;
         emit DurationBonusUpdated(_duration, _bonus);
     }
@@ -514,6 +519,10 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable, PausableUpgradeable 
         require(_treasury != address(0), "Staking: zero treasury");
         treasury = _treasury;
         emit TreasuryUpdated(_treasury);
+    }
+
+    function setLPStakingContract(address _lpStaking) external onlyOwner {
+        lpStakingContract = _lpStaking;
     }
 
     ///////////////////////////////////////
@@ -550,7 +559,10 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable, PausableUpgradeable 
      * @return APY in PERCENTAGE_SCALE units (e.g. 80_000 = 80%)
      */
     function calculateApy() public view returns (uint256) {
-        if (stakedBalance == 0) return maxApy;
+        uint256 lpStaked = lpStakingContract != address(0)
+            ? ILPStakingForApy(lpStakingContract).totalWLFStaked()
+            : 0;
+        if (stakedBalance == 0 && lpStaked == 0) return maxApy;
         uint256 tokenTotalSupply = stakingToken.totalSupply();
         if (tokenTotalSupply == 0) return maxApy;
 
@@ -561,7 +573,7 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable, PausableUpgradeable 
             : tokenTotalSupply;
         if (circulatingSupply == 0) return maxApy;
 
-        uint256 stakingRatio = (stakedBalance * SCALE) / circulatingSupply;
+        uint256 stakingRatio = ((stakedBalance + lpStaked) * SCALE) / circulatingSupply;
         uint256 exponent = stakingRatio / 1e17;
         uint256 apyValue = SCALE * minApy + ((maxApy - minApy) * SCALE) / (2 ** exponent);
         return apyValue / SCALE;
@@ -630,10 +642,25 @@ contract Staking is ERC4626Upgradeable, OwnableUpgradeable, PausableUpgradeable 
     ) internal returns (uint256 assets) {
         _updateRewardPerToken();
         StakePosition storage pos = stakePositions[_user][_index];
-        assets = _convertToAssets(_sharesToBurn, Math.Rounding.Floor);
+
+        uint256 erc4626Assets = _convertToAssets(_sharesToBurn, Math.Rounding.Floor);
+
+        // Bonus reward for fixed-duration positions, funded from the WLF reserve
+        // (contract balance above stakedBalance). Proportional for partial withdrawals.
+        uint256 bonusReward = 0;
+        if (pos.bonusApy > 0 && pos.shares > 0) {
+            uint256 elapsed = block.timestamp - pos.stakedAt;
+            uint256 proportionalPrincipal = pos.assets * _sharesToBurn / pos.shares;
+            bonusReward = proportionalPrincipal * pos.bonusApy * elapsed / (YEAR_IN_TIME * PERCENTAGE_SCALE);
+            uint256 contractBalance = stakingToken.balanceOf(address(this));
+            uint256 reserve = contractBalance > stakedBalance ? contractBalance - stakedBalance : 0;
+            if (bonusReward > reserve) bonusReward = reserve;
+        }
+
+        assets = erc4626Assets + bonusReward;
         pos.shares -= _sharesToBurn;
         if (pos.shares == 0) pos.active = false;
-        stakedBalance -= assets;
+        stakedBalance -= erc4626Assets;
         _burn(_user, _sharesToBurn);
         require(stakingToken.transfer(_user, assets), "Staking: transfer failed");
         emit TokensWithdrawn(_user, _index, assets, _sharesToBurn);

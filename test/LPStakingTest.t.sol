@@ -211,6 +211,38 @@ contract LPStakingTest is Test {
         assertApproxEqAbs(unlockTime, block.timestamp + 5 * 365 days, 5, "5-year lock should be set");
     }
 
+    function test_Withdraw_RevertsWhileLocked() public {
+        _setupLPPosition(SALE_ID_1, TOKEN_ID_1, WLF_AMOUNT, USDT_AMOUNT);
+
+        vm.prank(tokenSale);
+        lpStaking.claimShares(user1, SALE_ID_1, 500_000 ether, true);
+
+        uint256 shares = lpStaking.balanceOf(user1);
+        assertGt(shares, 0);
+
+        vm.prank(user1);
+        vm.expectRevert("LPStaking: 5-year lock active");
+        lpStaking.withdraw(shares);
+    }
+
+    function test_Withdraw_SucceedsAfterLockExpires() public {
+        _setupLPPosition(SALE_ID_1, TOKEN_ID_1, WLF_AMOUNT, USDT_AMOUNT);
+
+        vm.prank(tokenSale);
+        lpStaking.claimShares(user1, SALE_ID_1, 500_000 ether, true);
+
+        uint256 shares = lpStaking.balanceOf(user1);
+        assertGt(shares, 0);
+
+        // Advance time past the 5-year lock
+        vm.warp(block.timestamp + lpStaking.FIXED_LOCK_DURATION() + 1);
+
+        vm.prank(user1);
+        lpStaking.withdraw(shares);
+
+        assertEq(lpStaking.balanceOf(user1), 0, "All shares should be withdrawn");
+    }
+
     function test_ClaimShares_MultipleUsers() public {
         _setupLPPosition(SALE_ID_1, TOKEN_ID_1, WLF_AMOUNT, USDT_AMOUNT);
 

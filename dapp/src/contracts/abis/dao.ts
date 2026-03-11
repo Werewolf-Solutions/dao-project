@@ -83,6 +83,11 @@ export const daoABI = [
         "name": "delegatee",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -294,6 +299,25 @@ export const daoABI = [
     "inputs": [
       {
         "name": "voter",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "governanceFeesPaid",
+    "inputs": [
+      {
+        "name": "",
         "type": "address",
         "internalType": "address"
       }
@@ -601,6 +625,43 @@ export const daoABI = [
   },
   {
     "type": "function",
+    "name": "recordFee",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "salePurchaseVotingPower",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "setDelegateLockDuration",
     "inputs": [
       {
@@ -700,7 +761,7 @@ export const daoABI = [
     "name": "syncDelegate",
     "inputs": [
       {
-        "name": "user",
+        "name": "",
         "type": "address",
         "internalType": "address"
       }

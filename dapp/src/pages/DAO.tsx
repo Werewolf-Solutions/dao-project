@@ -138,6 +138,23 @@ export default function DAO() {
     query: { enabled: !!companiesHouseAddress },
   });
 
+  const { data: daoCompanyIdOnChain } = useReadContract({
+    address: companiesHouseAddress,
+    abi: companiesHouseABI,
+    functionName: 'daoCompanyId',
+    query: { enabled: !!companiesHouseAddress },
+  });
+
+  const hasDaoCompany = daoCompanyIdOnChain !== undefined && daoCompanyIdOnChain > 0n;
+
+  const { data: daoCompanyRaw } = useReadContract({
+    address: companiesHouseAddress,
+    abi: companiesHouseABI,
+    functionName: 'retrieveCompany',
+    args: [daoCompanyIdOnChain ?? 0n],
+    query: { enabled: !!companiesHouseAddress && hasDaoCompany },
+  });
+
   // IDs start at 1; currentCompanyIndex is the next ID to be assigned
   const companyCount = currentCompanyIndex !== undefined ? Number(currentCompanyIndex) : 0;
   const companyReadConfigs = companyCount > 1
@@ -212,6 +229,43 @@ export default function DAO() {
   const [companyAirdropAmount, setCompanyAirdropAmount] = useState('');
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<Set<number>>(new Set());
 
+  // Quick: hire employee proposal
+  const [hireCompanyId, setHireCompanyId] = useState('');
+  const [hireAddr, setHireAddr] = useState('');
+  const [hireName, setHireName] = useState('');
+  const [hireRole, setHireRole] = useState('');
+  const [hireSalaryMonthly, setHireSalaryMonthly] = useState('');
+
+  // Quick: fire employee proposal
+  const [fireAddr, setFireAddr] = useState('');
+  const [fireCompanyId, setFireCompanyId] = useState('');
+
+  // Quick: update salary proposal
+  const [salUpdateAddr, setSalUpdateAddr] = useState('');
+  const [salUpdateCompanyId, setSalUpdateCompanyId] = useState('');
+  const [salUpdateRole, setSalUpdateRole] = useState('');
+  const [salUpdateMonthly, setSalUpdateMonthly] = useState('');
+
+  // Quick: move funds from treasury
+  const [moveFundsToken, setMoveFundsToken] = useState<'usdt' | 'wlf'>('usdt');
+  const [moveFundsAmount, setMoveFundsAmount] = useState('');
+  const [moveFundsTo, setMoveFundsTo] = useState('');
+
+  // Quick: set CompaniesHouse fees
+  const [chWlfBps, setChWlfBps] = useState('50');
+  const [chNonWlfBps, setChNonWlfBps] = useState('500');
+
+  // Quick: update power roles
+  const [powerRolesInput, setPowerRolesInput] = useState('');
+  const [powerRolesCompanyId, setPowerRolesCompanyId] = useState('');
+
+  // DAO team live tick (for pending pay display)
+  const [daoTeamTick, setDaoTeamTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setDaoTeamTick(t => t + 1), 5000);
+    return () => clearInterval(id);
+  }, []);
+
   const toggleCompany = (id: number) =>
     setSelectedCompanyIds(prev => {
       const next = new Set(prev);
@@ -240,19 +294,34 @@ export default function DAO() {
   // wlf = usdt_6dec * 10^30 / price_18dec  (preserves 18-dec WLF precision)
   const saleWlfAmount = salePriceWei > 0n ? saleUsdtWei * (10n ** 30n) / salePriceWei : 0n;
 
+  type SalaryItemData = { role: string; salaryPerHour: bigint; lastPayDate: bigint };
+  type EmployeeData   = { employeeAddress: `0x${string}`; payableAddress: `0x${string}`; name: string; salaryItems: SalaryItemData[]; active: boolean };
+  type DaoCompanyData = { companyId: bigint; name: string; industry: string; domain: string; roles: string[]; powerRoles: string[]; operatorAddress: `0x${string}`; active: boolean; employees: EmployeeData[] };
+
+  const daoCompany   = daoCompanyRaw as DaoCompanyData | undefined;
+  const daoEmployees = daoCompany?.employees?.filter(e => e.active) ?? [];
+
+  // Pending pay per employee — recomputed on each tick (daoTeamTick triggers re-render)
+  const nowSec = BigInt(Math.floor(Date.now() / 1000 + daoTeamTick * 0));
+  const employeePending = (emp: EmployeeData): bigint =>
+    emp.salaryItems.reduce((acc, s) =>
+      acc + (s.lastPayDate > 0n ? (nowSec - s.lastPayDate) * s.salaryPerHour / 3600n : 0n), 0n);
+  const employeeMonthlySalary = (emp: EmployeeData): bigint =>
+    emp.salaryItems.reduce((acc, s) => acc + s.salaryPerHour * 730n, 0n);
+
   type CompanyInfo = {
     companyId: number;
     name: string;
     industry: string;
-    companyWallet: `0x${string}`;
+    operatorAddress: `0x${string}`;
   };
 
   const activeCompanies: CompanyInfo[] = (companyResults ?? [])
     .map(r => {
       if (r.status !== 'success' || !r.result) return null;
-      const c = r.result as { companyId: bigint; name: string; industry: string; companyWallet: `0x${string}`; active: boolean };
+      const c = r.result as { companyId: bigint; name: string; industry: string; operatorAddress: `0x${string}`; active: boolean };
       if (!c.active) return null;
-      return { companyId: Number(c.companyId), name: c.name, industry: c.industry, companyWallet: c.companyWallet };
+      return { companyId: Number(c.companyId), name: c.name, industry: c.industry, operatorAddress: c.operatorAddress };
     })
     .filter((c): c is CompanyInfo => c !== null);
 
@@ -341,7 +410,7 @@ export default function DAO() {
     const targetArr = selected.map(() => wlfAddress as `0x${string}`);
     const sigArr    = selected.map(() => 'airdrop(address,uint256)');
     const dataArr   = selected.map(c =>
-      encodeAbiParameters(parseAbiParameters('address, uint256'), [c.companyWallet, amountWei])
+      encodeAbiParameters(parseAbiParameters('address, uint256'), [c.operatorAddress, amountWei])
     );
     setLastAction('create-company-airdrop');
     writeContract({ address: daoAddress, abi: daoABI, functionName: 'createProposal', args: [targetArr, sigArr, dataArr] });
@@ -400,6 +469,182 @@ export default function DAO() {
         [treasuryAddress],
         ['buybackWLF(uint256,uint256)'],
         [encodeAbiParameters(parseAbiParameters('uint256, uint256'), [usdtWei, minWlfWei])],
+      ],
+    });
+    setIsModalOpen(false);
+  };
+
+  // Auto-fill company ID fields when daoCompanyId loads
+  useEffect(() => {
+    if (daoCompanyIdOnChain && daoCompanyIdOnChain > 0n) {
+      const idStr = daoCompanyIdOnChain.toString();
+      if (!hireCompanyId) setHireCompanyId(idStr);
+      if (!fireCompanyId) setFireCompanyId(idStr);
+      if (!salUpdateCompanyId) setSalUpdateCompanyId(idStr);
+      if (!powerRolesCompanyId) setPowerRolesCompanyId(idStr);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [daoCompanyIdOnChain]);
+
+  const handleHireEmployeeProposal = () => {
+    if (!daoAddress || !companiesHouseAddress || !hireAddr || !hireName || !hireRole || !hireSalaryMonthly || !hireCompanyId) return;
+    const compId = BigInt(parseInt(hireCompanyId));
+    const hourlyWei = BigInt(Math.round(parseFloat(hireSalaryMonthly) * 1_000_000 / 730));
+    setLastAction('hire-employee-proposal');
+    writeContract({
+      address: daoAddress,
+      abi: daoABI,
+      functionName: 'createProposal',
+      args: [
+        [companiesHouseAddress],
+        ['hireEmployee((address,string,uint96,(string,uint256,uint256)[]))'],
+        [encodeAbiParameters(
+          [{ type: 'tuple', components: [
+            { name: 'employeeAddress', type: 'address' },
+            { name: 'name', type: 'string' },
+            { name: 'companyId', type: 'uint96' },
+            { name: 'salaryItems', type: 'tuple[]', components: [
+              { name: 'role', type: 'string' },
+              { name: 'salaryPerHour', type: 'uint256' },
+              { name: 'lastPayDate', type: 'uint256' },
+            ]},
+          ]}] as const,
+          [{ employeeAddress: hireAddr as `0x${string}`, name: hireName, companyId: compId, salaryItems: [{ role: hireRole, salaryPerHour: hourlyWei, lastPayDate: 0n }] }]
+        )],
+      ],
+    });
+    setIsModalOpen(false);
+  };
+
+  const handleFireEmployeeProposal = () => {
+    if (!daoAddress || !companiesHouseAddress || !fireAddr || !fireCompanyId) return;
+    const compId = BigInt(parseInt(fireCompanyId));
+    setLastAction('fire-employee-proposal');
+    writeContract({
+      address: daoAddress,
+      abi: daoABI,
+      functionName: 'createProposal',
+      args: [
+        [companiesHouseAddress],
+        ['fireEmployee(address,uint96)'],
+        [encodeAbiParameters(parseAbiParameters('address, uint96'), [fireAddr as `0x${string}`, compId])],
+      ],
+    });
+    setIsModalOpen(false);
+  };
+
+  const handleUpdateSalaryProposal = () => {
+    if (!daoAddress || !companiesHouseAddress || !salUpdateAddr || !salUpdateCompanyId || !salUpdateRole || !salUpdateMonthly) return;
+    const compId = BigInt(parseInt(salUpdateCompanyId));
+    const hourlyWei = BigInt(Math.round(parseFloat(salUpdateMonthly) * 1_000_000 / 730));
+    setLastAction('update-salary-proposal');
+    writeContract({
+      address: daoAddress,
+      abi: daoABI,
+      functionName: 'createProposal',
+      args: [
+        [companiesHouseAddress],
+        ['updateEmployee(address,uint96,(string,address,(string,uint256,uint256)[]))'],
+        [encodeAbiParameters(
+          [
+            { type: 'address' },
+            { type: 'uint96' },
+            { type: 'tuple', components: [
+              { name: 'name', type: 'string' },
+              { name: 'payableAddress', type: 'address' },
+              { name: 'salaryItems', type: 'tuple[]', components: [
+                { name: 'role', type: 'string' },
+                { name: 'salaryPerHour', type: 'uint256' },
+                { name: 'lastPayDate', type: 'uint256' },
+              ]},
+            ]},
+          ] as const,
+          [
+            salUpdateAddr as `0x${string}`,
+            compId,
+            { name: '', payableAddress: salUpdateAddr as `0x${string}`, salaryItems: [{ role: salUpdateRole, salaryPerHour: hourlyWei, lastPayDate: 0n }] },
+          ]
+        )],
+      ],
+    });
+    setIsModalOpen(false);
+  };
+
+  const handleMoveFundsProposal = () => {
+    if (!daoAddress || !treasuryAddress || !moveFundsTo || !moveFundsAmount) return;
+    const tokenAddr = moveFundsToken === 'wlf' ? wlfAddress : usdtAddress;
+    if (!tokenAddr) return;
+    const decimals = moveFundsToken === 'wlf' ? 18 : 6;
+    const amountWei = parseUnits(moveFundsAmount, decimals);
+    if (amountWei <= 0n) return;
+    setLastAction('move-funds-proposal');
+    writeContract({
+      address: daoAddress,
+      abi: daoABI,
+      functionName: 'createProposal',
+      args: [
+        [treasuryAddress],
+        ['withdrawToken(address,uint256,address)'],
+        [encodeAbiParameters(parseAbiParameters('address, uint256, address'), [tokenAddr, amountWei, moveFundsTo as `0x${string}`])],
+      ],
+    });
+    setIsModalOpen(false);
+  };
+
+  const handleSetChFeesProposal = () => {
+    if (!daoAddress || !companiesHouseAddress) return;
+    const wlfBps = BigInt(parseInt(chWlfBps) || 50);
+    const nonWlfBps = BigInt(parseInt(chNonWlfBps) || 500);
+    setLastAction('set-ch-fees-proposal');
+    writeContract({
+      address: daoAddress,
+      abi: daoABI,
+      functionName: 'createProposal',
+      args: [
+        [companiesHouseAddress],
+        ['setFees(uint256,uint256)'],
+        [encodeAbiParameters(parseAbiParameters('uint256, uint256'), [wlfBps, nonWlfBps])],
+      ],
+    });
+    setIsModalOpen(false);
+  };
+
+  const handleUpdatePowerRolesProposal = () => {
+    if (!daoAddress || !companiesHouseAddress || !powerRolesCompanyId || !daoCompany) return;
+    const compId = BigInt(parseInt(powerRolesCompanyId));
+    const newPowerRoles = powerRolesInput.split(',').map(s => s.trim()).filter(Boolean);
+    setLastAction('update-power-roles-proposal');
+    writeContract({
+      address: daoAddress,
+      abi: daoABI,
+      functionName: 'createProposal',
+      args: [
+        [companiesHouseAddress],
+        ['updateCompany(uint96,(string,string,string,string[],string[],address))'],
+        [encodeAbiParameters(
+          [
+            { type: 'uint96' },
+            { type: 'tuple', components: [
+              { name: 'name', type: 'string' },
+              { name: 'industry', type: 'string' },
+              { name: 'domain', type: 'string' },
+              { name: 'roles', type: 'string[]' },
+              { name: 'powerRoles', type: 'string[]' },
+              { name: 'operatorAddress', type: 'address' },
+            ]},
+          ] as const,
+          [
+            compId,
+            {
+              name: daoCompany.name,
+              industry: daoCompany.industry,
+              domain: daoCompany.domain,
+              roles: [...daoCompany.roles],
+              powerRoles: newPowerRoles,
+              operatorAddress: daoCompany.operatorAddress,
+            },
+          ]
+        )],
       ],
     });
     setIsModalOpen(false);
@@ -586,6 +831,70 @@ export default function DAO() {
           </div>
         </div>
 
+      </div>
+
+      {/* ── DAO Team ── */}
+      <div className={`${theme.card} p-4 mt-4`}>
+        <div className="flex items-baseline justify-between mb-3">
+          <p className="text-xs font-semibold uppercase tracking-wider text-white/40">DAO Team</p>
+          {daoCompany && (
+            <span className={`text-xs ${theme.textMuted}`}>{daoCompany.name} · {daoCompany.industry}</span>
+          )}
+        </div>
+
+        {!hasDaoCompany ? (
+          <p className={`text-xs ${theme.textMuted}`}>
+            No DAO company set. Create a company in CompaniesHouse named &quot;Werewolf DAO&quot;,
+            then call <code className="text-white/60">setDaoCompanyId(id)</code> from the admin.
+            <span className="block mt-1 text-white/30">All protocol fees (5% / 0.5% WLF) from every company go to this DAO&apos;s Treasury.</span>
+          </p>
+        ) : daoEmployees.length === 0 ? (
+          <p className={`text-xs ${theme.textMuted}`}>No active employees in the DAO company yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {daoEmployees.map((emp) => {
+              const pending = employeePending(emp);
+              const monthly = employeeMonthlySalary(emp);
+              return (
+                <div key={emp.employeeAddress} className={`${theme.cardNested} p-3 flex items-start justify-between gap-3`}>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-white truncate">{emp.name}</p>
+                    <p className={`text-xs ${theme.textMuted} truncate`}>
+                      {emp.salaryItems.map(s => s.role).join(', ')}
+                    </p>
+                    <p className={`text-xs ${theme.textMuted} mt-0.5`}>
+                      {(Number(monthly) / 1e6).toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT/mo
+                    </p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-xs text-amber-300 font-mono">
+                      +{(Number(pending) / 1e6).toFixed(2)} USDT pending
+                    </p>
+                    <button
+                      className={`text-xs mt-1 ${theme.textMuted} hover:text-white underline transition-colors`}
+                      onClick={() => {
+                        setSalUpdateAddr(emp.payableAddress);
+                        setSalUpdateCompanyId(daoCompanyIdOnChain?.toString() ?? '');
+                        setSalUpdateRole(emp.salaryItems[0]?.role ?? '');
+                        setSalUpdateMonthly(emp.salaryItems[0] ? (Number(emp.salaryItems[0].salaryPerHour * 730n) / 1e6).toFixed(0) : '');
+                        setModalTab('quick');
+                        setIsModalOpen(true);
+                      }}
+                    >
+                      Propose salary change
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {hasDaoCompany && (
+          <p className={`text-xs ${theme.textMuted} mt-3 pt-3 border-t border-white/5`}>
+            Protocol fees from all companies: <span className="text-white/60">5% (non-WLF) · 0.5% (WLF) → Treasury</span>
+          </p>
+        )}
       </div>
 
       {/* ── Vote Delegation ── */}
@@ -1089,7 +1398,7 @@ export default function DAO() {
                             <span className={`text-xs ${theme.textMuted} ml-1.5`}>{company.industry}</span>
                           </div>
                           <span className={`text-xs font-mono ${theme.textMuted} shrink-0`}>
-                            {company.companyWallet.slice(0, 6)}…{company.companyWallet.slice(-4)}
+                            {company.operatorAddress.slice(0, 6)}…{company.operatorAddress.slice(-4)}
                           </span>
                         </label>
                       ))}
@@ -1138,6 +1447,186 @@ export default function DAO() {
                     loading={isPending || isConfirming}
                   >
                     Submit Company Airdrop Proposal
+                  </Button>
+                </div>
+
+                {/* ── Hire Employee ── */}
+                <div className={`${theme.cardNested} p-4 space-y-3`}>
+                  <div>
+                    <p className="font-semibold text-sm">Hire Employee</p>
+                    <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
+                      Add a new employee to a company via governance. Defaults to the DAO company.
+                    </p>
+                  </div>
+                  <Input label="Employee address" type="text" value={hireAddr} onChange={e => setHireAddr(e.target.value)} placeholder="0x..." />
+                  <Input label="Name" type="text" value={hireName} onChange={e => setHireName(e.target.value)} placeholder="Alice" />
+                  <Input label="Role" type="text" value={hireRole} onChange={e => setHireRole(e.target.value)} placeholder="Engineer" />
+                  <Input label="Monthly salary (USD)" type="number" min="0" value={hireSalaryMonthly} onChange={e => setHireSalaryMonthly(e.target.value)} placeholder="5000" />
+                  <Input label="Company ID" type="number" min="1" value={hireCompanyId} onChange={e => setHireCompanyId(e.target.value)} placeholder="1" />
+                  {hireSalaryMonthly && (
+                    <p className={`text-xs font-mono ${theme.textMuted}`}>
+                      ≈ {Math.round(parseFloat(hireSalaryMonthly || '0') * 1_000_000 / 730).toLocaleString()} USDT-wei/hr
+                    </p>
+                  )}
+                  <Button
+                    variant="primary" size="sm"
+                    onClick={handleHireEmployeeProposal}
+                    disabled={!hireAddr || !hireName || !hireRole || !hireSalaryMonthly || !hireCompanyId || isPending || isConfirming}
+                    loading={isPending || isConfirming}
+                  >
+                    Submit Hire Proposal
+                  </Button>
+                </div>
+
+                {/* ── Fire Employee ── */}
+                <div className={`${theme.cardNested} p-4 space-y-3`}>
+                  <div>
+                    <p className="font-semibold text-sm">Fire Employee</p>
+                    <p className={`text-xs mt-0.5 ${theme.textMuted}`}>Soft-remove an employee from a company.</p>
+                  </div>
+                  <Input label="Employee address" type="text" value={fireAddr} onChange={e => setFireAddr(e.target.value)} placeholder="0x..." />
+                  <Input label="Company ID" type="number" min="1" value={fireCompanyId} onChange={e => setFireCompanyId(e.target.value)} placeholder="1" />
+                  <p className={`text-xs font-mono ${theme.textMuted}`}>
+                    Calls: companiesHouse.fireEmployee({fireAddr || '0x...'}, {fireCompanyId || '?'})
+                  </p>
+                  <Button
+                    variant="danger" size="sm"
+                    onClick={handleFireEmployeeProposal}
+                    disabled={!fireAddr || !fireCompanyId || isPending || isConfirming}
+                    loading={isPending || isConfirming}
+                  >
+                    Submit Fire Proposal
+                  </Button>
+                </div>
+
+                {/* ── Update Salary ── */}
+                <div className={`${theme.cardNested} p-4 space-y-3`}>
+                  <div>
+                    <p className="font-semibold text-sm">Update Salary</p>
+                    <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
+                      Propose a pay raise or cut. Replaces all salary items with a single new entry.
+                    </p>
+                  </div>
+                  <Input label="Employee address" type="text" value={salUpdateAddr} onChange={e => setSalUpdateAddr(e.target.value)} placeholder="0x..." />
+                  <Input label="Company ID" type="number" min="1" value={salUpdateCompanyId} onChange={e => setSalUpdateCompanyId(e.target.value)} placeholder="1" />
+                  <Input label="Role" type="text" value={salUpdateRole} onChange={e => setSalUpdateRole(e.target.value)} placeholder="Engineer" />
+                  <Input label="New monthly salary (USD)" type="number" min="0" value={salUpdateMonthly} onChange={e => setSalUpdateMonthly(e.target.value)} placeholder="6000" />
+                  {salUpdateMonthly && (
+                    <p className={`text-xs font-mono ${theme.textMuted}`}>
+                      ≈ {Math.round(parseFloat(salUpdateMonthly || '0') * 1_000_000 / 730).toLocaleString()} USDT-wei/hr
+                    </p>
+                  )}
+                  <Button
+                    variant="info" size="sm"
+                    onClick={handleUpdateSalaryProposal}
+                    disabled={!salUpdateAddr || !salUpdateCompanyId || !salUpdateRole || !salUpdateMonthly || isPending || isConfirming}
+                    loading={isPending || isConfirming}
+                  >
+                    Submit Salary Update Proposal
+                  </Button>
+                </div>
+
+                {/* ── Update Power Roles ── */}
+                <div className={`${theme.cardNested} p-4 space-y-3`}>
+                  <div>
+                    <p className="font-semibold text-sm">Update Power Roles</p>
+                    <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
+                      Change which roles have authority to hire, fire, and pay in a company.
+                      {daoCompany && <span> Current: <span className="text-white/60">{daoCompany.powerRoles.join(', ') || '(none)'}</span></span>}
+                    </p>
+                  </div>
+                  <Input label="Company ID" type="number" min="1" value={powerRolesCompanyId} onChange={e => setPowerRolesCompanyId(e.target.value)} placeholder="1" />
+                  <Input
+                    label="New power roles (comma-separated)"
+                    type="text"
+                    value={powerRolesInput}
+                    onChange={e => setPowerRolesInput(e.target.value)}
+                    placeholder="CEO, CTO, CFO"
+                  />
+                  {powerRolesInput && (
+                    <p className={`text-xs font-mono ${theme.textMuted}`}>
+                      {powerRolesInput.split(',').map(s => s.trim()).filter(Boolean).join(' · ')}
+                    </p>
+                  )}
+                  <Button
+                    variant="info" size="sm"
+                    onClick={handleUpdatePowerRolesProposal}
+                    disabled={!powerRolesInput || !powerRolesCompanyId || !daoCompany || isPending || isConfirming}
+                    loading={isPending || isConfirming}
+                  >
+                    Submit Power Roles Proposal
+                  </Button>
+                  {!daoCompany && powerRolesCompanyId && (
+                    <p className="text-xs text-amber-400">DAO company data not loaded — check company ID.</p>
+                  )}
+                </div>
+
+                {/* ── Move Funds ── */}
+                <div className={`${theme.cardNested} p-4 space-y-3`}>
+                  <div>
+                    <p className="font-semibold text-sm">Move Treasury Funds</p>
+                    <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
+                      Transfer tokens from the DAO Treasury to any address.
+                    </p>
+                    <div className="flex gap-4 mt-1.5">
+                      <p className={`text-xs ${theme.textMuted}`}>
+                        WLF: <span className="text-white font-mono">
+                          {treasuryWlfBalance !== undefined ? Number(formatEther(treasuryWlfBalance)).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '…'}
+                        </span>
+                      </p>
+                      <p className={`text-xs ${theme.textMuted}`}>
+                        USDT: <span className="text-white font-mono">
+                          {treasuryUsdtBalance !== undefined ? Number(formatUnits(treasuryUsdtBalance, 6)).toLocaleString(undefined, { maximumFractionDigits: 2 }) : '…'}
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setMoveFundsToken('usdt')}
+                      className={`text-xs px-3 py-1 rounded-full border transition-colors ${moveFundsToken === 'usdt' ? 'bg-primary border-primary text-white' : `border-white/10 ${theme.textMuted}`}`}
+                    >USDT</button>
+                    <button
+                      onClick={() => setMoveFundsToken('wlf')}
+                      className={`text-xs px-3 py-1 rounded-full border transition-colors ${moveFundsToken === 'wlf' ? 'bg-primary border-primary text-white' : `border-white/10 ${theme.textMuted}`}`}
+                    >WLF</button>
+                  </div>
+                  <Input label={`Amount (${moveFundsToken.toUpperCase()})`} type="number" min="0" value={moveFundsAmount} onChange={e => setMoveFundsAmount(e.target.value)} placeholder="1000" />
+                  <Input label="Recipient address" type="text" value={moveFundsTo} onChange={e => setMoveFundsTo(e.target.value)} placeholder="0x..." />
+                  <p className={`text-xs font-mono ${theme.textMuted}`}>
+                    treasury.withdrawToken({moveFundsToken.toUpperCase()}, {moveFundsAmount || '?'}, {moveFundsTo ? `${moveFundsTo.slice(0, 8)}…` : '?'})
+                  </p>
+                  <Button
+                    variant="primary" size="sm"
+                    onClick={handleMoveFundsProposal}
+                    disabled={!moveFundsAmount || parseFloat(moveFundsAmount) <= 0 || !moveFundsTo || isPending || isConfirming}
+                    loading={isPending || isConfirming}
+                  >
+                    Submit Move Funds Proposal
+                  </Button>
+                </div>
+
+                {/* ── Set CompaniesHouse Fees ── */}
+                <div className={`${theme.cardNested} p-4 space-y-3`}>
+                  <div>
+                    <p className="font-semibold text-sm">Set CompaniesHouse Fees</p>
+                    <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
+                      Adjust protocol fees charged on employee payments. Current defaults: 0.5% WLF / 5% other.
+                      Max 10% each.
+                    </p>
+                  </div>
+                  <Input label="WLF fee (basis points, e.g. 50 = 0.5%)" type="number" min="0" max="1000" value={chWlfBps} onChange={e => setChWlfBps(e.target.value)} placeholder="50" />
+                  <Input label="Non-WLF fee (basis points, e.g. 500 = 5%)" type="number" min="0" max="1000" value={chNonWlfBps} onChange={e => setChNonWlfBps(e.target.value)} placeholder="500" />
+                  <p className={`text-xs font-mono ${theme.textMuted}`}>
+                    WLF: {parseInt(chWlfBps || '0') / 100}% · Non-WLF: {parseInt(chNonWlfBps || '0') / 100}%
+                  </p>
+                  <Button
+                    variant="info" size="sm"
+                    onClick={handleSetChFeesProposal}
+                    disabled={!chWlfBps || !chNonWlfBps || parseInt(chWlfBps) > 1000 || parseInt(chNonWlfBps) > 1000 || isPending || isConfirming}
+                    loading={isPending || isConfirming}
+                  >
+                    Submit Set Fees Proposal
                   </Button>
                 </div>
 

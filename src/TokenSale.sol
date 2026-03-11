@@ -12,7 +12,7 @@ import "./interfaces/ILPStaking.sol";
 import "@uniswap/v3-periphery/contracts/interfaces/INonfungiblePositionManager.sol";
 
 interface IDAODelegation {
-    function autoDelegate(address user, address delegatee) external;
+    function autoDelegate(address user, address delegatee, uint256 wlfAmount) external;
 }
 
 // Define an interface for UniswapHelper to interact with it
@@ -71,6 +71,10 @@ contract TokenSale is OwnableUpgradeable, PausableUpgradeable {
     mapping(uint256 saleId => address[]) public saleBuyers;
     mapping(uint256 saleId => mapping(address => bool)) private _buyerTracked;
 
+    // Cancel/refund tracking
+    mapping(uint256 saleId => mapping(address buyer => uint256 usdtAmount)) public purchasedUSDT;
+    mapping(uint256 saleId => bool) public saleCancelled;
+
     // Uniswap parameters
     int24 public tickLower = -887270;  // Full range for fee 500 (tickSpacing=10): must be multiple of 10
     int24 public tickUpper = 887270;
@@ -87,7 +91,7 @@ contract TokenSale is OwnableUpgradeable, PausableUpgradeable {
 
     address public guardian;
 
-    uint256[24] private __gap;
+    uint256[22] private __gap;
 
     event SaleStarted(uint256 saleId, uint256 tokensAvailable, uint256 price);
     event SaleEnded(uint256 saleId);
@@ -98,6 +102,7 @@ contract TokenSale is OwnableUpgradeable, PausableUpgradeable {
     );
     event LPCreated(uint256 indexed saleId, uint256 tokenId, uint256 wlf, uint256 usdt);
     event LPSharesClaimed(address indexed user, uint256 indexed saleId, uint256 amount, bool fixedDuration);
+    event SaleCancelled(uint256 indexed saleId, uint256 buyersRefunded, uint256 usdtRefunded);
 
     constructor() {
         _disableInitializers();
@@ -219,6 +224,7 @@ contract TokenSale is OwnableUpgradeable, PausableUpgradeable {
         uint256 amount1Desired
     ) external whenNotPaused {
         require(saleActive, "Sale is not active");
+        require(!saleCancelled[saleIdCounter], "TokenSale: sale cancelled");
         Sale storage currentSale = sales[saleIdCounter];
         require(
             currentSale.tokensAvailable >= _amount,
@@ -243,6 +249,7 @@ contract TokenSale is OwnableUpgradeable, PausableUpgradeable {
 
         // Track purchase for later LP share claiming
         purchases[saleIdCounter][msg.sender] += tokenAmount;
+        purchasedUSDT[saleIdCounter][msg.sender] += usdtRequired;
         saleWLFCollected[saleIdCounter] += tokenAmount;
         saleUSDTWLFCollected[saleIdCounter] += tokenAmount;
         saleUSDTCollected[saleIdCounter] += usdtRequired;
@@ -305,7 +312,7 @@ contract TokenSale is OwnableUpgradeable, PausableUpgradeable {
                 tickUpper,
                 wlfForUSDT,
                 totalUSDT,
-                100  // 1% slippage tolerance
+                10_000  // No min: each sale deposits at current pool price; excess returns to Treasury
             );
 
             // Actual amounts consumed by Uniswap (desired minus what was returned as excess)
@@ -350,10 +357,49 @@ contract TokenSale is OwnableUpgradeable, PausableUpgradeable {
             lpStaking.claimShares(buyer, currentSale, amt, true);
             // Auto-delegate ALL voting power from early sales (#0, #1) to founder for 2 years
             if (daoContract != address(0) && currentSale <= 1) {
-                IDAODelegation(daoContract).autoDelegate(buyer, founder);
+                IDAODelegation(daoContract).autoDelegate(buyer, founder, amt);
             }
             emit LPSharesClaimed(buyer, currentSale, amt, true);
         }
+    }
+
+    /**
+     * @notice Cancel an active or ended (pre-LP) sale and refund all buyers their USDT.
+     *         Unsold WLF remains in this contract; sold WLF is returned to Treasury.
+     *         Only callable by the guardian or owner.
+     * @param saleId The sale to cancel
+     */
+    function cancelSale(uint256 saleId) external onlyGuardian {
+        require(!saleLPCreated[saleId], "TokenSale: LP already created");
+        require(!saleCancelled[saleId], "TokenSale: already cancelled");
+
+        saleCancelled[saleId] = true;
+        if (sales[saleId].active) {
+            sales[saleId].active = false;
+            saleActive = false;
+            emit SaleEnded(saleId);
+        }
+
+        address[] memory buyers = saleBuyers[saleId];
+        uint256 totalRefunded;
+        for (uint256 i = 0; i < buyers.length; i++) {
+            address buyer = buyers[i];
+            uint256 refund = purchasedUSDT[saleId][buyer];
+            if (refund > 0) {
+                purchasedUSDT[saleId][buyer] = 0;
+                purchases[saleId][buyer] = 0;
+                usdtToken.transfer(buyer, refund);
+                totalRefunded += refund;
+            }
+        }
+
+        // Return sold WLF to Treasury
+        uint256 wlfToReturn = saleWLFCollected[saleId];
+        if (wlfToReturn > 0) {
+            werewolfToken.transfer(address(treasury), wlfToReturn);
+        }
+
+        emit SaleCancelled(saleId, buyers.length, totalRefunded);
     }
 
     function endSale() external {
@@ -374,9 +420,13 @@ contract TokenSale is OwnableUpgradeable, PausableUpgradeable {
         require(saleLPCreated[saleId], "LP not created yet, call endSale() first");
         require(daoContract != address(0), "DAO contract not set");
 
+        uint256 salePrice = sales[saleId].price;
         address[] storage buyers = saleBuyers[saleId];
         for (uint256 i = 0; i < buyers.length; i++) {
-            IDAODelegation(daoContract).autoDelegate(buyers[i], founder);
+            address buyer = buyers[i];
+            // Derive original WLF amount from USDT paid: usdtUnits(6dec) * 1e12 / price(18dec)
+            uint256 amt = salePrice > 0 ? purchasedUSDT[saleId][buyer] * 10**12 / salePrice : 0;
+            IDAODelegation(daoContract).autoDelegate(buyer, founder, amt);
         }
     }
 
@@ -386,6 +436,7 @@ contract TokenSale is OwnableUpgradeable, PausableUpgradeable {
      * @param fixedDuration True for 5-year lock with bonus APY
      */
     function claimLPShares(uint256 saleId, bool fixedDuration) external {
+        require(!saleCancelled[saleId], "TokenSale: sale cancelled");
         require(!sales[saleId].active, "Sale still active");
         require(saleLPCreated[saleId], "LP not created yet");
 

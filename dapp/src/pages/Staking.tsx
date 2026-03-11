@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
-import { parseUnits, formatUnits } from 'viem';
+import { parseUnits, formatUnits, maxUint256 } from 'viem';
 import { stakingABI, lpStakingABI, tokenSaleABI, erc20ABI, getAddress } from '@/contracts';
 import { useTheme } from '@/contexts/ThemeContext';
 import { PageContainer } from '@/components/PageContainer';
@@ -34,25 +34,25 @@ const DURATIONS = [
 // Map bonusApy (PERCENTAGE_SCALE) stored in position struct to a multiplier label
 function bonusApyToMultiplierLabel(bonusApy: bigint): string {
   const n = Number(bonusApy);
-  if (n === 0)       return '1x APY';
-  if (n <= 5_000)    return '1.05x APY';
-  if (n <= 10_000)   return '1.1x APY';
-  if (n <= 15_000)   return '1.2x APY';
-  if (n <= 25_000)   return '1.5x APY';
-  if (n <= 40_000)   return '2x APY';
-  if (n <= 60_000)   return '2.5x APY';
+  if (n === 0)        return '1x APY';
+  if (n <=   5_000)  return '1.05x APY';
+  if (n <=  10_000)  return '1.1x APY';
+  if (n <=  20_000)  return '1.2x APY';
+  if (n <=  50_000)  return '1.5x APY';
+  if (n <= 100_000)  return '2x APY';
+  if (n <= 150_000)  return '2.5x APY';
   return '3x APY';
 }
 
 function durationSecondsToBonus(seconds: number): bigint {
   const map: Record<number, bigint> = {
-    [30   * 24 * 3600]:  5_000n,
-    [90   * 24 * 3600]: 10_000n,
-    [180  * 24 * 3600]: 15_000n,
-    [365  * 24 * 3600]: 25_000n,
-    [730  * 24 * 3600]: 40_000n,
-    [1825 * 24 * 3600]: 60_000n,
-    [3650 * 24 * 3600]: 80_000n,
+    [30   * 24 * 3600]:   5_000n,
+    [90   * 24 * 3600]:  10_000n,
+    [180  * 24 * 3600]:  20_000n,
+    [365  * 24 * 3600]:  50_000n,
+    [730  * 24 * 3600]: 100_000n,
+    [1825 * 24 * 3600]: 150_000n,
+    [3650 * 24 * 3600]: 200_000n,
   };
   return map[seconds] ?? 0n;
 }
@@ -136,8 +136,11 @@ function WlfPositionCard({
   // WLF value = current share-based value (principal + accumulated rewards)
   const displayValue = currentValue;
 
-  const wlfPerDay = apy && apy > 0n
-    ? currentValue * apy / (365n * 100_000n)
+  const effectiveApy = apy && apy > 0n
+    ? apy * (100_000n + pos.bonusApy) / 100_000n
+    : 0n;
+  const wlfPerDay = effectiveApy > 0n
+    ? currentValue * effectiveApy / (365n * 100_000n)
     : 0n;
 
   const unlockDate = isFixed
@@ -679,7 +682,7 @@ export default function Staking() {
   const handleApprove = () => {
     if (!wlfAddress || !stakingAddress) return;
     setLastAction('approve');
-    writeContract({ address: wlfAddress, abi: erc20ABI, functionName: 'approve', args: [stakingAddress, stakeAmountBig] });
+    writeContract({ address: wlfAddress, abi: erc20ABI, functionName: 'approve', args: [stakingAddress, maxUint256] });
   };
 
   const handleStake = () => {
@@ -726,7 +729,7 @@ export default function Staking() {
     if (wlfAllowance !== undefined && wlfAllowance < amount) {
       // Approve first — same approval target (staking contract)
       setLastAction(`approve-add-${index}`);
-      writeContract({ address: wlfAddress, abi: erc20ABI, functionName: 'approve', args: [stakingAddress, amount] });
+      writeContract({ address: wlfAddress, abi: erc20ABI, functionName: 'approve', args: [stakingAddress, maxUint256] });
     } else {
       setLastAction(`add-to-${index}`);
       writeContract({ address: stakingAddress, abi: stakingABI, functionName: 'addToPosition', args: [BigInt(index), amount] });

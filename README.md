@@ -5,6 +5,65 @@
 
 ---
 
+## Getting Started
+
+### Prerequisites
+
+- [Foundry](https://getfoundry.sh) — Solidity toolchain
+  ```bash
+  curl -L https://foundry.paradigm.xyz | bash && foundryup
+  ```
+- Node.js ≥ 18 + npm
+
+### 1. Clone
+
+```bash
+git clone https://github.com/Werewolf-Solutions/dao-project
+cd dao-project
+```
+
+### 2. Install dependencies
+
+```bash
+make install
+```
+
+Runs `forge install` (Solidity libs) + `cd dapp && npm install` (React frontend).
+
+### 3. Configure environment
+
+```bash
+cp .env.example .env
+# Edit .env — fill in PRIVATE_KEY, SEPOLIA_RPC_URL, ETHERSCAN_API_KEY
+```
+
+### 4. Deploy
+
+**Local (Anvil)** — start Anvil in a separate terminal first (`anvil`), then:
+
+```bash
+make deploy-local
+```
+
+**Sepolia testnet:**
+
+```bash
+make deploy-sepolia
+```
+
+Both commands deploy all contracts and auto-sync addresses + ABIs into the dapp via `scripts/sync-dapp.mjs`.
+
+### 5. Run the dapp
+
+```bash
+make dev
+# or: cd dapp && npm run dev
+```
+
+Opens at http://localhost:5173 or next free port
+
+---
+
 ## Overview
 
 WLF DAO is a fully on-chain decentralized organization built on Ethereum. Token holders buy WLF, stake for yield, and govern the protocol through proposals that execute via a 2-day timelock. Companies can be registered on-chain and pay employees in WLF, automatically converted from USD at the live market rate.
@@ -14,15 +73,19 @@ WLF DAO is a fully on-chain decentralized organization built on Ethereum. Token 
 ## Contracts
 
 ### WerewolfTokenV1
+
 ERC-20 governance token (WLF). Total supply: 1B tokens minted to Treasury. Implements checkpoints on every transfer so voting power is always snapshotted at the proposal creation block.
 
 ### Treasury
+
 Holds DAO funds (WLF + USDT). Distributes staking rewards. Can buy back WLF via Uniswap. Owned by Timelock.
 
 ### Timelock
+
 Enforces a 2-day minimum delay on all governance actions. Admin is transferred to DAO after deployment.
 
 ### DAO
+
 Manages proposal creation, guardian approval, voting (snapshot-based), queuing, and execution.
 
 - Proposal cost: 10 WLF (sent to Treasury)
@@ -33,6 +96,7 @@ Manages proposal creation, guardian approval, voting (snapshot-based), queuing, 
 - Guardian approves proposals from Pending → Active
 
 ### Staking
+
 ERC-4626 vault. Per-position tracking. Rewards auto-compound into share price.
 
 - Base APY: 6% (flexible) up to 80% (10-year fixed)
@@ -42,17 +106,21 @@ ERC-4626 vault. Per-position tracking. Rewards auto-compound into share price.
 - Emergency pause via guardian or owner
 
 ### TokenSale
+
 - Sale #0: founding round — collected USDT + paired WLF deposited into Uniswap v3 WLF/USDT pool; LP shares locked 5 years
 - Sale #N: collected USDT added to existing Uniswap pool at current market price; remainder goes to Treasury
 - Emergency pause on `buyTokens`
 
 ### LPStaking
+
 ERC-4626 vault for WLF/USDT LP tokens. Same APY mechanics as Staking. LP positions initialized automatically when a token sale ends.
 
 ### UniswapHelper
+
 Facilitates Uniswap v3 liquidity operations for TokenSale. Applies 1% slippage protection and a 20-minute deadline.
 
 ### CompaniesHouseV1
+
 On-chain company registry.
 
 - Create companies with a dedicated company wallet
@@ -70,6 +138,7 @@ On-chain company registry.
 React + Vite + Wagmi frontend at `dapp/`.
 
 Pages:
+
 - `/` — landing page with protocol overview
 - `/token-sale` — buy WLF, progress bar, LP split estimate, past sales with participant lists
 - `/staking` — WLF and LP staking tabs; per-position cards with live ticker, withdraw flows, add-to-position
@@ -82,6 +151,7 @@ Pages:
 ## DAO Proposal Flow
 
 ### Normal proposals
+
 1. Create proposal (costs 10 WLF → Treasury)
 2. Guardian approves → state: Active
 3. Voting delay: 1 day
@@ -90,6 +160,7 @@ Pages:
 6. Execute after ETA
 
 ### Emergency pause (current implementation)
+
 Guardian can directly call `pause()` / `unpause()` on Staking, CompaniesHouse, and TokenSale without going through a proposal.
 
 ---
@@ -137,12 +208,12 @@ forge test --match-contract TokenSaleWithLPTest # token sale + Uniswap LP flow
 
 ### Verbosity flags
 
-| Flag | Shows |
-|------|-------|
-| _(none)_ | pass/fail + gas |
-| `-vv` | `console.log` output |
-| `-vvv` | stack traces on failure |
-| `-vvvv` | full traces on every test |
+| Flag     | Shows                     |
+| -------- | ------------------------- |
+| _(none)_ | pass/fail + gas           |
+| `-vv`    | `console.log` output      |
+| `-vvv`   | stack traces on failure   |
+| `-vvvv`  | full traces on every test |
 
 > `--match-test` matches by substring — e.g. `forge test --match-test test_cannot` runs all tests containing "cannot".
 

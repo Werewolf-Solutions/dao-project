@@ -122,13 +122,16 @@ function PastSalesSection({
   tokenSaleAddress,
   saleIdCounter,
   chainId,
+  currentLPCreated,
 }: {
   tokenSaleAddress: `0x${string}`;
   saleIdCounter: bigint;
   chainId: number | undefined;
+  currentLPCreated?: boolean;
 }) {
   const publicClient = usePublicClient({ chainId: chainId as 31337 | 11155111 | 1337 | undefined });
-  const pastCount = Number(saleIdCounter);
+  // Include current sale in past list if its LP is already created
+  const pastCount = Number(saleIdCounter) + (currentLPCreated ? 1 : 0);
   const pastIds = Array.from({ length: pastCount }, (_, i) => BigInt(i));
 
   // Batch-read sale metadata: for each past ID fetch sales(), saleWLFCollected(), saleUSDTCollected()
@@ -181,7 +184,7 @@ function PastSalesSection({
 
   return (
     <div className="mt-6 space-y-3">
-      <h2 className="font-bold text-base text-white/80">Past Sales</h2>
+      <h2 className="font-bold text-base text-white/80">Completed Sales</h2>
       {pastIds.map((id, i) => {
         type SaleTuple = [bigint, bigint, bigint, boolean];
         const sale = salesData?.[i * 3]?.result as SaleTuple | undefined;
@@ -212,7 +215,8 @@ export default function TokenSale() {
   const tokenSaleAddress = getAddress(chainId, 'TokenSale');
   const usdtAddress = getAddress(chainId, 'USDT');
 
-  const [amount, setAmount] = useState('1');
+  const [wlfInput, setWlfInput] = useState('1');
+  const [usdtInput, setUsdtInput] = useState('');
   const [message, setMessage] = useState('');
   const [isPopupOpen, setIsPopupOpen] = useState(false);
 
@@ -294,6 +298,21 @@ export default function TokenSale() {
     query: { enabled: !!tokenSaleAddress },
   });
 
+  const { data: saleGuardian } = useReadContract({
+    address: tokenSaleAddress,
+    abi: tokenSaleABI,
+    functionName: 'guardian',
+    query: { enabled: !!tokenSaleAddress },
+  });
+
+  const { data: saleCancelled, refetch: refetchSaleCancelled } = useReadContract({
+    address: tokenSaleAddress,
+    abi: tokenSaleABI,
+    functionName: 'saleCancelled',
+    args: [saleIdCounter ?? 0n],
+    query: { enabled: !!tokenSaleAddress && saleIdCounter !== undefined, refetchInterval: 5_000 },
+  });
+
   const { data: usdtCollected } = useReadContract({
     address: tokenSaleAddress,
     abi: tokenSaleABI,
@@ -315,14 +334,18 @@ export default function TokenSale() {
   const [approveTxHash, setApproveTxHash] = useState<`0x${string}` | undefined>();
   const [buyTxHash, setBuyTxHash] = useState<`0x${string}` | undefined>();
   const [endSaleTxHash, setEndSaleTxHash] = useState<`0x${string}` | undefined>();
+  const [cancelSaleTxHash, setCancelSaleTxHash] = useState<`0x${string}` | undefined>();
+  const [cancelConfirm, setCancelConfirm] = useState(false);
 
   const { writeContract: writeApprove, isPending: isApprovePending } = useWriteContract();
   const { writeContract: writeBuy, isPending: isBuyPending } = useWriteContract();
   const { writeContract: writeEndSale, isPending: isEndSalePending } = useWriteContract();
+  const { writeContract: writeCancelSale, isPending: isCancelSalePending } = useWriteContract();
 
   const { isLoading: isApproveConfirming, isSuccess: isApproveConfirmed } = useWaitForTransactionReceipt({ hash: approveTxHash });
   const { isLoading: isBuyConfirming, isSuccess: isBuyConfirmed } = useWaitForTransactionReceipt({ hash: buyTxHash });
   const { isLoading: isEndSaleConfirming, isSuccess: isEndSaleConfirmed } = useWaitForTransactionReceipt({ hash: endSaleTxHash });
+  const { isLoading: isCancelSaleConfirming, isSuccess: isCancelSaleConfirmed } = useWaitForTransactionReceipt({ hash: cancelSaleTxHash });
 
   useEffect(() => {
     if (isApproveConfirmed) void refetchAllowance();
@@ -342,6 +365,16 @@ export default function TokenSale() {
   useEffect(() => {
     if (isEndSaleConfirmed) void refetchSaleLPCreated();
   }, [isEndSaleConfirmed, refetchSaleLPCreated]);
+
+  useEffect(() => {
+    if (isCancelSaleConfirmed) {
+      showMessage('Sale cancelled. All buyers have been refunded.');
+      void refetchSaleActive();
+      void refetchSaleCancelled();
+      setCancelConfirm(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCancelSaleConfirmed]);
 
   // ── Pool price & LP split estimate ─────────────────────────────────────────
 
@@ -391,21 +424,22 @@ export default function TokenSale() {
 
   // WLF wei amount (18 decimals) — this is what the contract's _amount param expects
   const amountWei = (() => {
-    try { return parseUnits(amount || '0', 18); } catch { return 0n; }
+    try { return parseUnits(wlfInput || '0', 18); } catch { return 0n; }
   })();
 
   // USDT cost in 6-decimal units: N_wlf * price(18dec) / 10^12
   // price = 0.01 ether = 10^16; 1 WLF → 10^16 / 10^12 = 10^4 = 0.01 USDT (in 6-dec)
-  const usdtCost = BigInt(Math.max(0, Number(amount) || 0)) * pricePerToken / 10n ** 12n;
+  const usdtCost = BigInt(Math.max(0, Number(wlfInput) || 0)) * pricePerToken / 10n ** 12n;
 
   const hasEnoughAllowance = usdtAllowance !== undefined && usdtAllowance >= usdtCost;
   const hasEnoughUsdt = usdtBalance !== undefined && usdtBalance >= usdtCost;
   const isLoading = isApprovePending || isApproveConfirming || isBuyPending || isBuyConfirming;
 
   const isFounder = !!saleFounder && !!address && saleFounder.toLowerCase() === address.toLowerCase();
+  const isAdmin = isFounder || (!!saleGuardian && !!address && saleGuardian.toLowerCase() === address.toLowerCase());
 
   const amountError: string | null = (() => {
-    if (amountWei <= 0n) return 'Enter an amount greater than 0';
+    if (amountWei <= 0n) return 'Enter WLF or USDT amount';
     if (tokensAvailable !== undefined && amountWei > tokensAvailable) return 'Exceeds tokens available';
     return null;
   })();
@@ -425,6 +459,33 @@ export default function TokenSale() {
       { address: tokenSaleAddress, abi: tokenSaleABI, functionName: 'endSale', args: [] },
       { onSuccess: (hash) => setEndSaleTxHash(hash) },
     );
+  };
+
+  const handleCancelSale = () => {
+    if (!tokenSaleAddress || saleIdCounter === undefined) return showMessage('Contract not found on this network.');
+    if (!cancelConfirm) { setCancelConfirm(true); return; }
+    writeCancelSale(
+      { address: tokenSaleAddress, abi: tokenSaleABI, functionName: 'cancelSale', args: [saleIdCounter] },
+      { onSuccess: (hash) => setCancelSaleTxHash(hash) },
+    );
+  };
+
+  const handleWlfChange = (val: string) => {
+    setWlfInput(val);
+    if (pricePerToken > 0n) {
+      const wlf = BigInt(Math.max(0, Math.floor(Number(val) || 0)));
+      const cost = wlf * pricePerToken / 10n ** 12n;
+      setUsdtInput(cost > 0n ? (Number(cost) / 1e6).toFixed(6) : '');
+    }
+  };
+
+  const handleUsdtChange = (val: string) => {
+    setUsdtInput(val);
+    if (pricePerToken > 0n) {
+      const usdtUnits = BigInt(Math.floor((parseFloat(val) || 0) * 1e6));
+      const wlf = usdtUnits * 10n ** 12n / pricePerToken;
+      setWlfInput(wlf > 0n ? wlf.toString() : '');
+    }
   };
 
   const handleApprove = () => {
@@ -452,6 +513,10 @@ export default function TokenSale() {
     );
   };
 
+  const totalUsdtHuman = totalTokens !== undefined
+    ? Number(formatEther(totalTokens)) * Number(formatEther(pricePerToken))
+    : 0;
+
   // ── Guards ─────────────────────────────────────────────────────────────────
 
   if (!address) {
@@ -473,286 +538,353 @@ export default function TokenSale() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <PageContainer maxWidth="sm">
-      <Card title="Token Sale">
-        {/* ── How it works ── */}
-        <div
-          className="rounded-lg p-4 mb-6 border text-sm space-y-3"
-          style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.03)' }}
-        >
-          <p className="font-semibold text-white">How it works</p>
-          <div className="space-y-3" style={{ color: theme.textMuted }}>
+    <PageContainer maxWidth="2xl">
+      <h1 className="text-2xl font-bold text-white mb-6">Token Sale</h1>
 
-            {/* ── Sale #0: founding round ── */}
-            {saleIdCounter === 0n && (
-              <div>
-                <p className="font-medium text-white mb-1">Sale #0 — founding round</p>
-                <p>
-                  Buyers contribute USDT and receive WLF. When the sale closes, the collected USDT
-                  and the matching WLF are deposited together into a{' '}
-                  <strong className="text-white">Uniswap v3 WLF/USDT pool</strong> to establish the
-                  initial on-chain price. LP shares are locked for{' '}
-                  <strong className="text-white">5 years</strong>.
-                </p>
-              </div>
-            )}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
 
-            {/* ── Sale #N: subsequent round — live values when available ── */}
-            {saleIdCounter !== undefined && saleIdCounter > 0n && (
-              <div>
-                <p className="font-medium text-white mb-1">Sale #{saleIdCounter.toString()}</p>
-                {lpSplitEstimate !== null && usdtCollected !== undefined && poolPrice !== null ? (
-                  <p>
-                    <span className="text-white font-mono">${fmt6(usdtCollected, 2)} USDT</span>{' '}
-                    is sent to the Uniswap WLF/USDT LP{' '}
-                    <span className="text-white/60">
-                      @ {poolPrice < 0.001 ? poolPrice.toFixed(6) : poolPrice.toFixed(4)} USDT/WLF
-                    </span>{' '}
-                    with{' '}
-                    <span className="text-white font-mono">{fmt18(usdtWlfCollected ?? 0n, 0)} WLF</span>.
-                    {lpSplitEstimate.treasuryUsdt > 0.001 && (
-                      <>{' '}The remaining{' '}
-                        <span className="text-white font-mono">
-                          ${lpSplitEstimate.treasuryUsdt.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT
-                        </span>{' '}
-                        goes to the <strong className="text-white">DAO Treasury</strong>.
-                      </>
-                    )}
-                    {lpSplitEstimate.treasuryWlf > 1 && (
-                      <>{' '}The remaining{' '}
-                        <span className="text-white font-mono">
-                          {lpSplitEstimate.treasuryWlf.toLocaleString(undefined, { maximumFractionDigits: 0 })} WLF
-                        </span>{' '}
-                        goes to the <strong className="text-white">DAO Treasury</strong>.
-                      </>
-                    )}
-                  </p>
-                ) : (
-                  <p>
-                    Collected USDT is sent to the Uniswap WLF/USDT LP at the current market price,
-                    paired with the corresponding WLF. The unpaired remainder —{' '}
-                    <span className="font-mono text-white">X − (price × WLF_sold)</span> — goes to
-                    the <strong className="text-white">DAO Treasury</strong>.
-                  </p>
-                )}
-              </div>
-            )}
-
-          </div>
-        </div>
-
-        {/* ── Sale info ── */}
-        <div className="space-y-0.5 mb-6">
-          <Row
-            label="Sale #"
-            value={saleIdCounter === undefined ? '…' : saleIdCounter.toString()}
-          />
-          <Row
-            label="Status"
-            value={
-              saleActive === undefined ? '…' :
-                <span className={saleActive ? 'text-green-400 font-semibold' : 'text-red-400'}>
-                  {saleActive ? 'Active' : 'Ended'}
-                </span>
-            }
-          />
-          <Row
-            label="Price"
-            value={contractPrice === undefined ? '…' : `${formatEther(pricePerToken)} USDT / WLF`}
-          />
-        </div>
-
-        {/* ── Sale progress bar ── */}
-        <div className="mb-6">
-          <div className="flex justify-between text-xs mb-1.5" style={{ color: theme.textMuted }}>
-            <span>
-              {totalTokens === undefined ? '…' : `${fmt18(tokensSold)} sold`}
-            </span>
-            <span>
-              {totalTokens === undefined ? '' : `${fmt18(tokensAvailable)} remaining`}
-            </span>
-          </div>
-          <div className="w-full h-2.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.08)' }}>
-            <div
-              className="h-full rounded-full transition-all duration-500"
-              style={{
-                width: totalTokens === undefined ? '0%' : `${pctSold}%`,
-                background: pctSold >= 90 ? '#ef4444' : pctSold >= 60 ? '#f59e0b' : '#52b788',
-              }}
-            />
-          </div>
-          <div className="text-right text-xs mt-1" style={{ color: theme.textMuted }}>
-            {totalTokens === undefined ? '' : `${pctSold.toFixed(1)}% sold`}
-            {totalTokens !== undefined && (
-              <span className="ml-2">of {fmt18(totalTokens)} WLF total</span>
-            )}
-          </div>
-        </div>
-
-        {/* ── LP split estimate ── */}
-        {(usdtCollected !== undefined || poolPrice !== null) && (
+        {/* ── LEFT: Info ── */}
+        <Card>
+          {/* How it works */}
           <div
-            className="rounded-lg p-4 mb-6 border text-sm space-y-3"
+            className="rounded-lg p-4 mb-6 border text-sm"
             style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.03)' }}
           >
-            <div className="flex items-center justify-between gap-2">
-              <p className="font-semibold text-white">Estimated distribution at sale end</p>
-              {poolPrice !== null ? (
-                <span className="text-xs font-mono px-2 py-0.5 rounded-full border border-white/10 text-white/50">
-                  Pool: ${poolPrice < 0.001 ? poolPrice.toFixed(6) : poolPrice.toFixed(4)} / WLF
-                </span>
-              ) : (
-                <span className="text-xs text-white/30 italic">No pool yet</span>
+            <p className="font-semibold text-white mb-3">How it works</p>
+
+            {/* Sale headline stats */}
+            {saleIdCounter !== undefined && totalTokens !== undefined && (
+              <div className="flex flex-wrap gap-3 mb-4">
+                <div className="flex-1 min-w-[100px] rounded-md px-3 py-2 text-center"
+                  style={{ background: 'rgba(255,255,255,0.05)' }}>
+                  <p className="text-xs mb-0.5" style={{ color: theme.textMuted }}>Tokens for sale</p>
+                  <p className="font-mono font-semibold text-white">{fmt18(totalTokens, 0)} WLF</p>
+                </div>
+                <div className="flex-1 min-w-[100px] rounded-md px-3 py-2 text-center"
+                  style={{ background: 'rgba(255,255,255,0.05)' }}>
+                  <p className="text-xs mb-0.5" style={{ color: theme.textMuted }}>Price per WLF</p>
+                  <p className="font-mono font-semibold text-white">{formatEther(pricePerToken)} USDT</p>
+                </div>
+                <div className="flex-1 min-w-[100px] rounded-md px-3 py-2 text-center"
+                  style={{ background: 'rgba(255,255,255,0.05)' }}>
+                  <p className="text-xs mb-0.5" style={{ color: theme.textMuted }}>Raise target</p>
+                  <p className="font-mono font-semibold text-white">
+                    ${totalUsdtHuman.toLocaleString(undefined, { maximumFractionDigits: 0 })} USDT
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Steps */}
+            {(() => {
+              const step =
+                saleActive === undefined ? null :
+                saleActive ? 1 :
+                !saleLPCreated ? 2 : 4; // 4 = all done (steps 1-3 all show ✓)
+
+              const stepDot = (n: number) => {
+                const done = step !== null && n < step;
+                const active = step === n;
+                if (done) return (
+                  <span className="shrink-0 w-5 h-5 rounded-full bg-green-500/25 text-green-400 text-xs font-bold flex items-center justify-center mt-0.5">✓</span>
+                );
+                if (active) return (
+                  <span className="shrink-0 w-5 h-5 rounded-full bg-blue-500 text-white text-xs font-bold flex items-center justify-center mt-0.5 shadow-[0_0_8px_rgba(59,130,246,0.6)]">{n}</span>
+                );
+                return (
+                  <span className="shrink-0 w-5 h-5 rounded-full bg-blue-500/20 text-blue-300 text-xs font-bold flex items-center justify-center mt-0.5">{n}</span>
+                );
+              };
+
+              const stepText = (n: number, children: React.ReactNode) => {
+                const active = step === n;
+                return (
+                  <li className="flex gap-3">
+                    {stepDot(n)}
+                    <div className="flex-1">
+                      <div className="leading-snug text-white">
+                        {children}
+                      </div>
+                      {active && (
+                        <span className="inline-block mt-1 text-xs font-semibold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                          Current stage
+                        </span>
+                      )}
+                    </div>
+                  </li>
+                );
+              };
+
+              return (
+                <ol className="space-y-3">
+                  {stepText(1, 'Contribute USDT and receive WLF tokens at the fixed price above.')}
+                  {stepText(2,
+                    <>
+                      When the sale closes, the collected USDT and matching WLF seed a{' '}
+                      <strong>Uniswap v3 WLF/USDT liquidity pool</strong>.
+                      LP shares are <strong>locked for 5 years</strong> to
+                      ensure lasting liquidity.
+                    </>
+                  )}
+                  {stepText(3,
+                    <>
+                      Any remaining funds are sent to the{' '}
+                      <strong>DAO Treasury</strong>, where WLF holders
+                      vote on how to deploy them.
+                    </>
+                  )}
+                </ol>
+              );
+            })()}
+          </div>
+
+          {/* Sale info rows */}
+          <div className="space-y-0.5 mb-6">
+            <Row
+              label="Sale #"
+              value={saleIdCounter === undefined ? '…' : saleIdCounter.toString()}
+            />
+            <Row
+              label="Status"
+              value={
+                saleActive === undefined ? '…' :
+                  <span className={saleActive ? 'text-green-400 font-semibold' : 'text-red-400'}>
+                    {saleActive ? 'Active' : 'Ended'}
+                  </span>
+              }
+            />
+            <Row
+              label="Price"
+              value={contractPrice === undefined ? '…' : `${formatEther(pricePerToken)} USDT / WLF`}
+            />
+          </div>
+
+          {/* Sale progress bar */}
+          <div>
+            <div className="flex justify-between text-xs mb-1.5" style={{ color: theme.textMuted }}>
+              <span>{totalTokens === undefined ? '…' : `${fmt18(tokensSold)} sold`}</span>
+              <span>{totalTokens === undefined ? '' : `${fmt18(tokensAvailable)} remaining`}</span>
+            </div>
+            <div className="w-full h-2.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.08)' }}>
+              <div
+                className="h-full rounded-full transition-all duration-500"
+                style={{
+                  width: totalTokens === undefined ? '0%' : `${pctSold}%`,
+                  background: pctSold >= 90 ? '#ef4444' : pctSold >= 60 ? '#f59e0b' : '#52b788',
+                }}
+              />
+            </div>
+            <div className="text-right text-xs mt-1" style={{ color: theme.textMuted }}>
+              {totalTokens === undefined ? '' : `${pctSold.toFixed(1)}% sold`}
+              {totalTokens !== undefined && (
+                <span className="ml-2">of {fmt18(totalTokens)} WLF total</span>
               )}
             </div>
-
-            {/* Collected totals */}
-            <div className="grid grid-cols-2 gap-2">
-              <div className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                <p className="text-xs text-white/40 mb-0.5">Collected USDT</p>
-                <p className="font-mono text-white text-sm">${fmt6(usdtCollected ?? 0n, 2)}</p>
-              </div>
-              <div className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                <p className="text-xs text-white/40 mb-0.5">Paired WLF</p>
-                <p className="font-mono text-white text-sm">{fmt18(usdtWlfCollected ?? 0n, 0)}</p>
-              </div>
-            </div>
-
-            {lpSplitEstimate ? (
-              <div className="space-y-2">
-                {/* Uniswap LP row */}
-                <div className="flex items-start gap-2.5">
-                  <span className="mt-0.5 text-xs font-bold px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-300 border border-blue-700/40 shrink-0">LP</span>
-                  <div>
-                    <p style={{ color: theme.textMuted }} className="text-xs">
-                      → Uniswap v3 WLF/USDT position
-                    </p>
-                    <p className="text-sm font-mono text-white">
-                      {lpSplitEstimate.lpWlf.toLocaleString(undefined, { maximumFractionDigits: 0 })} WLF
-                      {' + '}
-                      ${lpSplitEstimate.lpUsdt.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT
-                    </p>
-                  </div>
-                </div>
-
-                {/* Treasury row */}
-                <div className="flex items-start gap-2.5">
-                  <span className="mt-0.5 text-xs font-bold px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300 border border-amber-700/40 shrink-0">DAO</span>
-                  <div>
-                    <p style={{ color: theme.textMuted }} className="text-xs">
-                      → Treasury (unpaired remainder)
-                    </p>
-                    {lpSplitEstimate.excessToken === 'USDT' ? (
-                      <p className="text-sm font-mono text-white">
-                        ${lpSplitEstimate.treasuryUsdt.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT
-                        {lpSplitEstimate.treasuryUsdt < 0.01 && (
-                          <span className="text-xs text-white/40 ml-1">(negligible)</span>
-                        )}
-                      </p>
-                    ) : (
-                      <p className="text-sm font-mono text-white">
-                        {lpSplitEstimate.treasuryWlf.toLocaleString(undefined, { maximumFractionDigits: 0 })} WLF
-                        {lpSplitEstimate.treasuryWlf < 1 && (
-                          <span className="text-xs text-white/40 ml-1">(negligible)</span>
-                        )}
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                <p className="text-xs text-white/25 pt-1">
-                  * Estimate based on current pool price. Actual amounts depend on pool price at the moment <code>endSale()</code> is executed.
-                </p>
-              </div>
-            ) : (
-              <p className="text-xs text-white/30 italic">
-                {poolPrice === null
-                  ? 'No active WLF/USDT pool — the sale will seed the initial Uniswap price.'
-                  : 'No funds collected yet.'}
-              </p>
-            )}
           </div>
-        )}
+        </Card>
 
-        {/* ── Wallet balances ── */}
-        <div className="space-y-0.5 mb-6">
-          <Row
-            label="USDT balance"
-            value={usdtBalance === undefined ? '…' : `${fmt6(usdtBalance)} USDT`}
-          />
-          <Row
-            label="WLF balance"
-            value={tokenBalance !== null ? `${tokenBalance} WLF` : '—'}
-          />
-        </div>
-
-        {/* ── Post-sale CTA or buy form ── */}
-        {saleActive === false ? (
-          <div
-            className="rounded-lg p-4 border"
-            style={{ borderColor: '#52b788', background: 'rgba(82,183,136,0.07)' }}
-          >
-            <p className="font-semibold text-white mb-1">
-              Sale #{saleIdCounter?.toString()} has ended
-            </p>
-            {userPurchase !== undefined && userPurchase > 0n && (
-              <p className={`text-sm mb-3 ${theme.textMuted}`}>
-                Your purchase:{' '}
-                <span className="font-semibold text-white">{fmt18(userPurchase)} WLF</span>
-              </p>
-            )}
-            {!saleLPCreated ? (
-              <>
-                {isFounder ? (
-                  <>
-                    <p className={`text-sm mb-3 ${theme.textMuted}`}>
-                      Create the Uniswap LP position and lock all buyer shares for 5 years.
-                    </p>
-                    <Button
-                      variant="success"
-                      fullWidth
-                      onClick={handleEndSale}
-                      loading={isEndSalePending || isEndSaleConfirming}
-                    >
-                      Create LP &amp; Lock All Shares
-                    </Button>
-                  </>
+        {/* ── RIGHT: Action ── */}
+        <Card>
+          {/* LP split estimate */}
+          {(usdtCollected !== undefined || poolPrice !== null) && (
+            <div
+              className="rounded-lg p-4 mb-6 border text-sm space-y-3"
+              style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.03)' }}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-semibold text-white">Estimated distribution at sale end</p>
+                {poolPrice !== null ? (
+                  <span className="text-xs font-mono px-2 py-0.5 rounded-full border border-white/10 text-white/50">
+                    Pool: ${poolPrice < 0.001 ? poolPrice.toFixed(6) : poolPrice.toFixed(4)} / WLF
+                  </span>
                 ) : (
-                  <p className={`text-sm ${theme.textMuted}`}>
-                    Waiting for the founder to create the Uniswap LP position and lock buyer shares…
-                  </p>
+                  <span className="text-xs text-white/30 italic">No pool yet</span>
                 )}
-              </>
-            ) : (
-              <>
-                <Link to="/staking?tab=lp">
-                  <Button variant="success" fullWidth>
-                    View Staking Positions →
-                  </Button>
-                </Link>
-              </>
-            )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                  <p className="text-xs text-white/40 mb-0.5">Collected USDT</p>
+                  <p className="font-mono text-white text-sm">${fmt6(usdtCollected ?? 0n, 2)}</p>
+                </div>
+                <div className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                  <p className="text-xs text-white/40 mb-0.5">Paired WLF</p>
+                  <p className="font-mono text-white text-sm">{fmt18(usdtWlfCollected ?? 0n, 0)}</p>
+                </div>
+              </div>
+
+              {lpSplitEstimate ? (
+                <div className="space-y-2">
+                  <div className="flex items-start gap-2.5">
+                    <span className="mt-0.5 text-xs font-bold px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-300 border border-blue-700/40 shrink-0">LP</span>
+                    <div>
+                      <p style={{ color: theme.textMuted }} className="text-xs">→ Uniswap v3 WLF/USDT position</p>
+                      <p className="text-sm font-mono text-white">
+                        {lpSplitEstimate.lpWlf.toLocaleString(undefined, { maximumFractionDigits: 0 })} WLF
+                        {' + '}
+                        ${lpSplitEstimate.lpUsdt.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2.5">
+                    <span className="mt-0.5 text-xs font-bold px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300 border border-amber-700/40 shrink-0">DAO</span>
+                    <div>
+                      <p style={{ color: theme.textMuted }} className="text-xs">→ Treasury (unpaired remainder)</p>
+                      {lpSplitEstimate.excessToken === 'USDT' ? (
+                        <p className="text-sm font-mono text-white">
+                          ${lpSplitEstimate.treasuryUsdt.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT
+                          {lpSplitEstimate.treasuryUsdt < 0.01 && <span className="text-xs text-white/40 ml-1">(negligible)</span>}
+                        </p>
+                      ) : (
+                        <p className="text-sm font-mono text-white">
+                          {lpSplitEstimate.treasuryWlf.toLocaleString(undefined, { maximumFractionDigits: 0 })} WLF
+                          {lpSplitEstimate.treasuryWlf < 1 && <span className="text-xs text-white/40 ml-1">(negligible)</span>}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-xs text-white/25 pt-1">
+                    * Estimate based on current pool price. Actual amounts depend on pool price at the moment <code>endSale()</code> is executed.
+                  </p>
+                </div>
+              ) : (
+                <p className="text-xs text-white/30 italic">
+                  {poolPrice === null
+                    ? 'No active WLF/USDT pool — the sale will seed the initial Uniswap price.'
+                    : 'No funds collected yet.'}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Wallet balances */}
+          <div className="space-y-0.5 mb-6">
+            <Row
+              label="USDT balance"
+              value={usdtBalance === undefined ? '…' : `${fmt6(usdtBalance)} USDT`}
+            />
+            <Row
+              label="WLF balance"
+              value={tokenBalance !== null ? `${tokenBalance} WLF` : '—'}
+            />
           </div>
-        ) : (
-          <>
-            {/* ── Buy form ── */}
+
+          {/* Post-sale CTA or buy form */}
+          {saleActive === false ? (
+            <div
+              className="rounded-lg p-4 border"
+              style={{ borderColor: '#52b788', background: 'rgba(82,183,136,0.07)' }}
+            >
+              <p className="font-semibold text-white mb-1">
+                Sale #{saleIdCounter?.toString()} has ended
+              </p>
+              {userPurchase !== undefined && userPurchase > 0n && (
+                <p className={`text-sm mb-3 ${theme.textMuted}`}>
+                  Your purchase:{' '}
+                  <span className="font-semibold text-white">{fmt18(userPurchase)} WLF</span>
+                </p>
+              )}
+              {!saleLPCreated ? (
+                <>
+                  {isFounder ? (
+                    <>
+                      <p className={`text-sm mb-3 ${theme.textMuted}`}>
+                        Create the Uniswap LP position and lock all buyer shares for 5 years.
+                      </p>
+                      <Button
+                        variant="success"
+                        fullWidth
+                        onClick={handleEndSale}
+                        loading={isEndSalePending || isEndSaleConfirming}
+                      >
+                        Create LP &amp; Lock All Shares
+                      </Button>
+                    </>
+                  ) : (
+                    <p className={`text-sm ${theme.textMuted}`}>
+                      Waiting for the founder to create the Uniswap LP position and lock buyer shares…
+                    </p>
+                  )}
+                </>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 text-green-400">
+                    <span className="text-lg">✓</span>
+                    <p className="text-sm font-semibold">LP created &amp; shares locked for 5 years</p>
+                  </div>
+                  <Link to="/staking?tab=lp">
+                    <Button variant="success" fullWidth>
+                      View LP Staking Positions →
+                    </Button>
+                  </Link>
+                  <div
+                    className="rounded-lg p-3 border text-sm space-y-2"
+                    style={{ borderColor: 'rgba(255,200,50,0.25)', background: 'rgba(255,200,50,0.05)' }}
+                  >
+                    <p className="text-yellow-300/90 font-semibold">Funds are in the DAO Treasury</p>
+                    <p className="text-white/50 text-xs">
+                      Excess USDT from the sale has been transferred to the Treasury. WLF holders can now vote on how to deploy them.
+                    </p>
+                    <Link to="/dao">
+                      <Button variant="info" fullWidth>
+                        Go to DAO → Create a Proposal
+                      </Button>
+                    </Link>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
             <div className="space-y-3">
               <Input
-                label="Amount of WLF to buy"
+                label="WLF to buy"
                 type="number"
                 min="1"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
+                placeholder="0"
+                value={wlfInput}
+                onChange={(e) => handleWlfChange(e.target.value)}
                 disabled={isLoading}
               />
+              <div className="flex items-center gap-2">
+                <div className="flex-1 h-px bg-white/10" />
+                <span className={`text-xs ${theme.textMuted}`}>or</span>
+                <div className="flex-1 h-px bg-white/10" />
+              </div>
+              <Input
+                label="USDT to spend"
+                type="number"
+                min="0"
+                placeholder="0.000000"
+                value={usdtInput}
+                onChange={(e) => handleUsdtChange(e.target.value)}
+                disabled={isLoading}
+              />
+              {usdtBalance !== undefined && usdtBalance > 0n && (
+                <div className="flex gap-2 -mt-1">
+                  {[5, 10, 25, 100].map((pct) => {
+                    const maxCost = tokensAvailable !== undefined && pricePerToken > 0n
+                      ? tokensAvailable * pricePerToken / 10n ** 12n
+                      : usdtBalance;
+                    const cap = usdtBalance < maxCost ? usdtBalance : maxCost;
+                    const amt = cap * BigInt(pct) / 100n;
+                    return (
+                      <button
+                        key={pct}
+                        type="button"
+                        disabled={isLoading || amt === 0n}
+                        onClick={() => handleUsdtChange((Number(amt) / 1e6).toFixed(6))}
+                        className="flex-1 text-xs py-1 rounded transition-colors disabled:opacity-40"
+                        style={{ background: 'rgba(255,255,255,0.07)', color: theme.textMuted }}
+                      >
+                        {pct === 100 ? 'Max' : `${pct}%`}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
               {amountError && (
                 <p className="text-red-400 text-xs -mt-1">{amountError}</p>
               )}
-
-              <p className={`text-sm ${theme.textMuted}`}>
-                Total cost: <span className="font-semibold text-white">{fmt6(usdtCost)} USDT</span>
-              </p>
-
               {!hasEnoughAllowance ? (
                 <Button
                   variant="info"
@@ -775,25 +907,60 @@ export default function TokenSale() {
                 </Button>
               )}
             </div>
-          </>
-        )}
+          )}
 
-        {/* ── Tx hashes ── */}
-        {(approveTxHash || buyTxHash) && (
-          <div className={`mt-3 space-y-1 text-xs ${theme.textMuted} break-all`}>
-            {approveTxHash && <p>Approve tx: {approveTxHash}</p>}
-            {buyTxHash && <p>Buy tx: {buyTxHash}</p>}
-          </div>
-        )}
-      </Card>
+          {/* Guardian: Cancel Sale */}
+          {isAdmin && !saleLPCreated && !saleCancelled && (
+            <div className="mt-4 rounded-lg p-4 border border-red-500/30 bg-red-900/10">
+              <p className="text-sm font-semibold text-red-400 mb-1">Emergency: Cancel Sale &amp; Refund Buyers</p>
+              <p className={`text-xs mb-3 ${theme.textMuted}`}>
+                Cancels the sale and refunds every buyer their exact USDT. Sold WLF returns to Treasury. This action is irreversible.
+              </p>
+              <Button
+                variant="danger"
+                fullWidth
+                onClick={handleCancelSale}
+                loading={isCancelSalePending || isCancelSaleConfirming}
+              >
+                {cancelConfirm ? 'Confirm Cancel Sale (irreversible)' : 'Cancel Sale & Refund All Buyers'}
+              </Button>
+              {cancelConfirm && (
+                <button
+                  className="mt-2 text-xs text-white/40 hover:text-white/70 w-full text-center"
+                  onClick={() => setCancelConfirm(false)}
+                >
+                  Abort
+                </button>
+              )}
+            </div>
+          )}
+          {isAdmin && saleCancelled && (
+            <div className="mt-4 rounded-lg p-3 border border-red-500/40 bg-red-900/10">
+              <p className="text-sm text-red-400 font-semibold">Sale #{saleIdCounter?.toString()} has been cancelled. All buyers refunded.</p>
+            </div>
+          )}
 
-      {/* ── Past Sales ── */}
-      {tokenSaleAddress && saleIdCounter !== undefined && saleIdCounter > 0n && (
-        <PastSalesSection
-          tokenSaleAddress={tokenSaleAddress}
-          saleIdCounter={saleIdCounter}
-          chainId={chainId}
-        />
+          {/* Tx hashes */}
+          {(approveTxHash || buyTxHash) && (
+            <div className={`mt-3 space-y-1 text-xs ${theme.textMuted} break-all`}>
+              {approveTxHash && <p>Approve tx: {approveTxHash}</p>}
+              {buyTxHash && <p>Buy tx: {buyTxHash}</p>}
+            </div>
+          )}
+        </Card>
+
+      </div>
+
+      {/* ── Completed Sales — full width below grid ── */}
+      {tokenSaleAddress && saleIdCounter !== undefined && (saleIdCounter > 0n || saleLPCreated) && (
+        <div className="mt-6">
+          <PastSalesSection
+            tokenSaleAddress={tokenSaleAddress}
+            saleIdCounter={saleIdCounter}
+            chainId={chainId}
+            currentLPCreated={saleLPCreated}
+          />
+        </div>
       )}
 
       {/* ── Message popup ── */}

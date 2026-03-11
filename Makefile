@@ -1,5 +1,16 @@
 include .env
 
+# ─── Install ──────────────────────────────────────────────────────────────────
+
+install:
+	forge install
+	cd dapp && npm install
+
+# ─── Run dapp ─────────────────────────────────────────────────────────────────
+
+dev:
+	cd dapp && npm run dev
+
 # ─── Local (Anvil on localhost:8545) ──────────────────────────────────────────
 
 deploy-local-dry:

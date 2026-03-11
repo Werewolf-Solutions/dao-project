@@ -42,6 +42,15 @@ contract StakingTest is BaseTest {
             staking.DURATION_5YR(),
             staking.DURATION_10YR()
         ];
+        uint256[7] memory expectedBonus = [
+            uint256(  5_000),
+                     10_000,
+                     20_000,
+                     50_000,
+                    100_000,
+                    150_000,
+                    200_000
+        ];
 
         vm.startPrank(founder);
         werewolfToken.approve(address(staking), amount * 7);
@@ -54,8 +63,32 @@ contract StakingTest is BaseTest {
         assertEq(positions.length, 7, "Should have 7 positions");
         for (uint256 i = 0; i < durations.length; i++) {
             assertEq(positions[i].unlockAt, block.timestamp + durations[i], "Incorrect unlockAt");
+            assertEq(positions[i].bonusApy, expectedBonus[i], "Incorrect bonusApy");
             assertTrue(positions[i].active, "Position should be active");
         }
+    }
+
+    function test_withdrawPosition_earnsBonus() public {
+        uint256 amount = 100 ether;
+        vm.startPrank(founder);
+        werewolfToken.approve(address(staking), amount);
+        staking.stakeFixed(amount, staking.DURATION_1YR());
+        vm.stopPrank();
+
+        // Fund reward reserve (base APY + bonus)
+        deal(address(werewolfToken), address(staking), 1_000 ether);
+
+        // Advance exactly 1 year
+        vm.warp(block.timestamp + staking.DURATION_1YR() + 1);
+
+        uint256 balanceBefore = werewolfToken.balanceOf(founder);
+        vm.prank(founder);
+        staking.withdrawPosition(0);
+        uint256 received = werewolfToken.balanceOf(founder) - balanceBefore;
+
+        // Bonus for 1yr = 50_000 / 100_000 = 50% on principal (100 ether) ≈ 50 ether
+        // ERC4626 base rewards add a small amount on top
+        assertGt(received, 149 ether, "Should receive principal + bonus > 149 WLF");
     }
 
     function test_withdrawPosition_beforeUnlock_reverts() public {

@@ -43,6 +43,19 @@ export const tokenSaleABI = [
   },
   {
     "type": "function",
+    "name": "cancelSale",
+    "inputs": [
+      {
+        "name": "saleId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "claimLPShares",
     "inputs": [
       {
@@ -240,6 +253,30 @@ export const tokenSaleABI = [
   },
   {
     "type": "function",
+    "name": "purchasedUSDT",
+    "inputs": [
+      {
+        "name": "saleId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "buyer",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "usdtAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "purchases",
     "inputs": [
       {
@@ -302,6 +339,25 @@ export const tokenSaleABI = [
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "saleCancelled",
+    "inputs": [
+      {
+        "name": "saleId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -768,6 +824,31 @@ export const tokenSaleABI = [
         "type": "address",
         "indexed": false,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SaleCancelled",
+    "inputs": [
+      {
+        "name": "saleId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "buyersRefunded",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "usdtRefunded",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
