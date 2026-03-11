@@ -75,7 +75,7 @@ contract CompaniesHouseTest is BaseTest {
             domain:             "werewolf.io",
             roles:              roles,
             powerRoles:         powerRoles,
-            companyWallet:      founder,
+            operatorAddress:      founder,
             ownerRole:          "CEO",
             ownerSalaryPerHour: HOURLY_SALARY,
             ownerName:          "Alice Founder"
@@ -161,7 +161,7 @@ contract CompaniesHouseTest is BaseTest {
         companiesHouse.createCompany(CompaniesHouseV1.CreateCompany({
             name: "Broke Inc", industry: "None", domain: "x.io",
             roles: roles, powerRoles: powerRoles,
-            companyWallet: employee1,
+            operatorAddress: employee1,
             ownerRole: "CEO", ownerSalaryPerHour: 0, ownerName: "Nobody"
         }));
         vm.stopPrank();
@@ -243,7 +243,8 @@ contract CompaniesHouseTest is BaseTest {
 
         vm.warp(block.timestamp + 730 hours);
 
-        uint256 expectedUSDT = (730 hours * HOURLY_SALARY) / 1 hours;
+        uint256 grossUSDT    = (730 hours * HOURLY_SALARY) / 1 hours;
+        uint256 expectedUSDT = grossUSDT * 9_500 / 10_000; // 5% protocol fee
 
         vm.prank(founder);
         companiesHouse.payEmployee(employee1, id);
@@ -326,7 +327,7 @@ contract CompaniesHouseTest is BaseTest {
 
         vm.prank(founder);
         companiesHouse.payEmployee(employee1, id); // should not revert
-        assertEq(mockUSDT.balanceOf(employee1), totalUSDT, "Employee receives exact USDT owed");
+        assertEq(mockUSDT.balanceOf(employee1), totalUSDT * 9_500 / 10_000, "Employee receives net USDT owed (after 5% fee)");
     }
 
     function test_PayEmployee_Unauthorized_Reverts() public {
@@ -420,5 +421,27 @@ contract CompaniesHouseTest is BaseTest {
 
         uint256 monthly  = companiesHouse.getMonthlyBurnUSDT(id);
         assertEq(companiesHouse.getRequiredReserveUSDT(id), monthly * 12);
+    }
+
+    function test_SetDaoCompanyId_OnlyAdmin() public {
+        uint96 id = _createCompany();
+
+        // Non-admin should revert
+        address stranger = makeAddr("stranger");
+        vm.expectRevert();
+        vm.prank(stranger);
+        companiesHouse.setDaoCompanyId(id);
+
+        // Admin (founder) should succeed
+        vm.prank(founder);
+        companiesHouse.setDaoCompanyId(id);
+        assertEq(companiesHouse.daoCompanyId(), id);
+    }
+
+    function test_SetDaoCompanyId_NonExistentCompany_Reverts() public {
+        uint96 badId = 99;
+        vm.expectRevert();
+        vm.prank(founder);
+        companiesHouse.setDaoCompanyId(badId);
     }
 }

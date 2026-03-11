@@ -77,7 +77,7 @@ contract PayEmployeeDebugTest is BaseTest {
             domain:             "debug.io",
             roles:              roles,
             powerRoles:         powerRoles,
-            companyWallet:      founder,
+            operatorAddress:      founder,
             ownerRole:          "CEO",
             ownerSalaryPerHour: HOURLY_SALARY,
             ownerName:          "Debug Owner"
@@ -314,7 +314,7 @@ contract PayEmployeeDebugTest is BaseTest {
         // Check who is authorized
         CompaniesHouseV1.CompanyStruct memory co = companiesHouse.retrieveCompany(companyId);
         console.log("[auth] company owner  :", co.owner);
-        console.log("[auth] companyWallet  :", co.companyWallet);
+        console.log("[auth] operatorAddress  :", co.operatorAddress);
         console.log("[auth] caller (founder):", founder);
         console.log("[auth] founder == owner?", founder == co.owner);
 

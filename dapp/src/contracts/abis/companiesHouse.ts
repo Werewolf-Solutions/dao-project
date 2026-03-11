@@ -13,7 +13,7 @@ export const companiesHouseABI = [
           { "name": "domain",             "type": "string",    "internalType": "string"  },
           { "name": "roles",              "type": "string[]",  "internalType": "string[]" },
           { "name": "powerRoles",         "type": "string[]",  "internalType": "string[]" },
-          { "name": "companyWallet",      "type": "address",   "internalType": "address" },
+          { "name": "operatorAddress",      "type": "address",   "internalType": "address" },
           { "name": "ownerRole",          "type": "string",    "internalType": "string"  },
           { "name": "ownerSalaryPerHour", "type": "uint256",   "internalType": "uint256" },
           { "name": "ownerName",          "type": "string",    "internalType": "string"  }
@@ -155,7 +155,7 @@ export const companiesHouseABI = [
           { "name": "domain",        "type": "string",   "internalType": "string"   },
           { "name": "roles",         "type": "string[]", "internalType": "string[]" },
           { "name": "powerRoles",    "type": "string[]", "internalType": "string[]" },
-          { "name": "companyWallet", "type": "address",  "internalType": "address"  }
+          { "name": "operatorAddress", "type": "address",  "internalType": "address"  }
         ]
       }
     ],
@@ -266,7 +266,7 @@ export const companiesHouseABI = [
         "components": [
           { "name": "companyId",    "type": "uint96",  "internalType": "uint96"  },
           { "name": "owner",        "type": "address", "internalType": "address" },
-          { "name": "companyWallet","type": "address", "internalType": "address" },
+          { "name": "operatorAddress","type": "address", "internalType": "address" },
           { "name": "industry",     "type": "string",  "internalType": "string"  },
           { "name": "name",         "type": "string",  "internalType": "string"  },
           { "name": "createdAt",    "type": "uint256", "internalType": "uint256" },
@@ -494,5 +494,53 @@ export const companiesHouseABI = [
     "type": "event",
     "name": "Unpaused",
     "inputs": [{ "name": "account", "type": "address", "indexed": false }]
+  },
+  {
+    "type": "function",
+    "name": "wlfFeeBps",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "uint256", "internalType": "uint256" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "nonWlfFeeBps",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "uint256", "internalType": "uint256" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "setFees",
+    "inputs": [
+      { "name": "_wlfFeeBps",    "type": "uint256", "internalType": "uint256" },
+      { "name": "_nonWlfFeeBps", "type": "uint256", "internalType": "uint256" }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "daoCompanyId",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "uint96", "internalType": "uint96" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "setDaoCompanyId",
+    "inputs": [{ "name": "_id", "type": "uint96", "internalType": "uint96" }],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "ProtocolFeePaid",
+    "inputs": [
+      { "name": "companyId",  "type": "uint96",  "indexed": true  },
+      { "name": "token",      "type": "address", "indexed": true  },
+      { "name": "feeAmount",  "type": "uint256", "indexed": false }
+    ],
+    "anonymous": false
   }
 ] as const;

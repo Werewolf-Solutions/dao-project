@@ -558,6 +558,19 @@ export const stakingABI = [
   },
   {
     "type": "function",
+    "name": "lpStakingContract",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "maxApy",
     "inputs": [],
     "outputs": [
@@ -882,6 +895,19 @@ export const stakingABI = [
     "inputs": [
       {
         "name": "_guardian",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setLPStakingContract",
+    "inputs": [
+      {
+        "name": "_lpStaking",
         "type": "address",
         "internalType": "address"
       }

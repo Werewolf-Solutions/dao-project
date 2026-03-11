@@ -56,4 +56,5 @@ interface IDAO {
     function votingPeriod() external pure returns (uint256);
     function werewolfToken() external view returns (address);
     function werewolfTokenAddress() external view returns (address);
+    function recordFee(address user, uint256 amount) external;
 }

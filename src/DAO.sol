@@ -116,8 +116,8 @@ contract DAO is Initializable {
     uint256 public delegationCooldown;     // cooldown applied after every manual delegate/undelegate
     mapping(address delegator => address delegate) public voteDelegate;
     mapping(address delegator => uint256 expiry) public voteDelegateLockExpiry;
-    mapping(address delegatee => uint256 total) public delegatedVotingPower;
-    mapping(address delegator => uint256 power) public userDelegatedPower;
+    mapping(address delegatee => uint256 total) public delegatedVotingPower;   // kept for storage compat, no longer used
+    mapping(address delegator => uint256 power) public userDelegatedPower;     // kept for storage compat, no longer used
 
     mapping(address => bool) public authorizedCallers;
     mapping(uint256 => Proposal) public proposals;
@@ -127,7 +127,16 @@ contract DAO is Initializable {
     mapping(bytes32 => bool) public queuedTransactions;
     mapping(address => uint256) public latestProposalIds;
 
-    uint256[23] private __gap;
+    // Kept for storage compat — no longer read by _getRawVotingPower.
+    mapping(address => uint256) public governanceFeesPaid;
+    mapping(address => uint256) public salePurchaseVotingPower;
+
+    // Live delegation: list of addresses that have delegated to each delegatee.
+    // _getVotingPower sums _getRawVotingPower(d) for each d in _delegatorList[voter]
+    // where voteDelegate[d] == voter (stale entries from undelegate are skipped).
+    mapping(address delegatee => address[]) private _delegatorList;
+
+    uint256[20] private __gap; // was 21, consumed one slot for _delegatorList
 
     ///////////////////////////////////////
     //           Events                  //
@@ -183,8 +192,8 @@ contract DAO is Initializable {
         delegateLockDuration = 2 * 365 days;
         delegationCooldown = 180 days; // 6 months initial cooldown; adjustable via DAO proposal
         proposalCount = 1;
-        votingPeriodDuration = 1 hours;
-        votingDelayDuration = 1 days;
+        votingPeriodDuration = 10 minutes;
+        votingDelayDuration = 0;
         //guardian = msg.sender;
         // _authorizeCaller(_timelock);
     }
@@ -194,7 +203,9 @@ contract DAO is Initializable {
     ///////////////////////////////////////
 
     // Function to authorize an external contract (like CompaniesHouseV1)
-    function authorizeCaller(address _caller) external onlyTimelock {
+    // Callable by Timelock (governance) or Guardian (bootstrap during deploy)
+    function authorizeCaller(address _caller) external {
+        require(msg.sender == address(timelock) || msg.sender == guardian, "DAO: not authorized");
         authorizedCallers[_caller] = true;
     }
 
@@ -205,6 +216,13 @@ contract DAO is Initializable {
     // Function to deauthorize an external contract
     function deauthorizeCaller(address _caller) external onlyTimelock {
         authorizedCallers[_caller] = false;
+    }
+
+    // Called by authorized contracts (e.g. CompaniesHouseV1) to record WLF fees paid
+    // so those tokens continue to count toward the user's voting power.
+    function recordFee(address user, uint256 amount) external {
+        require(authorizedCallers[msg.sender], "DAO: not authorized");
+        governanceFeesPaid[user] += amount;
     }
 
     /**
@@ -304,14 +322,15 @@ contract DAO is Initializable {
      * @notice Auto-delegate a buyer's voting power (called by TokenSale for sales #0 and #1).
      * @dev Bypasses validator threshold. Applies 2-year lock.
      */
-    function autoDelegate(address user, address delegatee) external onlyTokenSale {
+    function autoDelegate(address user, address delegatee, uint256 /*wlfAmount*/) external onlyTokenSale {
         _applyDelegate(user, delegatee, block.timestamp + delegateLockDuration);
     }
 
     /**
      * @notice Update the lock duration applied to future auto-delegations.
      */
-    function setDelegateLockDuration(uint256 duration) external onlyTimelock {
+    function setDelegateLockDuration(uint256 duration) external {
+        require(msg.sender == address(timelock) || msg.sender == guardian, "DAO: not authorized");
         delegateLockDuration = duration;
     }
 
@@ -326,21 +345,11 @@ contract DAO is Initializable {
      * @notice Sync a user's cached delegated power with their current raw voting power.
      * @dev Call this after a user's staking balance changes significantly.
      */
-    function syncDelegate(address user) external {
-        address currentDelegate = voteDelegate[user];
-        if (currentDelegate == address(0)) return;
-        uint256 oldCached = userDelegatedPower[user];
-        uint256 newPower = _getRawVotingPower(user);
-        if (newPower == oldCached) return;
-        if (oldCached <= delegatedVotingPower[currentDelegate]) {
-            delegatedVotingPower[currentDelegate] -= oldCached;
-        } else {
-            delegatedVotingPower[currentDelegate] = 0;
-        }
-        delegatedVotingPower[currentDelegate] += newPower;
-        userDelegatedPower[user] = newPower;
-        emit DelegateChanged(user, currentDelegate, currentDelegate);
-    }
+    /**
+     * @notice No-op — delegation power is now computed live, no cache to sync.
+     * @dev Kept for ABI compatibility.
+     */
+    function syncDelegate(address /*user*/) external {}
 
     ///////////////////////////////////////
     //           Public Functions        //
@@ -371,7 +380,6 @@ contract DAO is Initializable {
             ),
             "DAO::createProposal: WerewolfTokenV1 transfer for proposal cost failed"
         );
-
         //question not sure what this code is...
         // require(
         //     werewolfToken.getPriorVotes(msg.sender, sub256(block.number, 1)) >
@@ -582,15 +590,29 @@ contract DAO is Initializable {
     ///////////////////////////////////////
 
     function _getVotingPower(address voter) internal view returns (uint256) {
-        // If voter has delegated their power away, they forfeit their raw power
-        uint256 own = voteDelegate[voter] == address(0) ? _getRawVotingPower(voter) : 0;
-        return own + delegatedVotingPower[voter];
+        // Own power: forfeited if delegated away
+        uint256 power = voteDelegate[voter] == address(0) ? _getRawVotingPower(voter) : 0;
+        // Sum live power from every address that has delegated to voter.
+        // voteDelegate[d] == voter check skips stale entries from undelegations.
+        address[] storage delegators = _delegatorList[voter];
+        for (uint256 i = 0; i < delegators.length; i++) {
+            if (voteDelegate[delegators[i]] == voter) {
+                power += _getRawVotingPower(delegators[i]);
+            }
+        }
+        return power;
     }
 
     /// @dev Snapshot version: uses getPriorVotes for WLF to prevent flash-loan attacks.
     function _getVotingPower(address voter, uint256 snapshotBlock) internal view returns (uint256) {
-        uint256 own = voteDelegate[voter] == address(0) ? _getRawVotingPower(voter, snapshotBlock) : 0;
-        return own + delegatedVotingPower[voter];
+        uint256 power = voteDelegate[voter] == address(0) ? _getRawVotingPower(voter, snapshotBlock) : 0;
+        address[] storage delegators = _delegatorList[voter];
+        for (uint256 i = 0; i < delegators.length; i++) {
+            if (voteDelegate[delegators[i]] == voter) {
+                power += _getRawVotingPower(delegators[i], snapshotBlock);
+            }
+        }
+        return power;
     }
 
     function _getRawVotingPower(address voter) internal view returns (uint256) {
@@ -618,29 +640,22 @@ contract DAO is Initializable {
 
     function _applyDelegate(address user, address newDelegate, uint256 lockExpiry) internal {
         address oldDelegate = voteDelegate[user];
-        uint256 oldCached = userDelegatedPower[user];
-        uint256 newRawPower = _getRawVotingPower(user);
-
-        // Remove contribution from old delegate
-        if (oldDelegate != address(0) && oldCached > 0) {
-            if (oldCached <= delegatedVotingPower[oldDelegate]) {
-                delegatedVotingPower[oldDelegate] -= oldCached;
-            } else {
-                delegatedVotingPower[oldDelegate] = 0;
-            }
-        }
-
-        // Add contribution to new delegate
-        if (newDelegate != address(0) && newRawPower > 0) {
-            delegatedVotingPower[newDelegate] += newRawPower;
-            userDelegatedPower[user] = newRawPower;
-        } else {
-            userDelegatedPower[user] = 0;
-        }
 
         voteDelegate[user] = newDelegate;
         if (lockExpiry > voteDelegateLockExpiry[user]) {
             voteDelegateLockExpiry[user] = lockExpiry;
+        }
+
+        // Register user in new delegate's list (deduplicated).
+        // Undelegations do not need list cleanup — the loop in _getVotingPower
+        // skips entries where voteDelegate[entry] != voter.
+        if (newDelegate != address(0) && newDelegate != oldDelegate) {
+            address[] storage list = _delegatorList[newDelegate];
+            bool found = false;
+            for (uint256 i = 0; i < list.length; i++) {
+                if (list[i] == user) { found = true; break; }
+            }
+            if (!found) list.push(user);
         }
 
         emit DelegateChanged(user, oldDelegate, newDelegate);

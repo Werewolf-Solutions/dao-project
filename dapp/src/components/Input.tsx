@@ -10,6 +10,7 @@ interface InputProps {
   disabled?: boolean;
   hint?: string;
   min?: string;
+  max?: string;
   style?: CSSProperties;
 }
 
@@ -22,6 +23,7 @@ export function Input({
   disabled,
   hint,
   min,
+  max,
   style,
 }: InputProps) {
   const { theme } = useTheme();
@@ -36,6 +38,7 @@ export function Input({
         placeholder={placeholder}
         disabled={disabled}
         min={min}
+        max={max}
         style={style}
         className={theme.input}
       />

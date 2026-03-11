@@ -391,10 +391,9 @@ contract TokenSaleWithLPTest is Test {
 
         // user1's entire WLF voting power is delegated to owner via DAO
         assertEq(dao.voteDelegate(user1), owner, "user1 should delegate to owner");
-        assertGt(dao.delegatedVotingPower(owner), 0, "owner should have delegated voting power");
         // user1 forfeits their own voting power while delegating
         assertEq(dao.getVotingPower(user1), 0, "user1 own voting power should be 0 (delegated away)");
-        // owner's total voting power includes user1's delegated LP power
+        // owner's total voting power includes user1's delegated LP power (computed live)
         assertGt(dao.getVotingPower(owner), 0, "owner voting power should include user1's delegation");
     }
 
@@ -433,7 +432,7 @@ contract TokenSaleWithLPTest is Test {
         dao.undelegate();
 
         assertEq(dao.voteDelegate(user1), address(0), "user1 should have no delegate");
-        assertEq(dao.delegatedVotingPower(owner), 0, "owner should no longer have delegated power");
+        // user1's power no longer flows to owner (live computation skips since voteDelegate[user1] != owner)
         // user1's own voting power is restored
         assertGt(dao.getVotingPower(user1), 0, "user1 should have voting power after undelegating");
     }

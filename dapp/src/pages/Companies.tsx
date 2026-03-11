@@ -62,7 +62,7 @@ type Employee = {
 type Company = {
   companyId: bigint;
   owner: `0x${string}`;
-  companyWallet: `0x${string}`;
+  operatorAddress: `0x${string}`;
   industry: string;
   name: string;
   createdAt: bigint;
@@ -475,23 +475,34 @@ function EmployeeCard({
         ? 'Pay salary in USDT'
         : 'USDT balance below minimum reserve threshold';
 
-  function handlePay() {
+  async function handlePay() {
     setPayError(null);
-    writeContract(
-      {
+    try {
+      const result = await publicClient!.simulateContract({
         address: companiesHouseAddress,
         abi: companiesHouseABI,
         functionName: 'payEmployee',
         args: [employee.employeeId, company.companyId],
-      },
-      {
-        onSuccess: (hash) => setTxHash(hash),
-        onError: (err) => {
-          const msg = (err as { shortMessage?: string }).shortMessage ?? err.message;
-          setPayError(msg);
-        },
-      }
-    );
+        account: connectedAddress,
+      });
+      writeContract(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { ...result.request, gas: result.request.gas ? result.request.gas * 12n / 10n : undefined } as any,
+        {
+          onSuccess: (hash) => setTxHash(hash),
+          onError: (err) => {
+            const msg = (err as { shortMessage?: string }).shortMessage ?? err.message;
+            setPayError(msg);
+          },
+        }
+      );
+    } catch (err: unknown) {
+      const msg =
+        (err as { shortMessage?: string }).shortMessage ??
+        (err as { message?: string }).message ??
+        'Simulation failed';
+      setPayError(msg);
+    }
   }
 
   function handleFire() {
@@ -605,6 +616,11 @@ function EmployeeCard({
                   WLF soon™
                 </span>
               </div>
+            )}
+            {isAuthorized && canPay && (
+              <p className="text-xs text-white/25 mt-1">
+                Fee: ${fmtUSDT(totalPendingUSDT * 500n / 10_000n)} USDT (5%) → employee receives ${fmtUSDT(totalPendingUSDT * 9_500n / 10_000n)}
+              </p>
             )}
           </div>
         ) : (
@@ -931,7 +947,7 @@ function EditCompanyForm({
   const [name, setName] = useState(company.name);
   const [industry, setIndustry] = useState(company.industry);
   const [domain, setDomain] = useState(company.domain);
-  const [wallet, setWallet] = useState(company.companyWallet);
+  const [wallet, setWallet] = useState(company.operatorAddress);
   const [roles, setRoles] = useState<string[]>([...company.roles]);
   const [powerRoles, setPowerRoles] = useState<string[]>([...company.powerRoles]);
   const [newRole, setNewRole] = useState('');
@@ -971,7 +987,7 @@ function EditCompanyForm({
           domain: domain.trim(),
           roles,
           powerRoles,
-          companyWallet: wallet as `0x${string}`,
+          operatorAddress: wallet as `0x${string}`,
         }],
         gas: 500_000n,
       },
@@ -1117,6 +1133,7 @@ function CompanyCard({
   const { writeContract: writePayAll, isPending: isPayAllPending } = useWriteContract();
   const { isSuccess: isPayAllSuccess, isLoading: isPayAllMining } = useWaitForTransactionReceipt({ hash: payAllTxHash });
   const isPayAllLoading = isPayAllPending || isPayAllMining;
+  const publicClientCompany = usePublicClient();
 
   useEffect(() => { if (isPayAllSuccess) { refetchCompany(); setPayAllError(null); } }, [isPayAllSuccess]);
 
@@ -1124,6 +1141,13 @@ function CompanyCard({
   const { isLoading: isDeleteMining, isSuccess: isDeleteSuccess } = useWaitForTransactionReceipt({ hash: deleteTxHash });
 
   useEffect(() => { if (isDeleteSuccess) onRefetch(); }, [isDeleteSuccess]);
+
+  // Tick every 5 s so Date.now()-based pending USDT recalculates without a contract call
+  const [, setCompanyTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setCompanyTick(t => t + 1), 5_000);
+    return () => clearInterval(id);
+  }, []);
 
   const { data: company, refetch: refetchCompany } = useReadContract({
     address: companiesHouseAddress,
@@ -1194,7 +1218,7 @@ function CompanyCard({
   }
 
   const zeroAddr = '0x0000000000000000000000000000000000000000';
-  const walletAddr = company?.companyWallet !== zeroAddr ? company?.companyWallet : undefined;
+  const walletAddr = company?.operatorAddress !== zeroAddr ? company?.operatorAddress : undefined;
   const { data: walletBalance } = useBalance({
     address: walletAddr,
     query: { enabled: !!walletAddr, refetchInterval: 5_000 },
@@ -1213,7 +1237,7 @@ function CompanyCard({
   const addrLower = address.toLowerCase();
   const isAuthorized =
     company.owner.toLowerCase() === addrLower ||
-    company.companyWallet.toLowerCase() === addrLower ||
+    company.operatorAddress.toLowerCase() === addrLower ||
     company.employees.some(
       e =>
         e.active &&
@@ -1254,13 +1278,46 @@ function CompanyCard({
   });
   const canPayAll = allAboveMinimum && companyBalance >= totalPendingAllUSDT + reserve;
 
+  async function handlePayAll() {
+    setPayAllError(null);
+    try {
+      const result = await publicClientCompany!.simulateContract({
+        address: companiesHouseAddress,
+        abi: companiesHouseABI,
+        functionName: 'payEmployees',
+        args: [companyId],
+        account: address,
+      });
+      writePayAll(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { ...result.request, gas: result.request.gas ? result.request.gas * 12n / 10n : undefined } as any,
+        {
+          onSuccess: (hash) => { setPayAllError(null); setPayAllTxHash(hash); },
+          onError: (err) => {
+            const msg = (err as { shortMessage?: string }).shortMessage ?? err.message;
+            setPayAllError(msg);
+          },
+        }
+      );
+    } catch (err: unknown) {
+      const msg =
+        (err as { shortMessage?: string }).shortMessage ??
+        (err as { message?: string }).message ??
+        'Simulation failed';
+      setPayAllError(msg);
+    }
+  }
+
   return (
     <div className={`${theme.card} space-y-4`}>
       {/* Company header */}
       <div className="p-5 border-b border-white/10">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 className="text-xl font-bold text-white">{company.name}</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-xl font-bold text-white">{company.name}</h2>
+              <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-white/5 text-white/40 border border-white/10">#{companyId.toString()}</span>
+            </div>
             <p className={`text-sm ${theme.textMuted}`}>{company.industry} · {company.domain}</p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -1298,20 +1355,20 @@ function CompanyCard({
           </div>
         </div>
 
-        {/* Company wallet + live ETH balance */}
+        {/* Operator address + live ETH balance */}
         <div className="mt-2 space-y-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className={`text-xs ${theme.textMuted} shrink-0`}>Company wallet:</span>
-            {company.companyWallet === zeroAddr ? (
+            <span className={`text-xs ${theme.textMuted} shrink-0`}>Operator address:</span>
+            {company.operatorAddress === zeroAddr ? (
               <span className="text-xs text-yellow-400">Not set</span>
             ) : (
               <div className="flex items-center gap-1.5 flex-wrap min-w-0">
                 <span className="text-xs font-mono text-white/70 break-all">
-                  {company.companyWallet}
+                  {company.operatorAddress}
                 </span>
                 <button
                   onClick={() => {
-                    navigator.clipboard.writeText(company.companyWallet);
+                    navigator.clipboard.writeText(company.operatorAddress);
                     setCopiedWallet(true);
                     setTimeout(() => setCopiedWallet(false), 2000);
                   }}
@@ -1516,24 +1573,9 @@ function CompanyCard({
             )}
           </div>
           {isAuthorized && activeEmployees.length > 0 && (
+            <div className="flex flex-col items-end gap-0.5">
             <button
-              onClick={() =>
-                writePayAll(
-                  {
-                    address: companiesHouseAddress,
-                    abi: companiesHouseABI,
-                    functionName: 'payEmployees',
-                    args: [companyId],
-                  },
-                  {
-                    onSuccess: (hash) => { setPayAllError(null); setPayAllTxHash(hash); },
-                    onError: (err) => {
-                      const msg = (err as { shortMessage?: string }).shortMessage ?? err.message;
-                      setPayAllError(msg);
-                    },
-                  }
-                )
-              }
+              onClick={handlePayAll}
               disabled={isPayAllLoading || !canPayAll}
               title={
                 isPayAllLoading
@@ -1558,6 +1600,10 @@ function CompanyCard({
               )}
               {isPayAllPending ? 'Confirm…' : isPayAllMining ? 'Processing…' : 'Pay All'}
             </button>
+            {canPayAll && (
+              <span className="text-xs text-white/25">Fee: ${fmtUSDT(totalPendingAllUSDT * 500n / 10_000n)} USDT (5%) → employees receive ${fmtUSDT(totalPendingAllUSDT * 9_500n / 10_000n)}</span>
+            )}
+            </div>
           )}
         </div>
         {isPayAllSuccess && (
@@ -1689,7 +1735,7 @@ function CreateCompanyForm({
           domain,
           roles: rolesArr,
           powerRoles: powerRolesArr,
-          companyWallet: address,
+          operatorAddress: address,
           ownerRole,
           ownerSalaryPerHour: salaryPerHour,
           ownerName,
@@ -1789,6 +1835,8 @@ export default function Companies() {
   const usdtAddress = getAddress(chainId, 'USDT');
 
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [employeeCompanyIds, setEmployeeCompanyIds] = useState<bigint[]>([]);
+  const publicClient = usePublicClient();
 
   const { data: companyIds, refetch: refetchIds } = useReadContract({
     address: companiesHouseAddress,
@@ -1804,6 +1852,44 @@ export default function Companies() {
     functionName: 'creationFee',
     query: { enabled: !!companiesHouseAddress },
   });
+
+  const { data: totalCompanies } = useReadContract({
+    address: companiesHouseAddress,
+    abi: companiesHouseABI,
+    functionName: 'currentCompanyIndex',
+    query: { enabled: !!companiesHouseAddress, refetchInterval: 30_000 },
+  });
+
+  // Scan all companies to find ones where the connected user is an active employee (but not owner)
+  useEffect(() => {
+    if (!address || !totalCompanies || !publicClient || !companiesHouseAddress) return;
+    const total = Number(totalCompanies);
+    if (total === 0) return;
+    const ownerIds = new Set((companyIds ?? []).map(id => id.toString()));
+    const scanIds = Array.from({ length: Math.min(total, 200) }, (_, i) => BigInt(i + 1));
+    publicClient.multicall({
+      contracts: scanIds.map(id => ({
+        address: companiesHouseAddress as `0x${string}`,
+        abi: companiesHouseABI,
+        functionName: 'retrieveCompany' as const,
+        args: [id] as [bigint],
+      })),
+    }).then(results => {
+      const addrLower = address.toLowerCase();
+      const empIds: bigint[] = [];
+      results.forEach((result, i) => {
+        if (result.status !== 'success') return;
+        const company = result.result as Company;
+        if (!company.active) return;
+        if (ownerIds.has(scanIds[i].toString())) return;
+        const isEmp = company.employees.some(
+          e => e.active && e.employeeId.toLowerCase() === addrLower
+        );
+        if (isEmp) empIds.push(scanIds[i]);
+      });
+      setEmployeeCompanyIds(empIds);
+    });
+  }, [address, totalCompanies, publicClient, companiesHouseAddress, companyIds]);
 
   const ids = companyIds ? [...companyIds] : [];
 
@@ -1854,7 +1940,7 @@ export default function Companies() {
         />
       )}
 
-      {ids.length === 0 && !showCreateForm && (
+      {ids.length === 0 && !showCreateForm && employeeCompanyIds.length === 0 && (
         <div className={`${theme.card} p-8 text-center`}>
           <p className="text-white/60 mb-4">You don't have any registered companies yet.</p>
           <button
@@ -1881,6 +1967,29 @@ export default function Companies() {
           onRefetch={refetchIds}
         />
       ))}
+
+      {employeeCompanyIds.length > 0 && (
+        <>
+          <div className="pt-2 border-t border-white/10">
+            <h2 className="text-xl font-bold text-white">My Employment</h2>
+            <p className={`text-sm mt-1 ${theme.textMuted}`}>
+              Companies where you are employed.
+            </p>
+          </div>
+          {employeeCompanyIds.map((id) => (
+            <CompanyCard
+              key={id}
+              companyId={id}
+              address={address!}
+              companiesHouseAddress={companiesHouseAddress}
+              usdtAddress={usdtAddress}
+              wlfAddress={wlfAddress}
+              wlfPrice={wlfPrice}
+              onRefetch={refetchIds}
+            />
+          ))}
+        </>
+      )}
     </main>
   );
 }

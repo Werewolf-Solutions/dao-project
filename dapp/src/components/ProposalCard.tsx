@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { formatUnits, decodeAbiParameters, parseAbiParameters } from 'viem';
 import { daoABI } from '@/contracts';
+import { stakingABI } from '@/contracts/abis/staking';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Button } from './Button';
 
@@ -185,10 +186,10 @@ export function ProposalCard({ id, daoAddress, isGuardian, visibleStates, wlfAdd
     query: { enabled: !!address && !!wlfAddress },
   });
 
-  const { data: sWlfShares } = useReadContract({
+  const { data: stakedWLF } = useReadContract({
     address: stakingAddress,
-    abi: [{ type: 'function', name: 'balanceOf', inputs: [{ name: 'account', type: 'address' }], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view' }] as const,
-    functionName: 'balanceOf',
+    abi: stakingABI,
+    functionName: 'getStakedWLF',
     args: [address!],
     query: { enabled: !!address && !!stakingAddress },
   });
@@ -432,13 +433,13 @@ export function ProposalCard({ id, daoAddress, isGuardian, visibleStates, wlfAdd
                 </span>
                 {votingPower === 0n && <span className="text-red-400"> (no power)</span>}
               </p>
-              {(wlfBalance !== undefined || sWlfShares !== undefined || lpVotingPower !== undefined) && (
+              {(wlfBalance !== undefined || stakedWLF !== undefined || lpVotingPower !== undefined) && (
                 <div className={`pl-3 space-y-0.5 border-l-2 border-white/10`}>
                   {wlfBalance !== undefined && (
                     <p className={theme.textMuted}>WLF wallet: <span className="font-mono text-white/60">{fmtWlf(wlfBalance)}</span></p>
                   )}
-                  {sWlfShares !== undefined && sWlfShares > 0n && (
-                    <p className={theme.textMuted}>Staked (sWLF): <span className="font-mono text-white/60">{fmtWlf(sWlfShares)}</span></p>
+                  {stakedWLF !== undefined && stakedWLF > 0n && (
+                    <p className={theme.textMuted}>Staked: <span className="font-mono text-white/60">{fmtWlf(stakedWLF)}</span></p>
                   )}
                   {lpVotingPower !== undefined && lpVotingPower > 0n && (
                     <p className={theme.textMuted}>LP: <span className="font-mono text-white/60">{fmtWlf(lpVotingPower)}</span></p>
