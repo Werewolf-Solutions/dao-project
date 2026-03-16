@@ -1,13 +1,84 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { useAccount, useConnect, useDisconnect, useSwitchChain, useReadContract } from 'wagmi';
-import { sepolia, foundry, localhost } from 'wagmi/chains';
+import { useAccount, useConnect, useDisconnect, useReadContract, useSwitchChain } from 'wagmi';
+import { mainnet, bsc, sepolia, baseSepolia, foundry } from 'wagmi/chains';
 import { formatUnits } from 'viem';
 import { theme } from '@/contexts/ThemeContext';
 import { useWLFPrice } from '@/hooks/useWLFPrice';
 import { stakingABI, lpStakingABI, erc20ABI, getAddress } from '@/contracts';
 
-const SUPPORTED_CHAINS = new Set([sepolia.id, foundry.id, localhost.id]);
+// ─── Network selector config ─────────────────────────────────────────────────
+const NETWORKS = [
+  { chain: mainnet,    label: 'Ethereum',    icon: '⟠', color: '#627eea' },
+  { chain: bsc,        label: 'BNB Chain',   icon: '⬡', color: '#f0b90b' },
+  { chain: sepolia,    label: 'Sepolia',     icon: '⟠', color: '#f97316' },
+  { chain: baseSepolia,label: 'Base Sepolia',icon: '🔵', color: '#0052ff' },
+  { chain: foundry,    label: 'Anvil/Local', icon: '⚒', color: '#9ca3af' },
+] as const;
+
+
+// ─── NetworkSelector dropdown ────────────────────────────────────────────────
+function NetworkSelector({ currentChainId }: { currentChainId: number | undefined }) {
+  const { switchChain } = useSwitchChain();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  const current = NETWORKS.find(n => n.chain.id === currentChainId);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors"
+        style={{
+          background: current ? `${current.color}18` : 'rgba(239,68,68,0.1)',
+          borderColor: current ? `${current.color}55` : 'rgba(239,68,68,0.4)',
+          color: current ? current.color : '#f87171',
+        }}
+        title="Switch network"
+      >
+        <span>{current?.icon ?? '⚠'}</span>
+        <span className="hidden sm:inline">{current?.label ?? 'Wrong Network'}</span>
+        <svg className={`w-2.5 h-2.5 opacity-60 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {open && (
+        <div
+          className="absolute right-0 top-full mt-1 w-44 rounded-xl shadow-xl z-50 py-1 overflow-hidden"
+          style={{ background: '#0f1117', border: '1px solid rgba(255,255,255,0.08)' }}
+        >
+          {NETWORKS.map(({ chain, label, icon, color }) => {
+            const isActive = chain.id === currentChainId;
+            return (
+              <button
+                key={chain.id}
+                onClick={() => { switchChain({ chainId: chain.id }); setOpen(false); }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors hover:bg-white/5 text-left"
+                style={{ color: isActive ? color : 'rgba(255,255,255,0.7)' }}
+              >
+                <span style={{ color }}>{icon}</span>
+                <span className="flex-1">{label}</span>
+                {isActive && <span className="text-xs" style={{ color }}>✓</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 const NAV_LINKS = [
   { to: '/', label: 'Home' },
@@ -50,21 +121,12 @@ export default function Header() {
   const account = useAccount();
   const { connectors, connect, status, error } = useConnect();
   const { disconnect } = useDisconnect();
-  const { switchChain } = useSwitchChain();
   const [isPopupOpen, setIsPopupOpen] = useState(false);
   const [isBalanceOpen, setIsBalanceOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
 
   const isConnected = account.status === 'connected' || account.status === 'reconnecting';
-  const isSupported = !account.chainId || SUPPORTED_CHAINS.has(account.chainId as (typeof sepolia.id | typeof foundry.id | typeof localhost.id));
-
-  // Auto-switch to Sepolia when connected to a chain with no deployed contracts
-  useEffect(() => {
-    if (account.status === 'connected' && account.chainId && !SUPPORTED_CHAINS.has(account.chainId as never)) {
-      switchChain({ chainId: sepolia.id });
-    }
-  }, [account.status, account.chainId]);
   const wlfPrice = useWLFPrice();
   const priceStr = wlfPrice === null ? null
     : wlfPrice < 0.000001 ? wlfPrice.toExponential(2)
@@ -187,19 +249,7 @@ export default function Header() {
               </span>
             )}
             {isConnected && (
-              isSupported ? (
-                <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-green-900/40 text-green-300 border border-green-700/40">
-                  ● {account.chain?.name ?? `Chain ${account.chainId}`}
-                </span>
-              ) : (
-                <button
-                  onClick={() => switchChain({ chainId: sepolia.id })}
-                  className="px-2.5 py-1 rounded-full text-xs font-medium bg-red-900/40 text-red-300 border border-red-700/40 hover:bg-red-800/60 transition-colors"
-                  title="Click to switch to Sepolia"
-                >
-                  ⚠ Wrong Network
-                </button>
-              )
+              <NetworkSelector currentChainId={account.chainId} />
             )}
 
             {(account.status === 'connected' || account.status === 'reconnecting') ? (

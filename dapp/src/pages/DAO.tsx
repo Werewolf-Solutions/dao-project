@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { useAccount, useReadContract, useReadContracts, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
-import { parseUnits, encodeAbiParameters, parseAbiParameters, formatEther, formatUnits } from 'viem';
-import { daoABI, werewolfTokenABI, erc20ABI, treasuryABI, tokenSaleABI, companiesHouseABI, stakingABI, getAddress } from '@/contracts';
+import { Link } from 'react-router-dom';
+import { useAccount, useReadContract, useReadContracts, useWriteContract, useWaitForTransactionReceipt, useSendTransaction } from 'wagmi';
+import { parseUnits, parseEther, encodeAbiParameters, parseAbiParameters, formatEther, formatUnits } from 'viem';
+import { daoABI, werewolfTokenABI, erc20ABI, treasuryABI, tokenSaleABI, companiesHouseABI, stakingABI, companyDeFiABI, companyVaultABI, getAddress } from '@/contracts';
 import { useTheme } from '@/contexts/ThemeContext';
 import { PageContainer } from '@/components/PageContainer';
 import { Button } from '@/components/Button';
@@ -26,6 +27,12 @@ export default function DAO() {
   const treasuryAddress = getAddress(chainId, 'Treasury');
   const usdtAddress = getAddress(chainId, 'USDT');
   const companiesHouseAddress = getAddress(chainId, 'CompaniesHouse');
+  const usdcAddress = getAddress(chainId, 'USDC');
+  const companyDeFiAddress = getAddress(chainId, 'CompanyDefi');
+  // DeFi integration only on chains with a real Aave pool (Base Sepolia, Mainnet)
+  const aaveUsdtAddress = getAddress(chainId, 'AaveToken');
+  // WBTC: mainnet only
+  const wbtcAddress: `0x${string}` | undefined = chainId === 1 ? '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599' : undefined;
 
   // ── Reads ──────────────────────────────────────────────────────────────────
 
@@ -130,6 +137,13 @@ export default function DAO() {
     query: { enabled: !!wlfAddress && !!treasuryAddress },
   });
 
+  const { data: treasuryUsdcBalance } = useReadContract({
+    address: usdcAddress,
+    abi: erc20ABI,
+    functionName: 'balanceOf',
+    args: [treasuryAddress!],
+    query: { enabled: !!usdcAddress && !!treasuryAddress },
+  });
 
   const { data: currentCompanyIndex } = useReadContract({
     address: companiesHouseAddress,
@@ -155,6 +169,28 @@ export default function DAO() {
     query: { enabled: !!companiesHouseAddress && hasDaoCompany },
   });
 
+  const { data: daoVaultAddress } = useReadContract({
+    address: companiesHouseAddress,
+    abi: companiesHouseABI,
+    functionName: 'companyVault',
+    args: [daoCompanyIdOnChain ?? 0n],
+    query: { enabled: !!companiesHouseAddress && hasDaoCompany },
+  });
+
+  const { data: daoVaultAaveData, refetch: refetchDaoVaultAave } = useReadContract({
+    address: daoVaultAddress,
+    abi: companyVaultABI,
+    functionName: 'getAaveUserData',
+    query: { enabled: !!daoVaultAddress, refetchInterval: 30_000 },
+  });
+
+  const { data: daoVaultMinHf, refetch: refetchDaoVaultMinHf } = useReadContract({
+    address: daoVaultAddress,
+    abi: companyVaultABI,
+    functionName: 'minHealthFactor',
+    query: { enabled: !!daoVaultAddress, refetchInterval: 60_000 },
+  });
+
   // IDs start at 1; currentCompanyIndex is the next ID to be assigned
   const companyCount = currentCompanyIndex !== undefined ? Number(currentCompanyIndex) : 0;
   const companyReadConfigs = companyCount > 1
@@ -171,10 +207,39 @@ export default function DAO() {
     query: { enabled: !!companiesHouseAddress && companyCount > 1 },
   });
 
+  // ── CompanyDeFi reads ───────────────────────────────────────────────────────
+
+  const { data: defiAdmin } = useReadContract({
+    address: companyDeFiAddress,
+    abi: companyDeFiABI,
+    functionName: 'admin',
+    query: { enabled: !!companyDeFiAddress, refetchInterval: 30_000 },
+  });
+  const { data: defiPaused, refetch: refetchDefiPaused } = useReadContract({
+    address: companyDeFiAddress,
+    abi: companyDeFiABI,
+    functionName: 'paused',
+    query: { enabled: !!companyDeFiAddress, refetchInterval: 15_000 },
+  });
+  const { data: defiBorrowingEnabled, refetch: refetchDefiBorrowing } = useReadContract({
+    address: companyDeFiAddress,
+    abi: companyDeFiABI,
+    functionName: 'borrowingEnabled',
+    query: { enabled: !!companyDeFiAddress, refetchInterval: 30_000 },
+  });
+  const { data: defiUsdtAllowed, refetch: refetchDefiUsdtAllowed } = useReadContract({
+    address: companyDeFiAddress,
+    abi: companyDeFiABI,
+    functionName: 'allowedTokens',
+    args: [aaveUsdtAddress ?? '0x0000000000000000000000000000000000000000'],
+    query: { enabled: !!companyDeFiAddress && !!aaveUsdtAddress, refetchInterval: 30_000 },
+  });
+
   // ── Writes ─────────────────────────────────────────────────────────────────
 
   const { writeContract, data: txHash, isPending } = useWriteContract();
   const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash: txHash });
+  const { sendTransaction, isPending: isSendEthPending } = useSendTransaction();
   const [lastAction, setLastAction] = useState('');
 
   useEffect(() => {
@@ -182,8 +247,12 @@ export default function DAO() {
       void refetchCount();
       if (lastAction === 'approve-wlf') void refetchWlfAllowance();
       if (lastAction === 'wire-tokensale-into-dao') void refetchDaoTokenSale();
+      if (lastAction === 'defi-pause' || lastAction === 'defi-unpause') void refetchDefiPaused();
+      if (lastAction === 'defi-borrow-enable' || lastAction === 'defi-borrow-disable') void refetchDefiBorrowing();
+      if (lastAction === 'defi-allow-token' || lastAction === 'defi-disallow-token') void refetchDefiUsdtAllowed();
+      if (lastAction === 'dao-vault-proposal') { void refetchDaoVaultAave(); void refetchDaoVaultMinHf(); }
     }
-  }, [isConfirmed, lastAction, refetchCount, refetchWlfAllowance, refetchDaoTokenSale]);
+  }, [isConfirmed, lastAction, refetchCount, refetchWlfAllowance, refetchDaoTokenSale, refetchDefiPaused, refetchDefiBorrowing, refetchDefiUsdtAllowed, refetchDaoVaultAave, refetchDaoVaultMinHf]);
 
   // Next sale number comes purely from chain: last completed sale + 1
   const nextSaleNumber = saleIdCounter !== undefined ? Number(saleIdCounter) + 1 : undefined;
@@ -255,9 +324,23 @@ export default function DAO() {
   const [chWlfBps, setChWlfBps] = useState('50');
   const [chNonWlfBps, setChNonWlfBps] = useState('500');
 
+  // Quick: DAO vault DeFi proposals
+  const [daoVaultSupplyAmt, setDaoVaultSupplyAmt] = useState('');
+  const [daoVaultWithdrawAmt, setDaoVaultWithdrawAmt] = useState('');
+  const [daoVaultBorrowAmt, setDaoVaultBorrowAmt] = useState('');
+  const [daoVaultMinHfInput, setDaoVaultMinHfInput] = useState('1.5');
+
   // Quick: update power roles
   const [powerRolesInput, setPowerRolesInput] = useState('');
   const [powerRolesCompanyId, setPowerRolesCompanyId] = useState('');
+
+  // Fund treasury
+  const [fundToken, setFundToken] = useState<'usdt' | 'usdc' | 'wlf' | 'eth' | 'wbtc'>('usdt');
+  const [fundAmount, setFundAmount] = useState('');
+
+  // CompanyDeFi admin
+  const [defiAllowTokenInput, setDefiAllowTokenInput] = useState('');
+  const isDefiAdmin = !!(defiAdmin && address && defiAdmin.toLowerCase() === address.toLowerCase());
 
   // DAO team live tick (for pending pay display)
   const [daoTeamTick, setDaoTeamTick] = useState(0);
@@ -326,6 +409,27 @@ export default function DAO() {
     .filter((c): c is CompanyInfo => c !== null);
 
   // ── Handlers ───────────────────────────────────────────────────────────────
+
+  const handleFundTreasury = () => {
+    if (!treasuryAddress || !fundAmount) return;
+    if (fundToken === 'eth') {
+      sendTransaction({ to: treasuryAddress, value: parseEther(fundAmount) });
+      return;
+    }
+    const tokenAddr = fundToken === 'usdt' ? usdtAddress
+      : fundToken === 'usdc' ? usdcAddress
+      : fundToken === 'wlf' ? wlfAddress
+      : wbtcAddress;
+    if (!tokenAddr) return;
+    const decimals = fundToken === 'wlf' ? 18 : fundToken === 'wbtc' ? 8 : 6;
+    setLastAction('fund-treasury');
+    writeContract({
+      address: tokenAddr,
+      abi: erc20ABI,
+      functionName: 'transfer',
+      args: [treasuryAddress, parseUnits(fundAmount, decimals)],
+    });
+  };
 
   const handleApproveWLF = () => {
     if (!wlfAddress || !daoAddress) return;
@@ -609,6 +713,85 @@ export default function DAO() {
     setIsModalOpen(false);
   };
 
+  const handleDaoVaultSupplyProposal = () => {
+    if (!daoAddress || !daoVaultAddress || !daoVaultSupplyAmt) return;
+    const tokenAddr = aaveUsdtAddress ?? usdtAddress;
+    if (!tokenAddr) return;
+    const decimals = 6;
+    const amountWei = parseUnits(daoVaultSupplyAmt, decimals);
+    if (amountWei <= 0n) return;
+    setLastAction('dao-vault-proposal');
+    writeContract({
+      address: daoAddress,
+      abi: daoABI,
+      functionName: 'createProposal',
+      args: [
+        [daoVaultAddress],
+        ['supplyToAave(address,uint256)'],
+        [encodeAbiParameters(parseAbiParameters('address, uint256'), [tokenAddr, amountWei])],
+      ],
+    });
+    setIsModalOpen(false);
+  };
+
+  const handleDaoVaultWithdrawProposal = () => {
+    if (!daoAddress || !daoVaultAddress || !daoVaultWithdrawAmt) return;
+    const tokenAddr = aaveUsdtAddress ?? usdtAddress;
+    if (!tokenAddr) return;
+    const isMax = daoVaultWithdrawAmt.toLowerCase() === 'max';
+    const amountWei = isMax ? (2n ** 256n - 1n) : parseUnits(daoVaultWithdrawAmt, 6);
+    setLastAction('dao-vault-proposal');
+    writeContract({
+      address: daoAddress,
+      abi: daoABI,
+      functionName: 'createProposal',
+      args: [
+        [daoVaultAddress],
+        ['withdrawFromAave(address,uint256)'],
+        [encodeAbiParameters(parseAbiParameters('address, uint256'), [tokenAddr, amountWei])],
+      ],
+    });
+    setIsModalOpen(false);
+  };
+
+  const handleDaoVaultBorrowProposal = () => {
+    if (!daoAddress || !daoVaultAddress || !daoVaultBorrowAmt) return;
+    const tokenAddr = aaveUsdtAddress ?? usdtAddress;
+    if (!tokenAddr) return;
+    const amountWei = parseUnits(daoVaultBorrowAmt, 6);
+    if (amountWei <= 0n) return;
+    setLastAction('dao-vault-proposal');
+    writeContract({
+      address: daoAddress,
+      abi: daoABI,
+      functionName: 'createProposal',
+      args: [
+        [daoVaultAddress],
+        ['borrowFromAave(address,uint256)'],
+        [encodeAbiParameters(parseAbiParameters('address, uint256'), [tokenAddr, amountWei])],
+      ],
+    });
+    setIsModalOpen(false);
+  };
+
+  const handleDaoVaultSetMinHfProposal = () => {
+    if (!daoAddress || !daoVaultAddress || !daoVaultMinHfInput) return;
+    const hfValue = parseUnits(daoVaultMinHfInput, 18);
+    if (hfValue <= 0n) return;
+    setLastAction('dao-vault-proposal');
+    writeContract({
+      address: daoAddress,
+      abi: daoABI,
+      functionName: 'createProposal',
+      args: [
+        [daoVaultAddress],
+        ['setMinHealthFactor(uint256)'],
+        [encodeAbiParameters(parseAbiParameters('uint256'), [hfValue])],
+      ],
+    });
+    setIsModalOpen(false);
+  };
+
   const handleUpdatePowerRolesProposal = () => {
     if (!daoAddress || !companiesHouseAddress || !powerRolesCompanyId || !daoCompany) return;
     const compId = BigInt(parseInt(powerRolesCompanyId));
@@ -783,6 +966,16 @@ export default function DAO() {
                   : '…'}
               </span>
             </div>
+            {usdcAddress && (
+              <div className="flex justify-between items-baseline">
+                <span className={`text-sm ${theme.textMuted}`}>USDC</span>
+                <span className="text-sm font-mono text-white">
+                  {treasuryUsdcBalance !== undefined
+                    ? Number(formatUnits(treasuryUsdcBalance, 6)).toLocaleString(undefined, { maximumFractionDigits: 2 })
+                    : '…'}
+                </span>
+              </div>
+            )}
             <div className="flex justify-between items-baseline opacity-35">
               <span className="text-sm">ETH</span>
               <span className="text-xs italic">coming soon</span>
@@ -792,6 +985,17 @@ export default function DAO() {
               <span className="text-xs italic">coming soon</span>
             </div>
           </div>
+          {daoCompanyIdOnChain !== undefined && (
+            <div className="pt-2 mt-1 border-t border-white/10">
+              <Link
+                to={`/defi/${daoCompanyIdOnChain.toString()}`}
+                className="text-xs text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-1"
+              >
+                <span className="text-blue-400/60">◈</span>
+                DeFi vault →
+              </Link>
+            </div>
+          )}
         </div>
 
         {/* Governance Details */}
@@ -832,6 +1036,95 @@ export default function DAO() {
         </div>
 
       </div>
+
+      {/* ── Fund Treasury ── */}
+      <div className={`${theme.card} p-4 mt-4`}>
+        <p className="text-xs font-semibold uppercase tracking-wider text-white/40 mb-3">Fund Treasury</p>
+        <div className="flex gap-2 items-center">
+          <select
+            value={fundToken}
+            onChange={e => setFundToken(e.target.value as typeof fundToken)}
+            className="bg-[#1e2433] border border-white/20 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-white/40 cursor-pointer transition-colors"
+          >
+            <option value="usdt" className="bg-[#1e2433] text-white">USDT</option>
+            {usdcAddress && <option value="usdc" className="bg-[#1e2433] text-white">USDC</option>}
+            <option value="wlf" className="bg-[#1e2433] text-white">WLF</option>
+            <option value="eth" className="bg-[#1e2433] text-white">ETH</option>
+            {wbtcAddress && <option value="wbtc" className="bg-[#1e2433] text-white">WBTC</option>}
+          </select>
+          <div className="flex-1">
+            <Input
+              value={fundAmount}
+              onChange={e => setFundAmount(e.target.value)}
+              placeholder="Amount"
+            />
+          </div>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={handleFundTreasury}
+            loading={isPending || isConfirming || isSendEthPending}
+            disabled={!fundAmount || isPending || isConfirming || isSendEthPending}
+          >
+            Send
+          </Button>
+        </div>
+      </div>
+
+      {/* ── DAO DeFi Vault ── */}
+      {daoVaultAddress && (
+        <div className={`${theme.card} p-4 mt-4`}>
+          <div className="flex items-baseline justify-between mb-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-white/40">DAO DeFi Vault</p>
+            <Link
+              to={`/defi/${daoCompanyIdOnChain?.toString() ?? ''}`}
+              className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+            >
+              manage →
+            </Link>
+          </div>
+          <div className="space-y-1.5">
+            {(() => {
+              const [collateral, debt, available, , , hf] = (daoVaultAaveData as [bigint,bigint,bigint,bigint,bigint,bigint] | undefined) ?? [undefined,undefined,undefined,undefined,undefined,undefined];
+              const hfNum = hf !== undefined ? (hf === (2n**256n - 1n) ? Infinity : Number(formatUnits(hf, 18))) : undefined;
+              const hfColor = hfNum === undefined ? 'text-white/40' : hfNum >= 2 ? 'text-green-400' : hfNum >= 1.2 ? 'text-yellow-400' : 'text-red-400';
+              const minHfNum = daoVaultMinHf !== undefined ? Number(formatUnits(daoVaultMinHf as bigint, 18)) : 1.5;
+              return (
+                <>
+                  <div className="flex justify-between items-baseline">
+                    <span className={`text-sm ${theme.textMuted}`}>Collateral</span>
+                    <span className="text-sm font-mono text-white">
+                      {collateral !== undefined ? `$${(Number(collateral) / 1e8).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '…'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-baseline">
+                    <span className={`text-sm ${theme.textMuted}`}>Debt</span>
+                    <span className="text-sm font-mono text-white">
+                      {debt !== undefined ? `$${(Number(debt) / 1e8).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '…'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-baseline">
+                    <span className={`text-sm ${theme.textMuted}`}>Available</span>
+                    <span className="text-sm font-mono text-white">
+                      {available !== undefined ? `$${(Number(available) / 1e8).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '…'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-baseline">
+                    <span className={`text-sm ${theme.textMuted}`}>Health factor</span>
+                    <span className={`text-sm font-mono font-semibold ${hfColor}`}>
+                      {hfNum === undefined ? '…' : hfNum === Infinity ? '∞' : hfNum.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-baseline">
+                    <span className={`text-sm ${theme.textMuted}`}>Min HF (governance)</span>
+                    <span className="text-sm font-mono text-white/60">{minHfNum.toFixed(2)}</span>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      )}
 
       {/* ── DAO Team ── */}
       <div className={`${theme.card} p-4 mt-4`}>
@@ -1021,6 +1314,146 @@ export default function DAO() {
               Unpause CompaniesHouse
             </Button>
           </div>
+        </div>
+      )}
+
+      {/* ── CompanyDeFi Admin Controls ── */}
+      {companyDeFiAddress && aaveUsdtAddress && (isGuardian || isDefiAdmin) && (
+        <div className={`${theme.card} p-4 mt-4 border border-blue-900/30`}>
+          <p className="text-xs font-semibold uppercase tracking-wider text-blue-400/70 mb-1">
+            CompanyDeFi Admin
+          </p>
+          <p className={`text-xs mb-3 ${theme.textMuted}`}>
+            Manage DeFi operations for company treasuries (Aave yield). Admin: {defiAdmin ?? '…'}
+          </p>
+
+          {/* Pause / Unpause */}
+          <div className="mb-3">
+            <p className={`text-xs mb-1.5 ${theme.textMuted}`}>
+              Status: <span className={defiPaused ? 'text-red-400' : 'text-green-400'}>{defiPaused ? 'Paused' : 'Active'}</span>
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => {
+                  if (!companyDeFiAddress) return;
+                  setLastAction('defi-pause');
+                  writeContract({ address: companyDeFiAddress, abi: companyDeFiABI, functionName: 'pause', args: [] });
+                }}
+                loading={lastAction === 'defi-pause' && (isPending || isConfirming)}
+                disabled={isPending || isConfirming || !!defiPaused}
+              >
+                Pause DeFi
+              </Button>
+              <Button
+                variant="info"
+                size="sm"
+                onClick={() => {
+                  if (!companyDeFiAddress) return;
+                  setLastAction('defi-unpause');
+                  writeContract({ address: companyDeFiAddress, abi: companyDeFiABI, functionName: 'unpause', args: [] });
+                }}
+                loading={lastAction === 'defi-unpause' && (isPending || isConfirming)}
+                disabled={isPending || isConfirming || !defiPaused}
+              >
+                Unpause DeFi
+              </Button>
+            </div>
+          </div>
+
+          {/* Borrowing toggle */}
+          <div className="mb-3">
+            <p className={`text-xs mb-1.5 ${theme.textMuted}`}>
+              Borrowing: <span className={defiBorrowingEnabled ? 'text-green-400' : 'text-white/40'}>{defiBorrowingEnabled ? 'Enabled' : 'Disabled'}</span>
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="info"
+                size="sm"
+                onClick={() => {
+                  if (!companyDeFiAddress) return;
+                  setLastAction('defi-borrow-enable');
+                  writeContract({ address: companyDeFiAddress, abi: companyDeFiABI, functionName: 'setBorrowingEnabled', args: [true] });
+                }}
+                loading={lastAction === 'defi-borrow-enable' && (isPending || isConfirming)}
+                disabled={isPending || isConfirming || !!defiBorrowingEnabled}
+              >
+                Enable Borrowing
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => {
+                  if (!companyDeFiAddress) return;
+                  setLastAction('defi-borrow-disable');
+                  writeContract({ address: companyDeFiAddress, abi: companyDeFiABI, functionName: 'setBorrowingEnabled', args: [false] });
+                }}
+                loading={lastAction === 'defi-borrow-disable' && (isPending || isConfirming)}
+                disabled={isPending || isConfirming || !defiBorrowingEnabled}
+              >
+                Disable Borrowing
+              </Button>
+            </div>
+          </div>
+
+          {/* Token whitelist */}
+          <div>
+            <p className={`text-xs mb-1.5 ${theme.textMuted}`}>
+              Token Whitelist — USDT: <span className={defiUsdtAllowed ? 'text-green-400' : 'text-red-400'}>{defiUsdtAllowed ? '✓ Allowed' : '✗ Not allowed'}</span>
+            </p>
+            <div className="flex gap-2 mb-1.5">
+              {!defiUsdtAllowed && aaveUsdtAddress && (
+                <Button
+                  variant="info"
+                  size="sm"
+                  onClick={() => {
+                    setLastAction('defi-allow-token');
+                    writeContract({ address: companyDeFiAddress, abi: companyDeFiABI, functionName: 'setAllowedToken', args: [aaveUsdtAddress, true] });
+                  }}
+                  loading={lastAction === 'defi-allow-token' && (isPending || isConfirming)}
+                  disabled={isPending || isConfirming}
+                >
+                  Whitelist USDT
+                </Button>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="Token address 0x…"
+                value={defiAllowTokenInput}
+                onChange={e => setDefiAllowTokenInput(e.target.value)}
+                className={`${theme.input} flex-1 text-xs`}
+              />
+              <Button
+                variant="info"
+                size="sm"
+                onClick={() => {
+                  if (!defiAllowTokenInput.startsWith('0x')) return;
+                  setLastAction('defi-allow-token');
+                  writeContract({ address: companyDeFiAddress, abi: companyDeFiABI, functionName: 'setAllowedToken', args: [defiAllowTokenInput as `0x${string}`, true] });
+                }}
+                disabled={isPending || isConfirming || !defiAllowTokenInput.startsWith('0x')}
+              >
+                Allow
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => {
+                  if (!defiAllowTokenInput.startsWith('0x')) return;
+                  setLastAction('defi-disallow-token');
+                  writeContract({ address: companyDeFiAddress, abi: companyDeFiABI, functionName: 'setAllowedToken', args: [defiAllowTokenInput as `0x${string}`, false] });
+                }}
+                disabled={isPending || isConfirming || !defiAllowTokenInput.startsWith('0x')}
+              >
+                Disallow
+              </Button>
+            </div>
+          </div>
+
+          <TxStatus isPending={isPending} isConfirming={isConfirming} isConfirmed={isConfirmed} txHash={txHash} label={lastAction} />
         </div>
       )}
 
@@ -1629,6 +2062,109 @@ export default function DAO() {
                     Submit Set Fees Proposal
                   </Button>
                 </div>
+
+                {/* ── DAO DeFi: Supply to Aave ── */}
+                {daoVaultAddress && (
+                  <div className={`${theme.cardNested} p-4 space-y-3`}>
+                    <div>
+                      <p className="font-semibold text-sm">Supply to Aave (DAO Vault)</p>
+                      <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
+                        Propose supplying USDT from the DAO company vault into Aave v3 to earn yield.
+                        Vault must hold liquid USDT before execution.
+                      </p>
+                    </div>
+                    <Input label="Amount (USDT)" type="number" min="0" value={daoVaultSupplyAmt} onChange={e => setDaoVaultSupplyAmt(e.target.value)} placeholder="1000" />
+                    <p className={`text-xs font-mono ${theme.textMuted}`}>
+                      vault.supplyToAave(USDT, {daoVaultSupplyAmt || '?'})
+                    </p>
+                    <Button
+                      variant="primary" size="sm"
+                      onClick={handleDaoVaultSupplyProposal}
+                      disabled={!daoVaultSupplyAmt || parseFloat(daoVaultSupplyAmt) <= 0 || isPending || isConfirming}
+                      loading={isPending || isConfirming}
+                    >
+                      Submit Supply Proposal
+                    </Button>
+                  </div>
+                )}
+
+                {/* ── DAO DeFi: Withdraw from Aave ── */}
+                {daoVaultAddress && (
+                  <div className={`${theme.cardNested} p-4 space-y-3`}>
+                    <div>
+                      <p className="font-semibold text-sm">Withdraw from Aave (DAO Vault)</p>
+                      <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
+                        Propose redeeming supplied USDT (+ accrued yield) back into the DAO vault.
+                        Enter "max" to withdraw full position.
+                      </p>
+                    </div>
+                    <Input label="Amount (USDT, or 'max')" type="text" value={daoVaultWithdrawAmt} onChange={e => setDaoVaultWithdrawAmt(e.target.value)} placeholder="1000 or max" />
+                    <p className={`text-xs font-mono ${theme.textMuted}`}>
+                      vault.withdrawFromAave(USDT, {daoVaultWithdrawAmt || '?'})
+                    </p>
+                    <Button
+                      variant="primary" size="sm"
+                      onClick={handleDaoVaultWithdrawProposal}
+                      disabled={!daoVaultWithdrawAmt || isPending || isConfirming}
+                      loading={isPending || isConfirming}
+                    >
+                      Submit Withdraw Proposal
+                    </Button>
+                  </div>
+                )}
+
+                {/* ── DAO DeFi: Borrow from Aave ── */}
+                {daoVaultAddress && (
+                  <div className={`${theme.cardNested} p-4 space-y-3`}>
+                    <div>
+                      <p className="font-semibold text-sm">Borrow from Aave (DAO Vault)</p>
+                      <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
+                        Propose borrowing USDT from Aave against the vault's collateral.
+                        Requires admin to enable borrowing first (setBorrowingEnabled).
+                      </p>
+                    </div>
+                    <Input label="Amount (USDT)" type="number" min="0" value={daoVaultBorrowAmt} onChange={e => setDaoVaultBorrowAmt(e.target.value)} placeholder="500" />
+                    <p className={`text-xs font-mono ${theme.textMuted}`}>
+                      vault.borrowFromAave(USDT, {daoVaultBorrowAmt || '?'})
+                    </p>
+                    <p className="text-xs text-yellow-400/80">
+                      ⚠ Borrowing must be enabled on the vault by admin before this proposal can execute.
+                    </p>
+                    <Button
+                      variant="info" size="sm"
+                      onClick={handleDaoVaultBorrowProposal}
+                      disabled={!daoVaultBorrowAmt || parseFloat(daoVaultBorrowAmt) <= 0 || isPending || isConfirming}
+                      loading={isPending || isConfirming}
+                    >
+                      Submit Borrow Proposal
+                    </Button>
+                  </div>
+                )}
+
+                {/* ── DAO DeFi: Set Min Health Factor ── */}
+                {daoVaultAddress && (
+                  <div className={`${theme.cardNested} p-4 space-y-3`}>
+                    <div>
+                      <p className="font-semibold text-sm">Set Min Health Factor (DAO Vault)</p>
+                      <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
+                        Propose updating the governance-defined minimum health factor for the DAO vault.
+                        Current on-chain value: {daoVaultMinHf !== undefined ? Number(formatUnits(daoVaultMinHf as bigint, 18)).toFixed(2) : '…'}
+                      </p>
+                    </div>
+                    <Input label="Min health factor (e.g. 1.5)" type="number" min="1" value={daoVaultMinHfInput} onChange={e => setDaoVaultMinHfInput(e.target.value)} placeholder="1.5" />
+                    <p className={`text-xs font-mono ${theme.textMuted}`}>
+                      vault.setMinHealthFactor({daoVaultMinHfInput || '?'}e18 = {daoVaultMinHfInput ? parseUnits(daoVaultMinHfInput, 18).toString() : '?'})
+                    </p>
+                    <Button
+                      variant="info" size="sm"
+                      onClick={handleDaoVaultSetMinHfProposal}
+                      disabled={!daoVaultMinHfInput || parseFloat(daoVaultMinHfInput) <= 0 || isPending || isConfirming}
+                      loading={isPending || isConfirming}
+                    >
+                      Submit Min HF Proposal
+                    </Button>
+                  </div>
+                )}
 
                 <Button variant="secondary" onClick={() => setIsModalOpen(false)}>Cancel</Button>
               </div>

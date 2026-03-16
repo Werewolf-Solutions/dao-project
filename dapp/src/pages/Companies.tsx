@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { useAccount, useBalance, useChainId, useReadContract, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi';
 import { formatEther, parseUnits } from 'viem';
 import { theme } from '@/contexts/ThemeContext';
@@ -478,7 +479,8 @@ function EmployeeCard({
   async function handlePay() {
     setPayError(null);
     try {
-      const result = await publicClient!.simulateContract({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const result = await (publicClient!.simulateContract as any)({
         address: companiesHouseAddress,
         abi: companiesHouseABI,
         functionName: 'payEmployee',
@@ -1109,6 +1111,7 @@ function CompanyCard({
   address,
   companiesHouseAddress,
   usdtAddress,
+  defiUsdtAddress,
   wlfAddress,
   wlfPrice,
   onRefetch,
@@ -1117,6 +1120,7 @@ function CompanyCard({
   address: `0x${string}`;
   companiesHouseAddress: `0x${string}`;
   usdtAddress: `0x${string}` | undefined;
+  defiUsdtAddress: `0x${string}` | undefined;
   wlfAddress: `0x${string}` | undefined;
   wlfPrice: bigint;
   onRefetch: () => void;
@@ -1281,7 +1285,8 @@ function CompanyCard({
   async function handlePayAll() {
     setPayAllError(null);
     try {
-      const result = await publicClientCompany!.simulateContract({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const result = await (publicClientCompany!.simulateContract as any)({
         address: companiesHouseAddress,
         abi: companiesHouseABI,
         functionName: 'payEmployees',
@@ -1318,7 +1323,23 @@ function CompanyCard({
               <h2 className="text-xl font-bold text-white">{company.name}</h2>
               <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-white/5 text-white/40 border border-white/10">#{companyId.toString()}</span>
             </div>
-            <p className={`text-sm ${theme.textMuted}`}>{company.industry} · {company.domain}</p>
+            <p className={`text-sm ${theme.textMuted}`}>
+              {company.industry}
+              {company.domain && (
+                <>
+                  {' · '}
+                  <a
+                    href={`https://${company.domain}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hover:text-white/90 underline underline-offset-2 transition-colors"
+                    onClick={e => e.stopPropagation()}
+                  >
+                    {company.domain}
+                  </a>
+                </>
+              )}
+            </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <span className={`px-2 py-0.5 rounded text-xs font-medium ${company.active ? 'bg-green-900/40 text-green-300' : 'bg-red-900/30 text-red-400'}`}>
@@ -1437,6 +1458,19 @@ function CompanyCard({
           </div>
         </div>
 
+        {/* DeFi vault link */}
+        {defiUsdtAddress && (
+          <div className="mt-2 flex justify-end">
+            <Link
+              to={`/defi/${companyId.toString()}`}
+              className="text-xs text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-1"
+            >
+              <span className="text-blue-400/60">◈</span>
+              DeFi vault →
+            </Link>
+          </div>
+        )}
+
         {/* Company details */}
         <div className={`mt-3 px-3 py-2.5 rounded-lg ${theme.cardNested} text-xs space-y-1.5`}>
           <div className="flex items-center justify-between gap-2">
@@ -1448,7 +1482,14 @@ function CompanyCard({
           {company.domain && (
             <div className="flex items-center justify-between gap-2">
               <span className={theme.textMuted}>Domain</span>
-              <span className="text-white/70">{company.domain}</span>
+              <a
+                href={`https://${company.domain}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-white/70 hover:text-white transition-colors underline underline-offset-2"
+              >
+                {company.domain}
+              </a>
             </div>
           )}
           {company.roles.length > 0 && (
@@ -1651,6 +1692,7 @@ function CompanyCard({
           </div>
         )}
       </div>
+
     </div>
   );
 }
@@ -1833,6 +1875,8 @@ export default function Companies() {
   const companiesHouseAddress = getAddress(chainId, 'CompaniesHouse');
   const wlfAddress = getAddress(chainId, 'WerewolfToken');
   const usdtAddress = getAddress(chainId, 'USDT');
+  // Only show DeFi panel on chains with a real Aave pool (Base Sepolia, Mainnet)
+  const defiUsdtAddress = getAddress(chainId, 'AaveUSDT') ?? getAddress(chainId, 'AaveToken');
 
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [employeeCompanyIds, setEmployeeCompanyIds] = useState<bigint[]>([]);
@@ -1962,6 +2006,7 @@ export default function Companies() {
           address={address!}
           companiesHouseAddress={companiesHouseAddress}
           usdtAddress={usdtAddress}
+          defiUsdtAddress={defiUsdtAddress}
           wlfAddress={wlfAddress}
           wlfPrice={wlfPrice}
           onRefetch={refetchIds}
@@ -1983,6 +2028,7 @@ export default function Companies() {
               address={address!}
               companiesHouseAddress={companiesHouseAddress}
               usdtAddress={usdtAddress}
+              defiUsdtAddress={defiUsdtAddress}
               wlfAddress={wlfAddress}
               wlfPrice={wlfPrice}
               onRefetch={refetchIds}

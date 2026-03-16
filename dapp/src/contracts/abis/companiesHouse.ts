@@ -216,6 +216,25 @@ export const companiesHouseABI = [
   },
   {
     "type": "function",
+    "name": "setUsdcAddress",
+    "inputs": [
+      { "name": "_usdc", "type": "address", "internalType": "address" }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setCompanyReserveMonths",
+    "inputs": [
+      { "name": "_companyId", "type": "uint96",   "internalType": "uint96"  },
+      { "name": "_months",    "type": "uint256",  "internalType": "uint256" }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setAdmin",
     "inputs": [
       { "name": "_admin", "type": "address", "internalType": "address" }
@@ -329,6 +348,37 @@ export const companiesHouseABI = [
     "name": "getRequiredReserveUSDT",
     "inputs": [
       { "name": "_companyId", "type": "uint96", "internalType": "uint96" }
+    ],
+    "outputs": [
+      { "name": "", "type": "uint256", "internalType": "uint256" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getCompanyStableBalance",
+    "inputs": [
+      { "name": "_companyId", "type": "uint96", "internalType": "uint96" }
+    ],
+    "outputs": [
+      { "name": "", "type": "uint256", "internalType": "uint256" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "usdcAddress",
+    "inputs": [],
+    "outputs": [
+      { "name": "", "type": "address", "internalType": "address" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "companyReserveMonths",
+    "inputs": [
+      { "name": "companyId", "type": "uint96", "internalType": "uint96" }
     ],
     "outputs": [
       { "name": "", "type": "uint256", "internalType": "uint256" }
@@ -540,6 +590,57 @@ export const companiesHouseABI = [
       { "name": "companyId",  "type": "uint96",  "indexed": true  },
       { "name": "token",      "type": "address", "indexed": true  },
       { "name": "feeAmount",  "type": "uint256", "indexed": false }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CompanyReserveMonthsSet",
+    "inputs": [
+      { "name": "companyId", "type": "uint96",  "indexed": true  },
+      { "name": "months",    "type": "uint256", "indexed": false }
+    ],
+    "anonymous": false
+  },
+  // ── CompanyVault integration ───────────────────────────────────────────────
+  {
+    "type": "function",
+    "name": "vaultImplementation",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "address" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "companyVault",
+    "inputs": [{ "name": "companyId", "type": "uint96" }],
+    "outputs": [{ "name": "", "type": "address" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "setVaultImplementation",
+    "inputs": [{ "name": "_impl", "type": "address" }],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "createVault",
+    "inputs": [
+      { "name": "_companyId", "type": "uint96" },
+      { "name": "_aavePool", "type": "address" },
+      { "name": "_allowedToken", "type": "address" }
+    ],
+    "outputs": [{ "name": "vault", "type": "address" }],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "VaultCreated",
+    "inputs": [
+      { "name": "companyId", "type": "uint96",  "indexed": true },
+      { "name": "vault",     "type": "address", "indexed": true }
     ],
     "anonymous": false
   }

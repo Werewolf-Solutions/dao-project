@@ -10,7 +10,7 @@ optimizer = true
 optimizer_runs = 200
 
 # As a last resort set this to true
-via_ir = false
+via_ir = true
 
 # fix the compiler version to standardize testing
 solc_version = "0.8.28"

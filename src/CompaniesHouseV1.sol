@@ -4,10 +4,11 @@ pragma solidity ^0.8.28;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
-import "./Treasury.sol";
-import "./WerewolfTokenV1.sol";
-import "./DAO.sol";
-import "./TokenSale.sol";
+import "@openzeppelin/contracts/proxy/Clones.sol";
+import "./interfaces/ITreasury.sol";
+import "./interfaces/IWerewolfTokenV1.sol";
+import "./interfaces/IDAO.sol";
+import "./interfaces/ITokenSale.sol";
 
 interface IV3SwapRouter {
     struct ExactInputSingleParams {
@@ -22,12 +23,6 @@ interface IV3SwapRouter {
     }
     function exactInputSingle(ExactInputSingleParams calldata params) external returns (uint256 amountOut);
 }
-
-//for future use
-import "./interfaces/ITreasury.sol";
-import "./interfaces/IWerewolfTokenV1.sol";
-import "./interfaces/IDAO.sol";
-import "./interfaces/ITokenSale.sol";
 
 //When adding anything please follow the contract layout
 /* Contract layout:
@@ -161,10 +156,10 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     /// @notice Per-company ERC20 token balances held inside this contract
     mapping(uint96 companyId => mapping(address token => uint256)) public companyTokenBalances;
 
-    WerewolfTokenV1 private werewolfToken;
-    TokenSale public tokenSale;
-    DAO public dao;
-    Treasury public treasury;
+    IWerewolfTokenV1 private werewolfToken;
+    ITokenSale public tokenSale;
+    IDAO public dao;
+    ITreasury public treasury;
     address public usdtAddress;
     bytes32 public constant STAFF_ROLE = keccak256("CEO");
     uint96 public currentCompanyIndex;
@@ -185,7 +180,22 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     /// @notice Company ID of the canonical WLF DAO company (set by admin after creation)
     uint96 public daoCompanyId;
 
-    uint256[30] private __gap;
+    /// @notice CompanyDeFiV1 proxy address — authorized to pull/credit company funds for DeFi ops
+    address public companyDefi;
+
+    /// @notice CompanyVault logic contract — cloned once per company to create isolated DeFi vaults
+    address public vaultImplementation;
+
+    /// @notice Maps companyId → address of that company's CompanyVault clone (address(0) if not created)
+    mapping(uint96 companyId => address) public companyVault;
+
+    /// @notice Optional USDC address — counted alongside USDT in reserve balance checks when set.
+    address public usdcAddress;
+
+    /// @notice Per-company minimum reserve months override. 0 = fall back to global minReserveMonths.
+    mapping(uint96 => uint256) public companyReserveMonths;
+
+    uint256[25] private __gap;
 
     ///////////////////////////////////////
     //           Events                  //
@@ -203,10 +213,12 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     /// @param token ERC20 token address deposited
     /// @param amount Amount deposited (token decimals)
     event CompanyFunded(uint96 indexed companyId, address indexed token, uint256 amount);
+    event VaultCreated(uint96 indexed companyId, address indexed vault);
     /// @param companyId  Company that paid the fee
     /// @param token      Token the fee was taken in
     /// @param feeAmount  Fee sent to treasury
     event ProtocolFeePaid(uint96 indexed companyId, address indexed token, uint256 feeAmount);
+    event CompanyReserveMonthsSet(uint96 indexed companyId, uint256 months);
 
     ///////////////////////////////////////
     //           Modifiers               //
@@ -214,6 +226,11 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
 
     modifier onlyAdmin() {
         if (msg.sender != admin) revert NotAdmin();
+        _;
+    }
+
+    modifier onlyCompanyDefi() {
+        require(msg.sender == companyDefi, "CompaniesHouse: caller is not companyDefi");
         _;
     }
 
@@ -269,11 +286,11 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         uint256 _minReserveMonths
     ) public initializer {
         __Pausable_init();
-        werewolfToken = WerewolfTokenV1(_token);
-        dao = DAO(_daoAddress);
-        tokenSale = TokenSale(payable(tokenSaleAddress));
+        werewolfToken = IWerewolfTokenV1(_token);
+        dao = IDAO(_daoAddress);
+        tokenSale = ITokenSale(tokenSaleAddress);
         treasuryAddress = _treasuryAddress;
-        treasury = Treasury(_treasuryAddress);
+        treasury = ITreasury(_treasuryAddress);
         usdtAddress = _usdtAddress;
         admin = _admin;
         swapRouter = _swapRouter;
@@ -329,6 +346,26 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     }
 
     /**
+     * @notice Set the USDC token address to include in reserve balance calculations.
+     * @dev onlyAdmin. Pass address(0) to disable USDC reserve counting.
+     */
+    function setUsdcAddress(address _usdc) external onlyAdmin {
+        usdcAddress = _usdc;
+    }
+
+    /**
+     * @notice Override the minimum reserve months for a specific company.
+     * @dev Callable by admin (Timelock) or the company owner. 0 = revert to global minReserveMonths.
+     * @param _companyId Company to configure
+     * @param _months    Required months of payroll to keep in reserve (0 = use global)
+     */
+    function setCompanyReserveMonths(uint96 _companyId, uint256 _months) external {
+        if (msg.sender != admin && companyBrief[_companyId].owner != msg.sender) revert NotAuthorized();
+        companyReserveMonths[_companyId] = _months;
+        emit CompanyReserveMonthsSet(_companyId, _months);
+    }
+
+    /**
      * @notice Transfers the admin role to a new address.
      * @dev onlyAdmin. Used to hand off control (e.g., founder → Timelock → new Timelock).
      */
@@ -342,6 +379,94 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
      */
     function setSwapRouter(address _swapRouter) external onlyAdmin {
         swapRouter = _swapRouter;
+    }
+
+    /**
+     * @notice Sets the CompanyDeFiV1 contract address.
+     * @dev onlyAdmin. Must be called after deploying CompanyDeFiV1 to enable DeFi operations.
+     *      CompanyDeFiV1 is then authorized to call withdrawForDeFi and creditFromDeFi.
+     */
+    function setCompanyDefi(address _companyDefi) external onlyAdmin {
+        companyDefi = _companyDefi;
+    }
+
+    /**
+     * @notice Sets the CompanyVault logic contract used as the EIP-1167 clone target.
+     * @dev onlyAdmin. Must be called before createVault() will work.
+     */
+    function setVaultImplementation(address _impl) external onlyAdmin {
+        vaultImplementation = _impl;
+    }
+
+    /**
+     * @notice Deploys a CompanyVault clone for `_companyId` and initializes it.
+     * @dev Uses EIP-1167 minimal proxy for cheap per-company deployment.
+     *      Caller must be the company owner or operator.
+     *      Vault is initialized with the caller as admin, Aave pool from the last
+     *      stored aavePool reference, and `allowedToken` if provided.
+     *      Emits VaultCreated.
+     * @param _companyId    Company to create the vault for
+     * @param _aavePool     Aave v3 Pool proxy address (address(0) if not applicable)
+     * @param _allowedToken Initial whitelisted token for Aave ops (address(0) to skip)
+     */
+    function createVault(
+        uint96 _companyId,
+        address _aavePool,
+        address _allowedToken
+    ) external returns (address vault) {
+        require(vaultImplementation != address(0), "CompaniesHouse: vaultImplementation not set");
+        if (companyBrief[_companyId].owner == address(0)) revert CompanyNotFound();
+        if (!_isAuthorized(msg.sender, _companyId)) revert NotAuthorized();
+        require(companyVault[_companyId] == address(0), "CompaniesHouse: vault already exists");
+
+        vault = Clones.clone(vaultImplementation);
+
+        // Initialize the clone: companyId, companiesHouse, aavePool, admin, allowedToken
+        (bool ok, ) = vault.call(
+            abi.encodeWithSignature(
+                "initialize(uint96,address,address,address,address)",
+                _companyId,
+                address(this),
+                _aavePool,
+                admin,
+                _allowedToken
+            )
+        );
+        require(ok, "CompaniesHouse: vault init failed");
+
+        companyVault[_companyId] = vault;
+        emit VaultCreated(_companyId, vault);
+    }
+
+    /**
+     * @notice Transfers `amount` of `token` from this contract to CompanyDeFiV1 for Aave supply.
+     * @dev onlyCompanyDefi. Deducts from the company's internal balance and transfers the tokens.
+     *      Called by CompanyDeFiV1.supplyToAave and CompanyDeFiV1.repayToAave.
+     * @param companyId The company whose treasury balance is reduced
+     * @param token     ERC20 token to transfer
+     * @param amount    Amount to transfer (token decimals)
+     */
+    function withdrawForDeFi(uint96 companyId, address token, uint256 amount) external onlyCompanyDefi {
+        if (companyBrief[companyId].owner == address(0)) revert CompanyNotFound();
+        if (companyTokenBalances[companyId][token] < amount) revert InsufficientWLF();
+        companyTokenBalances[companyId][token] -= amount;
+        IERC20(token).transfer(msg.sender, amount);
+    }
+
+    /**
+     * @notice Credits tokens already transferred to this contract back from CompanyDeFiV1.
+     * @dev onlyCompanyDefi. Pulls tokens from CompanyDeFiV1 (caller must have approved this contract)
+     *      and adds them to the company's internal balance.
+     *      Called by CompanyDeFiV1.withdrawFromAave and CompanyDeFiV1.borrowFromAave.
+     * @param companyId The company whose treasury balance is increased
+     * @param token     ERC20 token to credit
+     * @param amount    Amount to credit (token decimals)
+     */
+    function creditFromDeFi(uint96 companyId, address token, uint256 amount) external onlyCompanyDefi {
+        if (companyBrief[companyId].owner == address(0)) revert CompanyNotFound();
+        IERC20(token).transferFrom(msg.sender, address(this), amount);
+        companyTokenBalances[companyId][token] += amount;
+        emit CompanyFunded(companyId, token, amount);
     }
 
     /**
@@ -391,7 +516,6 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     function payEmployees(uint96 _companyId) external whenNotPaused {
         if (companyBrief[_companyId].owner == address(0)) revert CompanyNotFound();
         CompanyBrief memory compBrief = companyBrief[_companyId];
-        if (!_isAuthorized(msg.sender, _companyId)) revert NotAuthorized();
 
         Employee[] storage employees = ownerToCompanies[compBrief.owner][compBrief.index].employees;
 
@@ -407,8 +531,8 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         if (totalUSDTAll == 0) return;
 
         // ── 2. Single reserve check for the whole batch ──────────────────────
-        uint256 minReserve = getMonthlyBurnUSDT(_companyId) * minReserveMonths;
-        if (companyTokenBalances[_companyId][usdtAddress] < totalUSDTAll + minReserve) revert BelowReserve();
+        uint256 minReserve = getMonthlyBurnUSDT(_companyId) * _effectiveReserveMonths(_companyId);
+        if (_stableBalance(_companyId) < totalUSDTAll + minReserve) revert BelowReserve();
 
         // ── 3. Pay each employee (no per-employee reserve re-check) ─────────
         for (uint256 i = 0; i < employees.length; i++) {
@@ -669,8 +793,8 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         }
         if (totalUSDT == 0) revert NothingToPay();
 
-        uint256 minReserve = getMonthlyBurnUSDT(_companyId) * minReserveMonths;
-        if (companyTokenBalances[_companyId][usdtAddress] < totalUSDT + minReserve) revert BelowReserve();
+        uint256 minReserve = getMonthlyBurnUSDT(_companyId) * _effectiveReserveMonths(_companyId);
+        if (_stableBalance(_companyId) < totalUSDT + minReserve) revert BelowReserve();
 
         // ── 2+3. Effects + Interactions ───────────────────────────────────────
 
@@ -707,9 +831,8 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
 
         // ── 1. Checks ────────────────────────────────────────────────────────
         if (_usdtAmount > 0) {
-            uint256 minReserve = getMonthlyBurnUSDT(_companyId) * minReserveMonths;
-            uint256 companyUsdtBal = companyTokenBalances[_companyId][usdtAddress];
-            if (companyUsdtBal < _usdtAmount + minReserve) revert BelowReserve();
+            uint256 minReserve = getMonthlyBurnUSDT(_companyId) * _effectiveReserveMonths(_companyId);
+            if (_stableBalance(_companyId) < _usdtAmount + minReserve) revert BelowReserve();
         }
         if (_wlfAmount > 0) {
             if (companyTokenBalances[_companyId][_wlfToken] < _wlfAmount) revert InsufficientWLF();
@@ -781,6 +904,15 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         return ids;
     }
 
+    /**
+     * @notice Returns true if `_caller` is authorized to manage the given company.
+     * @dev Exposes the internal _isAuthorized check so CompanyDeFiV1 can delegate auth
+     *      without duplicating role logic.
+     */
+    function isAuthorized(address _caller, uint96 _companyId) public view returns (bool) {
+        return _isAuthorized(_caller, _companyId);
+    }
+
     function retrieveCompany(uint96 _companyId) public view returns (CompanyStruct memory) {
         CompanyBrief memory compBrief = companyBrief[_companyId];
         if (compBrief.owner == address(0)) revert CompanyNotFound();
@@ -830,11 +962,18 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     }
 
     /**
-     * @notice Returns the minimum USDT reserve the company must always maintain.
-     * @dev = monthlyBurn × minReserveMonths. Company balance must exceed this after every payment.
+     * @notice Returns the minimum stable reserve the company must always maintain.
+     * @dev Uses per-company override if set, otherwise global minReserveMonths.
      */
     function getRequiredReserveUSDT(uint96 _companyId) public view returns (uint256) {
-        return getMonthlyBurnUSDT(_companyId) * minReserveMonths;
+        return getMonthlyBurnUSDT(_companyId) * _effectiveReserveMonths(_companyId);
+    }
+
+    /**
+     * @notice Returns the combined USDT + USDC internal balance for a company.
+     */
+    function getCompanyStableBalance(uint96 _companyId) public view returns (uint256) {
+        return _stableBalance(_companyId);
     }
 
     ///////////////////////////////////////
@@ -893,6 +1032,20 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
             }
         }
         if (!found) revert RoleNotFound();
+    }
+
+    /// @dev Returns the effective reserve months for a company: per-company override or global fallback.
+    function _effectiveReserveMonths(uint96 _companyId) internal view returns (uint256) {
+        uint256 perCompany = companyReserveMonths[_companyId];
+        return perCompany > 0 ? perCompany : minReserveMonths;
+    }
+
+    /// @dev Returns combined USDT + USDC internal balance for reserve checks.
+    function _stableBalance(uint96 _companyId) internal view returns (uint256 total) {
+        total = companyTokenBalances[_companyId][usdtAddress];
+        if (usdcAddress != address(0)) {
+            total += companyTokenBalances[_companyId][usdcAddress];
+        }
     }
 
     /**

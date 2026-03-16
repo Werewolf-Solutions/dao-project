@@ -14,6 +14,7 @@ import {Staking} from "../src/Staking.sol";
 import {LPStaking} from "../src/LPStaking.sol";
 import {UniswapHelper} from "../src/UniswapHelper.sol";
 import {CompaniesHouseV1} from "../src/CompaniesHouseV1.sol";
+import {CompanyVault} from "../src/CompanyVault.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
 interface IMintable {
@@ -47,6 +48,7 @@ contract Deploy is Script {
     TokenSale tokenSale;
     UniswapHelper uniswapHelper;
     CompaniesHouseV1 companiesHouse;
+    address companyVaultImpl;
 
 
     function run() external {
@@ -117,6 +119,9 @@ contract Deploy is Script {
         // Authorize CompaniesHouseV1 to record governance fees in DAO (for voting power)
         dao.authorizeCaller(address(companiesHouse));
 
+        // Deploy CompanyVault logic contract and register it in CompaniesHouseV1
+        _deployCompanyVault();
+
         // Airdrop tokens to TokenSale
         werewolfToken.airdrop(address(tokenSale), tokenSaleAirdrop);
 
@@ -137,15 +142,27 @@ contract Deploy is Script {
         werewolfToken._authorizeCaller(address(lpStaking));
         werewolfToken._authorizeCaller(address(companiesHouse));
 
+        // Set USDC address on CompaniesHouse (admin = founder at this point, transferred inside _createDaoCompany)
+        if (netConfig.usdc != address(0)) {
+            companiesHouse.setUsdcAddress(netConfig.usdc);
+        }
+
         // Create the Werewolf DAO company — must happen before werewolfToken.transferOwnership
         // so we can still call werewolfToken.airdrop (onlyOwner) for the creation fee seed
         _createDaoCompany();
+        _createWerewolfSolutions();
 
         // Deployer buys all sale #0 tokens → Uniswap LP created + staked
-        _buyFounderSale();
+        // Skipped on live networks with real USDT (deployer must hold enough before running)
+        if (netConfig.isMockUsdt) {
+            _buyFounderSale();
+        }
 
-        // Start Token Sale #1 — must happen before ownership transfer (startSale is onlyOwner)
-        _startSaleOne();
+        // Start Token Sale #1 — only after Sale #0 has been bought out and closed
+        // Skipped on live networks since _buyFounderSale() is also skipped there
+        if (netConfig.isMockUsdt) {
+            _startSaleOne();
+        }
 
         // Transfer ownership to Timelock
         werewolfToken.transferOwnership(address(timelock));
@@ -217,6 +234,14 @@ contract Deploy is Script {
         companiesHouse = CompaniesHouseV1(address(companiesHouseProxy));
         // Admin starts as founder so we can call setDaoCompanyId after createCompany.
         // Transferred to Timelock at end of _createDaoCompany().
+    }
+
+    function _deployCompanyVault() internal {
+        // Deploy the CompanyVault logic contract (clone target — not a proxy itself)
+        companyVaultImpl = address(new CompanyVault());
+
+        // Register it in CompaniesHouseV1 so createVault() can clone it
+        companiesHouse.setVaultImplementation(companyVaultImpl);
     }
 
     function _deployWereWolfToken() internal {
@@ -313,21 +338,23 @@ contract Deploy is Script {
         uint256 creationFee = companiesHouse.creationFee();
         werewolfToken.approve(address(companiesHouse), creationFee);
 
-        // 2. Salary: $10,000/month on local/Sepolia, $500/month on mainnet
+        // 2. Salary: $10,000/month on testnets, $1,000/month on mainnet
         //    Formula: $monthly * 1_000_000 / 730  (USDT 6-dec wei per hour)
         uint256 hourlyWei = block.chainid == 1
-            ? uint256(   500 * 1_000_000) / 730   // ≈    684,931 USDT-wei/hr on mainnet
-            : uint256(10_000 * 1_000_000) / 730;  // ≈ 13,698,630 USDT-wei/hr on local/Sepolia
+            ? uint256( 1_000 * 1_000_000) / 730   // ≈  1,369,863 USDT-wei/hr on mainnet
+            : uint256(10_000 * 1_000_000) / 730;  // ≈ 13,698,630 USDT-wei/hr on testnets/local
 
         // 3. Build the Werewolf DAO company params
-        string[] memory roles = new string[](7);
+        string[] memory roles = new string[](9);
         roles[0] = "Founder";
         roles[1] = "CEO";
         roles[2] = "CTO";
-        roles[3] = "HR";
-        roles[4] = "SMM";
-        roles[5] = "Developer";
-        roles[6] = "Tester";
+        roles[3] = "Engineer";
+        roles[4] = "Advisor";
+        roles[5] = "HR";
+        roles[6] = "SMM";
+        roles[7] = "Developer";
+        roles[8] = "Tester";
 
         string[] memory powerRoles = new string[](2);
         powerRoles[0] = "Founder";
@@ -351,14 +378,71 @@ contract Deploy is Script {
         uint96 daoId = companiesHouse.currentCompanyIndex() - 1;
         companiesHouse.setDaoCompanyId(daoId);
 
-        // 5. Mint 1T mock USDT to deployer (MockUSDT on local/Sepolia)
-        //    1T USDT = 1_000_000_000_000 * 1_000_000 = 1e18 USDT-wei
-        IMintable(netConfig.usdt).mint(founder, 1_000_000_000_000 * 1_000_000);
+        // 4b. Create CompanyVault for the DAO company — enables DeFi/Aave via governance proposals.
+        //     aavePool = address(0) on local chain (vault created but DeFi inactive until configured).
+        address vaultToken = netConfig.aaveUsdt != address(0) ? netConfig.aaveUsdt : netConfig.usdt;
+        companiesHouse.createVault(daoId, netConfig.aavePool, vaultToken);
+        console.log("DAO company vault created:", companiesHouse.companyVault(daoId));
 
-        // 6. Transfer CompaniesHouse admin to Timelock
+        // 5. Mint 1T mock USDT to deployer (only on chains with MockUSDT)
+        //    1T USDT = 1_000_000_000_000 * 1_000_000 = 1e18 USDT-wei
+        if (netConfig.isMockUsdt) {
+            IMintable(netConfig.usdt).mint(founder, 1_000_000_000_000 * 1_000_000);
+        }
+
+        // 6. Set DAO company reserve to 6 months (admin still = founder here)
+        companiesHouse.setCompanyReserveMonths(daoId, 6);
+
+        // 7. Transfer CompaniesHouse admin to Timelock
         companiesHouse.setAdmin(address(timelock));
 
         console.log("Werewolf DAO company created. ID:", daoId);
+    }
+
+    function _createWerewolfSolutions() internal {
+        // 1. Approve creation fee from deployer's WLF balance (10 WLF)
+        uint256 creationFee = companiesHouse.creationFee();
+        werewolfToken.approve(address(companiesHouse), creationFee);
+
+        // 2. Salary: $5,000/month (all chains)
+        uint256 hourlyWei = uint256(5_000 * 1_000_000) / 730; // ≈ 6,849,315 USDT-wei/hr
+
+        // 3. Build Werewolf Solutions company params
+        string[] memory roles = new string[](8);
+        roles[0] = "Founder";
+        roles[1] = "CEO";
+        roles[2] = "CTO";
+        roles[3] = "Engineer";
+        roles[4] = "Designer";
+        roles[5] = "HR";
+        roles[6] = "Advisor";
+        roles[7] = "SMM";
+
+        string[] memory powerRoles = new string[](2);
+        powerRoles[0] = "Founder";
+        powerRoles[1] = "CEO";
+
+        CompaniesHouseV1.CreateCompany memory params = CompaniesHouseV1.CreateCompany({
+            name:               "Werewolf Solutions",
+            industry:           "software",
+            domain:             "werewolf.solutions",
+            roles:              roles,
+            powerRoles:         powerRoles,
+            operatorAddress:    founder,
+            ownerRole:          "Founder",
+            ownerSalaryPerHour: hourlyWei,
+            ownerName:          "Lorenzo"
+        });
+
+        companiesHouse.createCompany(params);
+
+        uint96 wsId = companiesHouse.currentCompanyIndex() - 1;
+
+        // 4. Create CompanyVault for DeFi (same token as DAO vault)
+        address vaultToken = netConfig.aaveUsdt != address(0) ? netConfig.aaveUsdt : netConfig.usdt;
+        companiesHouse.createVault(wsId, netConfig.aavePool, vaultToken);
+
+        console.log("Werewolf Solutions company created. ID:", wsId);
     }
 
     function _startSaleOne() internal {
@@ -442,5 +526,20 @@ contract Deploy is Script {
             vm.toString(address(companiesHouse))
         );
         vm.writeLine(path, companiesHouseStr);
+
+        string memory companyVaultImplStr = string.concat(
+            "CompanyVaultImpl:",
+            vm.toString(companyVaultImpl)
+        );
+        vm.writeLine(path, companyVaultImplStr);
+
+        // Write separate AaveUSDT address when it differs from the token-sale USDT
+        if (netConfig.aaveUsdt != address(0)) {
+            vm.writeLine(path, string.concat("AaveUSDT:", vm.toString(netConfig.aaveUsdt)));
+        }
+        // Write Aave pool address so sync-dapp.mjs keeps it in addresses.ts
+        if (netConfig.aavePool != address(0)) {
+            vm.writeLine(path, string.concat("AavePool:", vm.toString(netConfig.aavePool)));
+        }
     }
 }

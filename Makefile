@@ -55,6 +55,53 @@ deploy-sepolia:
 		--verify --etherscan-api-key $(ETHERSCAN_API_KEY) \
 		--resume --private-key $(PRIVATE_KEY)
 
+# ─── Deploy (Base Sepolia) ────────────────────────────────────────────────────
+# Uses real Aave v3 + Aave-listed USDT for DeFi testing.
+# Requires BASE_SEPOLIA_RPC_URL and BASESCAN_API_KEY in .env
+
+deploy-base-sepolia-dry:
+	forge script script/Deploy.s.sol:Deploy --rpc-url $(BASE_SEPOLIA_RPC_URL)
+
+deploy-base-sepolia:
+	forge script script/Deploy.s.sol:Deploy \
+		--rpc-url $(BASE_SEPOLIA_RPC_URL) --broadcast \
+		--private-key $(PRIVATE_KEY)
+	node scripts/sync-dapp.mjs
+	forge script script/Deploy.s.sol:Deploy \
+		--rpc-url $(BASE_SEPOLIA_RPC_URL) \
+		--verify --etherscan-api-key $(BASESCAN_API_KEY) \
+		--verifier-url https://api-sepolia.basescan.org/api \
+		--resume --private-key $(PRIVATE_KEY)
+
+# ─── Deploy (all testnets at once) ───────────────────────────────────────────
+# Deploys to Sepolia + Base Sepolia sequentially; also deploys to local Anvil
+# if a node is detected on localhost:8545.
+# sync-dapp.mjs merges each chain's addresses into addresses.ts incrementally.
+
+deploy-all-testnets-dry:
+	@echo "=== [dry] Sepolia ==="
+	forge script script/Deploy.s.sol:Deploy --rpc-url $(SEPOLIA_RPC_URL)
+	@echo "=== [dry] Base Sepolia ==="
+	forge script script/Deploy.s.sol:Deploy --rpc-url $(BASE_SEPOLIA_RPC_URL)
+
+deploy-all-testnets:
+	@echo "=== [1/3] Sepolia ==="
+	forge script script/Deploy.s.sol:Deploy \
+		--rpc-url $(SEPOLIA_RPC_URL) --broadcast --private-key $(PRIVATE_KEY)
+	node scripts/sync-dapp.mjs
+	@echo "=== [2/3] Base Sepolia ==="
+	forge script script/Deploy.s.sol:Deploy \
+		--rpc-url $(BASE_SEPOLIA_RPC_URL) --broadcast --private-key $(PRIVATE_KEY)
+	node scripts/sync-dapp.mjs
+	@echo "=== [3/3] Local (Anvil) — checking localhost:8545 ==="
+	@if nc -z localhost 8545 2>/dev/null; then \
+		forge script script/Deploy.s.sol:Deploy --fork-url http://localhost:8545 --broadcast && \
+		node scripts/sync-dapp.mjs; \
+	else \
+		echo "  No Anvil node detected — skipping local deploy"; \
+	fi
+	@echo "=== All testnet deploys complete ==="
+
 # ─── Upgrade (Sepolia) ────────────────────────────────────────────────────────
 # Usage: make upgrade-sepolia
 # Auto-detects changed contracts by comparing on-chain bytecode vs local artifacts.

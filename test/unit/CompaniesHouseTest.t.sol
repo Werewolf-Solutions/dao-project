@@ -365,14 +365,18 @@ contract CompaniesHouseTest is BaseTest {
         assertGt(mockUSDT.balanceOf(employee1), employeeBefore, "Employee should be paid in USDT");
     }
 
-    function test_PayEmployees_UnauthorizedCaller_Reverts() public {
+    function test_PayEmployees_AnyoneCanCall() public {
         uint96 id = _createCompany();
         _depositUSDT(id, 5_000e6);
         vm.warp(block.timestamp + 730 hours);
 
-        vm.prank(employee1); // not authorized
-        vm.expectRevert(CompaniesHouseV1.NotAuthorized.selector);
+        address stranger = makeAddr("stranger");
+        uint256 founderBefore = mockUSDT.balanceOf(founder);
+
+        vm.prank(stranger); // anyone can trigger payroll
         companiesHouse.payEmployees(id);
+
+        assertGt(mockUSDT.balanceOf(founder), founderBefore, "Founder should be paid");
     }
 
     function test_PayEmployees_SkipsInactiveEmployees() public {

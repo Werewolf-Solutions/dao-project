@@ -56,28 +56,26 @@ contract WerewolfTokenTest is BaseTest {
     }
 
     function test_getPriorVotes_reflectsBalanceAfterTransfer() public {
-        // founder and addr1 received 1000 WLF during initialization (block.number = 1)
-        // Roll forward so we can query the checkpoint
-        uint256 snapshotBlock = block.number;
+        // founder received WLF during setUp (at the setUp block); roll forward first
         vm.roll(block.number + 1);
+        uint256 pastBlock = block.number - 1; // the block where setUp checkpoints were written
 
-        uint96 founderVotes = werewolfToken.getPriorVotes(founder, snapshotBlock);
-        // founder started with 1000 WLF from initialize; BaseTest doesn't transfer more
+        uint96 founderVotes = werewolfToken.getPriorVotes(founder, pastBlock);
         assertGt(founderVotes, 0, "Founder should have prior votes");
     }
 
     function test_getPriorVotes_checkpointWrittenOnTransfer() public {
         uint256 transferAmount = 50 ether;
-        uint256 snapshotBlock = block.number;
 
-        // Transfer tokens (writes checkpoint at snapshotBlock)
+        // Transfer tokens (writes checkpoint at current block)
         vm.prank(address(timelock));
         werewolfToken.airdrop(makeAddr("target"), transferAmount);
 
-        // Roll to next block so snapshotBlock < block.number
+        // Roll to next block, then query the block where the transfer happened
         vm.roll(block.number + 1);
+        uint256 snapshotBlock = block.number - 1;
 
-        // Treasury balance at snapshotBlock should be lower (after airdrop)
+        // Treasury votes at snapshotBlock should equal current balance (no further transfers)
         uint96 treasuryVotes = werewolfToken.getPriorVotes(address(treasury), snapshotBlock);
         uint256 currentBalance = werewolfToken.balanceOf(address(treasury));
         assertEq(uint256(treasuryVotes), currentBalance, "Checkpoint should match current balance when no further transfers");
