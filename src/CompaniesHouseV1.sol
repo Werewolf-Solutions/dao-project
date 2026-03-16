@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
-import "@openzeppelin/contracts/proxy/Clones.sol";
+import "@openzeppelin/contracts/proxy/beacon/BeaconProxy.sol";
 import "./interfaces/ITreasury.sol";
 import "./interfaces/IWerewolfTokenV1.sol";
 import "./interfaces/IDAO.sol";
@@ -183,8 +183,8 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     /// @notice CompanyDeFiV1 proxy address — authorized to pull/credit company funds for DeFi ops
     address public companyDefi;
 
-    /// @notice CompanyVault logic contract — cloned once per company to create isolated DeFi vaults
-    address public vaultImplementation;
+    /// @notice UpgradeableBeacon address — all CompanyVault BeaconProxies read their implementation from this.
+    address public beacon;
 
     /// @notice Maps companyId → address of that company's CompanyVault clone (address(0) if not created)
     mapping(uint96 companyId => address) public companyVault;
@@ -214,6 +214,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     /// @param amount Amount deposited (token decimals)
     event CompanyFunded(uint96 indexed companyId, address indexed token, uint256 amount);
     event VaultCreated(uint96 indexed companyId, address indexed vault);
+    event VaultBeaconSet(address indexed beacon);
     /// @param companyId  Company that paid the fee
     /// @param token      Token the fee was taken in
     /// @param feeAmount  Fee sent to treasury
@@ -391,19 +392,20 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     }
 
     /**
-     * @notice Sets the CompanyVault logic contract used as the EIP-1167 clone target.
+     * @notice Sets the UpgradeableBeacon address for CompanyVault BeaconProxies.
      * @dev onlyAdmin. Must be called before createVault() will work.
+     *      The beacon owner (Timelock) controls future vault implementation upgrades.
      */
-    function setVaultImplementation(address _impl) external onlyAdmin {
-        vaultImplementation = _impl;
+    function setBeacon(address _beacon) external onlyAdmin {
+        beacon = _beacon;
+        emit VaultBeaconSet(_beacon);
     }
 
     /**
-     * @notice Deploys a CompanyVault clone for `_companyId` and initializes it.
-     * @dev Uses EIP-1167 minimal proxy for cheap per-company deployment.
+     * @notice Deploys a CompanyVault BeaconProxy for `_companyId` and initializes it.
+     * @dev All vaults share one UpgradeableBeacon — governance can upgrade all vaults
+     *      at once by calling beacon.upgradeTo(newImpl) through the Timelock.
      *      Caller must be the company owner or operator.
-     *      Vault is initialized with the caller as admin, Aave pool from the last
-     *      stored aavePool reference, and `allowedToken` if provided.
      *      Emits VaultCreated.
      * @param _companyId    Company to create the vault for
      * @param _aavePool     Aave v3 Pool proxy address (address(0) if not applicable)
@@ -414,25 +416,20 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         address _aavePool,
         address _allowedToken
     ) external returns (address vault) {
-        require(vaultImplementation != address(0), "CompaniesHouse: vaultImplementation not set");
+        require(beacon != address(0), "CompaniesHouse: beacon not set");
         if (companyBrief[_companyId].owner == address(0)) revert CompanyNotFound();
         if (!_isAuthorized(msg.sender, _companyId)) revert NotAuthorized();
         require(companyVault[_companyId] == address(0), "CompaniesHouse: vault already exists");
 
-        vault = Clones.clone(vaultImplementation);
-
-        // Initialize the clone: companyId, companiesHouse, aavePool, admin, allowedToken
-        (bool ok, ) = vault.call(
-            abi.encodeWithSignature(
-                "initialize(uint96,address,address,address,address)",
-                _companyId,
-                address(this),
-                _aavePool,
-                admin,
-                _allowedToken
-            )
+        bytes memory initData = abi.encodeWithSignature(
+            "initialize(uint96,address,address,address,address)",
+            _companyId,
+            address(this),
+            _aavePool,
+            admin,
+            _allowedToken
         );
-        require(ok, "CompaniesHouse: vault init failed");
+        vault = address(new BeaconProxy(beacon, initData));
 
         companyVault[_companyId] = vault;
         emit VaultCreated(_companyId, vault);

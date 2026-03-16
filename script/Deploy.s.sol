@@ -16,6 +16,7 @@ import {UniswapHelper} from "../src/UniswapHelper.sol";
 import {CompaniesHouseV1} from "../src/CompaniesHouseV1.sol";
 import {CompanyVault} from "../src/CompanyVault.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {UpgradeableBeacon} from "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
 
 interface IMintable {
     function mint(address to, uint256 amount) external;
@@ -237,11 +238,18 @@ contract Deploy is Script {
     }
 
     function _deployCompanyVault() internal {
-        // Deploy the CompanyVault logic contract (clone target — not a proxy itself)
+        // 1. Deploy CompanyVault logic contract (the implementation)
         companyVaultImpl = address(new CompanyVault());
 
-        // Register it in CompaniesHouseV1 so createVault() can clone it
-        companiesHouse.setVaultImplementation(companyVaultImpl);
+        // 2. Deploy UpgradeableBeacon — Timelock is owner so DAO governs future upgrades.
+        //    To add a new protocol: deploy CompanyVaultV2, then DAO proposal → beacon.upgradeTo(V2).
+        UpgradeableBeacon vaultBeacon = new UpgradeableBeacon(companyVaultImpl, address(timelock));
+
+        // 3. Register beacon in CompaniesHouseV1
+        companiesHouse.setBeacon(address(vaultBeacon));
+
+        console.log("CompanyVault impl:   ", companyVaultImpl);
+        console.log("CompanyVault beacon: ", address(vaultBeacon));
     }
 
     function _deployWereWolfToken() internal {

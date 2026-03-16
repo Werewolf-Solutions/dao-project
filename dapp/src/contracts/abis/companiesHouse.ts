@@ -605,7 +605,7 @@ export const companiesHouseABI = [
   // ── CompanyVault integration ───────────────────────────────────────────────
   {
     "type": "function",
-    "name": "vaultImplementation",
+    "name": "beacon",
     "inputs": [],
     "outputs": [{ "name": "", "type": "address" }],
     "stateMutability": "view"
@@ -619,8 +619,8 @@ export const companiesHouseABI = [
   },
   {
     "type": "function",
-    "name": "setVaultImplementation",
-    "inputs": [{ "name": "_impl", "type": "address" }],
+    "name": "setBeacon",
+    "inputs": [{ "name": "_beacon", "type": "address" }],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
@@ -641,6 +641,14 @@ export const companiesHouseABI = [
     "inputs": [
       { "name": "companyId", "type": "uint96",  "indexed": true },
       { "name": "vault",     "type": "address", "indexed": true }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VaultBeaconSet",
+    "inputs": [
+      { "name": "beacon", "type": "address", "indexed": true }
     ],
     "anonymous": false
   }

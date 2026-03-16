@@ -7,6 +7,7 @@ import {CompaniesHouseV1} from "../../src/CompaniesHouseV1.sol";
 import {CompanyVault} from "../../src/CompanyVault.sol";
 import {MockAavePool} from "../mocks/MockAavePool.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {UpgradeableBeacon} from "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
 
 contract CompanyVaultTest is BaseTest {
 
@@ -58,14 +59,16 @@ contract CompanyVaultTest is BaseTest {
         console.log("[setUp] companiesHouse   :", address(companiesHouse));
         console.log("[setUp] ch.admin         :", companiesHouse.admin());
 
-        // 3. Vault logic contract (clone target — not a proxy)
+        // 3. Vault logic contract + beacon
         vaultImpl = new CompanyVault();
+        UpgradeableBeacon vaultBeacon = new UpgradeableBeacon(address(vaultImpl), founder);
         console.log("[setUp] vaultImpl        :", address(vaultImpl));
+        console.log("[setUp] vaultBeacon      :", address(vaultBeacon));
 
-        // 4. Register vault impl in CompaniesHouseV1
+        // 4. Register beacon in CompaniesHouseV1
         vm.prank(founder);
-        companiesHouse.setVaultImplementation(address(vaultImpl));
-        console.log("[setUp] vaultImpl set    :", companiesHouse.vaultImplementation());
+        companiesHouse.setBeacon(address(vaultBeacon));
+        console.log("[setUp] beacon set       :", companiesHouse.beacon());
 
         // 5. Fund founder and create company
         vm.prank(address(timelock));
