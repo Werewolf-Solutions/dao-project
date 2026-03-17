@@ -10,13 +10,7 @@ import { Button } from '@/components/Button';
 import { Input } from '@/components/Input';
 import { Row } from '@/components/Row';
 import { TxStatus } from '@/components/TxStatus';
-
-function fmt18(raw: bigint | undefined, decimals = 2): string {
-  if (raw === undefined) return '—';
-  return Number(formatUnits(raw, 18)).toLocaleString(undefined, {
-    maximumFractionDigits: decimals,
-  });
-}
+import { fmt18 } from '@/utils/formatters';
 
 // ── Duration config ──────────────────────────────────────────────────────────
 

@@ -6,6 +6,8 @@ out/
 !/broadcast
 /broadcast/*/31337/
 /broadcast/**/dry-run/
+# Keep only run-latest.json; ignore all timestamped historical runs
+broadcast/**/run-[0-9]*.json
 
 # Docs
 # docs/

@@ -5,33 +5,7 @@ import { formatEther } from 'viem';
 import { theme } from '@/contexts/ThemeContext';
 import { companiesHouseABI, erc20ABI, getAddress } from '@/contracts';
 import { useWLFPrice } from '@/hooks/useWLFPrice';
-
-// ─── helpers ─────────────────────────────────────────────────────────────────
-
-function monthlyUSDToHourlyWei(monthlyUSD: string): bigint {
-  const parsed = parseFloat(monthlyUSD);
-  if (isNaN(parsed) || parsed <= 0) return 0n;
-  const usdtWeiPerMonth = BigInt(Math.round(parsed * 1_000_000));
-  return usdtWeiPerMonth / 730n;
-}
-
-function hourlyWeiToMonthlyUSD(hourlyWei: bigint): string {
-  const monthlyWei = hourlyWei * 730n;
-  return (Number(monthlyWei) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 2 });
-}
-
-function fmtUSDT(val: bigint, decimals = 2): string {
-  return (Number(val) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: decimals });
-}
-
-function fmtMonths(months: number): string {
-  if (months <= 0) return '0 months';
-  if (months < 12) return `${months} month${months === 1 ? '' : 's'}`;
-  const years = Math.floor(months / 12);
-  const rem = months % 12;
-  if (rem === 0) return `${years} year${years === 1 ? '' : 's'}`;
-  return `${years}yr ${rem}mo`;
-}
+import { monthlyUSDToHourlyWei, hourlyWeiToMonthlyUSD, fmtUSDT, fmtMonths } from '@/utils/formatters';
 
 // ─── types ────────────────────────────────────────────────────────────────────
 

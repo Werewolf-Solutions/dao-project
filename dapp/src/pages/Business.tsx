@@ -5,48 +5,7 @@ import { formatEther, parseUnits } from 'viem';
 import { theme } from '@/contexts/ThemeContext';
 import { companiesHouseABI, erc20ABI, getAddress } from '@/contracts';
 import { useWLFPrice } from '@/hooks/useWLFPrice';
-
-// ─── helpers ────────────────────────────────────────────────────────────────
-
-/** Convert user-entered $/month string → USDT wei per hour (6 dec). */
-function monthlyUSDToHourlyWei(monthlyUSD: string): bigint {
-  const parsed = parseFloat(monthlyUSD);
-  if (isNaN(parsed) || parsed <= 0) return 0n;
-  const usdtWeiPerMonth = BigInt(Math.round(parsed * 1_000_000));
-  return usdtWeiPerMonth / 730n;
-}
-
-/** Convert USDT wei per hour → human $/month string. */
-function hourlyWeiToMonthlyUSD(hourlyWei: bigint): string {
-  const monthlyWei = hourlyWei * 730n;
-  return (Number(monthlyWei) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 2 });
-}
-
-/** Format USDT (6 dec bigint) to human USD string. */
-function fmtUSDT(val: bigint, decimals = 2): string {
-  return (Number(val) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: decimals });
-}
-
-/** Format WLF (18 dec bigint) to human string. */
-function fmtWLF(val: bigint, decimals = 4): string {
-  return Number(formatEther(val)).toLocaleString(undefined, { maximumFractionDigits: decimals });
-}
-
-/** USDT (6 dec) → WLF (18 dec). wlfPrice is 18-dec-scaled price from TokenSale. */
-function usdtToWlf(usdtWei: bigint, wlfPrice: bigint): bigint {
-  if (wlfPrice === 0n || usdtWei === 0n) return 0n;
-  return (usdtWei * 10n ** 30n) / wlfPrice;
-}
-
-/** Format a number of months as a human string, e.g. 14 → "1yr 2mo". */
-function fmtMonths(months: number): string {
-  if (months <= 0) return '0 months';
-  if (months < 12) return `${months} month${months === 1 ? '' : 's'}`;
-  const years = Math.floor(months / 12);
-  const rem = months % 12;
-  if (rem === 0) return `${years} year${years === 1 ? '' : 's'}`;
-  return `${years}yr ${rem}mo`;
-}
+import { monthlyUSDToHourlyWei, hourlyWeiToMonthlyUSD, fmtUSDT, fmtWLF, usdtToWlf, fmtMonths } from '@/utils/formatters';
 
 // ─── types ───────────────────────────────────────────────────────────────────
 

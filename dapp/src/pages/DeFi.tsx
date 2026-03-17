@@ -20,6 +20,7 @@ import {
 } from '@aave/react';
 import { theme } from '@/contexts/ThemeContext';
 import { companiesHouseABI, companyVaultABI, erc20ABI, getAddress } from '@/contracts';
+import { fmtUSDT } from '@/utils/formatters';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -78,16 +79,6 @@ const PROTOCOLS: Protocol[] = [
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function fmtToken(val: bigint, decimals: number, places = 2): string {
-  return Number(formatUnits(val, decimals)).toLocaleString(undefined, {
-    maximumFractionDigits: places,
-  });
-}
-
-function fmtUSDT(val: bigint, places = 2): string {
-  return fmtToken(val, 6, places);
-}
 
 // ─── TokenAllowed event signature ─────────────────────────────────────────────
 
