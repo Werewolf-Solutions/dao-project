@@ -25,3 +25,6 @@
 [submodule "dao-dapp"]
 	path = dao-dapp
 	url = https://github.com/Werewolf-Solutions/dao-dapp
+[submodule "lib/aave-address-book"]
+	path = lib/aave-address-book
+	url = https://github.com/aave-dao/aave-address-book

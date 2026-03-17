@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
 
-type MaxWidth = 'sm' | 'md' | 'lg' | 'xl' | '2xl';
+type MaxWidth = 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '3xl';
 
 const WIDTH_CLASSES: Record<MaxWidth, string> = {
   sm: 'max-w-md',
@@ -9,6 +9,7 @@ const WIDTH_CLASSES: Record<MaxWidth, string> = {
   lg: 'max-w-2xl',
   xl: 'max-w-4xl',
   '2xl': 'max-w-5xl',
+  '3xl': 'max-w-6xl',
 };
 
 interface PageContainerProps {

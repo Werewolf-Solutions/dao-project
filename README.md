@@ -34,8 +34,19 @@ Runs `forge install` (Solidity libs) + `cd dapp && npm install` (React frontend)
 
 ```bash
 cp .env.example .env
-# Edit .env — fill in PRIVATE_KEY, SEPOLIA_RPC_URL, ETHERSCAN_API_KEY
+# Edit .env — fill in the variables you need:
 ```
+
+| Variable | Required for |
+|---|---|
+| `PRIVATE_KEY` | All deploys (deployer key) |
+| `MULTISIG_ADDRESS` | All deploys (proxy admin) |
+| `MULTISIG_PRIVATE_KEY` | Upgrade scripts |
+| `SEPOLIA_RPC_URL` | Sepolia deploy / upgrade |
+| `BASE_SEPOLIA_RPC_URL` | Base Sepolia deploy |
+| `MAINNET_RPC_URL` | Mainnet deploy |
+| `ETHERSCAN_API_KEY` | Sepolia + mainnet verification |
+| `BASESCAN_API_KEY` | Base Sepolia verification |
 
 ### 4. Deploy
 
@@ -43,15 +54,38 @@ cp .env.example .env
 
 ```bash
 make deploy-local
+make deploy-local-dry     # dry run (no broadcast)
 ```
 
 **Sepolia testnet:**
 
 ```bash
 make deploy-sepolia
+make deploy-sepolia-dry   # dry run
 ```
 
-Both commands deploy all contracts and auto-sync addresses + ABIs into the dapp via `scripts/sync-dapp.mjs`.
+**Base Sepolia** (Aave v3 live, real DeFi testing):
+
+```bash
+make deploy-base-sepolia
+make deploy-base-sepolia-dry
+```
+
+**All testnets at once** (Sepolia + Base Sepolia; local if Anvil is running):
+
+```bash
+make deploy-all-testnets
+make deploy-all-testnets-dry
+```
+
+**Mainnet** — always dry-run first:
+
+```bash
+make deploy-mainnet-dry   # simulate — check output carefully
+make deploy-mainnet       # broadcast + verify
+```
+
+After each broadcast, `node scripts/sync-dapp.mjs` (or `make sync-dapp`) reads `script/output/deployed-addresses.txt` and writes updated contract addresses + ABIs into `dapp/src/contracts/addresses.ts` automatically.
 
 ### 5. Run the dapp
 
@@ -131,6 +165,17 @@ On-chain company registry.
 - View functions: `getTotalPendingPay`, `getMonthlyBurnUSDT`, `getRequiredFor5Years`
 - Emergency pause on create/hire/pay
 
+### CompanyVault
+
+Per-company DeFi investment vault, deployed as a minimal-proxy clone via `UpgradeableBeacon`. One vault per company, isolated from payroll funds in CompaniesHouseV1.
+
+- Deposit / withdraw tokens
+- Supply / withdraw from Aave v3 for yield; aTokens accrue directly in the vault
+- Borrow from Aave against collateral (disabled by default; guardian can toggle without a proposal)
+- Configurable minimum health factor (default 1.5×)
+- Admin: Timelock; guardian: founder (for borrowing toggle without governance overhead)
+- Beacon owned by Timelock — a single DAO proposal upgrades all company vaults atomically
+
 ---
 
 ## Dapp
@@ -167,22 +212,77 @@ Guardian can directly call `pause()` / `unpause()` on Staking, CompaniesHouse, a
 
 ## Deploy Steps
 
-1. Deploy `Treasury` (founder as initial owner)
-2. Deploy `Timelock` (founder as admin, 2-day delay)
-3. Deploy `WerewolfTokenV1` (mints 1B WLF to Treasury)
-4. Set WerewolfToken address in Treasury
-5. Deploy `Staking`
-6. Deploy `LPStaking`
-7. Deploy `DAO` (guardian = founder)
-8. Deploy `TokenSale`
-9. Deploy `CompaniesHouseV1`
-10. Airdrop 5M WLF to TokenSale
-11. Start Sale #0
-12. Transfer ownership of WerewolfToken, Treasury, TokenSale to Timelock
+Full sequence executed by `script/Deploy.s.sol`:
+
+1. Deploy `UniswapHelper`
+2. Deploy `Treasury` (founder as initial owner)
+3. Deploy `Timelock` (founder as admin, chain-specific delay)
+4. Deploy `WerewolfTokenV1` (mints 1B WLF to Treasury)
+5. Set WerewolfToken address in Treasury
+6. Deploy `Staking` + `LPStaking`
+7. Wire Treasury → staking contracts; wire Staking → LPStaking reference
+8. Deploy `DAO`; wire staking contracts for voting power
+9. Deploy `TokenSale`; wire DAO ↔ TokenSale for auto-delegation; set 2-year delegate lock
+10. Deploy `CompaniesHouseV1`; wire Treasury + DAO authorizations
+11. Deploy `CompanyVault` implementation + `UpgradeableBeacon` (Timelock owns beacon); register in CompaniesHouseV1
+12. Airdrop 5M WLF to TokenSale; start Sale #0
+13. Create "Werewolf DAO" company + CompanyVault; mark as canonical DAO company (`setDaoCompanyId`)
+14. Create "Werewolf Solutions" company + CompanyVault
+15. Transfer ownership of WLF, Treasury, TokenSale, Staking → Timelock
+16. Transfer Timelock admin → DAO (`setPendingAdmin` + `__acceptAdmin`)
 
 ```bash
 forge script script/Deploy.s.sol
 # addresses written to script/output/deployed-addresses.txt
+```
+
+---
+
+## Upgrade
+
+Upgrades detect changed contracts by comparing on-chain bytecode vs local artifacts — only changed contracts are redeployed. Proxy addresses are read automatically from `script/output/deployed-addresses.txt`.
+
+Requires `MULTISIG_PRIVATE_KEY` in `.env` (the proxy admin key).
+
+```bash
+make upgrade-sepolia-dry        # simulate — see what would change
+make upgrade-sepolia            # broadcast + verify
+
+make upgrade-mainnet-dry
+make upgrade-mainnet
+```
+
+---
+
+## Governance Proposal Scripts
+
+Walk through a full proposal lifecycle (creates a "Start Sale #1" test proposal).
+
+Set required env vars from `script/output/deployed-addresses.txt` before running:
+
+```bash
+export DAO_ADDRESS=0x...
+export WEREWOLF_TOKEN_ADDRESS=0x...
+export TOKEN_SALE_ADDRESS=0x...
+export PROPOSAL_ID=0   # needed for approve/queue/execute steps
+```
+
+**Local (Anvil):**
+
+```bash
+make propose-local              # create proposal
+make approve-proposal-local     # guardian approves (Pending → Active)
+make queue-proposal-local       # queue after voting passes
+make execute-proposal-local     # execute after timelock delay
+```
+
+**Sepolia:**
+
+```bash
+make propose-sepolia
+make approve-proposal-sepolia
+make queue-proposal-sepolia
+make execute-proposal-sepolia
 ```
 
 ---
@@ -216,6 +316,15 @@ forge test --match-contract TokenSaleWithLPTest # token sale + Uniswap LP flow
 | `-vvvv`  | full traces on every test |
 
 > `--match-test` matches by substring — e.g. `forge test --match-test test_cannot` runs all tests containing "cannot".
+
+---
+
+## Debug Utilities
+
+```bash
+make fork-debug     # full trace of endSale() against live Sepolia state (-vvvv)
+make cast-debug     # quick cast state inspection of TokenSale / LPStaking
+```
 
 ---
 

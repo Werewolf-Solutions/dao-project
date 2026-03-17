@@ -30,10 +30,10 @@ contract Deploy is Script {
     // Constants
     // votingPeriod is hardcoded in DAO.sol::votingPeriod() — 1 hour for testnet
     // timelockDelay comes from netConfig (0 for local/Sepolia, 2 days for mainnet)
-    uint256 constant tokenSaleAirdrop    = 5_000_000 ether;
-    uint256 constant tokenPrice          = 0.0004 ether;
+    uint256 constant tokenSaleAirdrop    = 500_000 ether;
+    uint256 constant tokenPrice          = 0.004 ether;
     uint256 constant tokenSaleOneAirdrop = 25_000_000 ether;
-    uint256 constant tokenSaleOnePrice   = 0.004 ether;   // 0.004 USDT/WLF → 25M * 0.004 = 100K USDT
+    uint256 constant tokenSaleOnePrice   = 0.04 ether;    // 0.04 USDT/WLF → 25M * 0.04 = 1M USDT
 
     // Addresses
     address multiSig;
@@ -353,20 +353,17 @@ contract Deploy is Script {
             : uint256(10_000 * 1_000_000) / 730;  // ≈ 13,698,630 USDT-wei/hr on testnets/local
 
         // 3. Build the Werewolf DAO company params
-        string[] memory roles = new string[](9);
+        string[] memory roles = new string[](7);
         roles[0] = "Founder";
-        roles[1] = "CEO";
-        roles[2] = "CTO";
-        roles[3] = "Engineer";
-        roles[4] = "Advisor";
-        roles[5] = "HR";
-        roles[6] = "SMM";
-        roles[7] = "Developer";
-        roles[8] = "Tester";
+        roles[1] = "Engineer";
+        roles[2] = "Advisor";
+        roles[3] = "HR";
+        roles[4] = "SMM";
+        roles[5] = "Developer";
+        roles[6] = "Tester";
 
-        string[] memory powerRoles = new string[](2);
+        string[] memory powerRoles = new string[](1);
         powerRoles[0] = "Founder";
-        powerRoles[1] = "CEO";
 
         CompaniesHouseV1.CreateCompany memory params = CompaniesHouseV1.CreateCompany({
             name:               "Werewolf DAO",
@@ -390,7 +387,21 @@ contract Deploy is Script {
         //     aavePool = address(0) on local chain (vault created but DeFi inactive until configured).
         address vaultToken = netConfig.aaveUsdt != address(0) ? netConfig.aaveUsdt : netConfig.usdt;
         companiesHouse.createVault(daoId, netConfig.aavePool, vaultToken);
-        console.log("DAO company vault created:", companiesHouse.companyVault(daoId));
+        address daoVaultAddr = companiesHouse.companyVault(daoId);
+        console.log("DAO company vault created:", daoVaultAddr);
+
+        // Whitelist USDC while founder is still vault admin
+        if (netConfig.usdc != address(0)) {
+            CompanyVault(daoVaultAddr).setAllowedToken(netConfig.usdc, true);
+        }
+
+        // Set guardian = founder so guardian can toggle borrowing without a proposal.
+        // Must happen while founder is still vault admin.
+        CompanyVault(daoVaultAddr).setGuardian(founder);
+
+        // Transfer vault admin to Timelock so DAO proposals can call supplyToAave / withdrawFromAave.
+        // Must happen while founder is still vault.admin (vault.admin = founder at creation time).
+        CompanyVault(daoVaultAddr).setAdmin(address(timelock));
 
         // 5. Mint 1T mock USDT to deployer (only on chains with MockUSDT)
         //    1T USDT = 1_000_000_000_000 * 1_000_000 = 1e18 USDT-wei
@@ -548,6 +559,10 @@ contract Deploy is Script {
         // Write Aave pool address so sync-dapp.mjs keeps it in addresses.ts
         if (netConfig.aavePool != address(0)) {
             vm.writeLine(path, string.concat("AavePool:", vm.toString(netConfig.aavePool)));
+        }
+        // Write USDC address (from aave-address-book on live networks)
+        if (netConfig.usdc != address(0)) {
+            vm.writeLine(path, string.concat("USDC:", vm.toString(netConfig.usdc)));
         }
     }
 }

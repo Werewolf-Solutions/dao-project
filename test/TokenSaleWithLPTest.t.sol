@@ -62,7 +62,7 @@ contract TokenSaleWithLPTest is Test {
     address public positionManager;
 
     uint256 constant TOKENS_FOR_SALE = 10_000_000 ether; // 10M WLF
-    uint256 constant TOKEN_PRICE = 0.0004 ether; // Price per WLF in USDT (18 decimals)
+    uint256 constant TOKEN_PRICE = 0.004 ether; // Price per WLF in USDT (18 decimals)
 
     event SaleStarted(uint256 saleId, uint256 tokensAvailable, uint256 price);
     event SaleEnded(uint256 saleId);

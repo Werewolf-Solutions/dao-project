@@ -17,6 +17,8 @@ import Staking from "@/pages/Staking";
 import Account from "@/pages/Account";
 import Companies from "@/pages/Companies";
 import DeFi from "@/pages/DeFi";
+import Docs from "@/pages/Docs";
+import Business from "@/pages/Business";
 import ErrorPage from "@/pages/ErrorPage";
 import "./index.css";
 
@@ -43,7 +45,9 @@ const router = createBrowserRouter([
 			{ path: "/staking", element: <Staking /> },
 			{ path: "/account", element: <Account /> },
 			{ path: "/companies-house", element: <Companies /> },
+			{ path: "/companies-house/:companyId", element: <Business /> },
 			{ path: "/defi/:companyId", element: <DeFi /> },
+			{ path: "/docs", element: <Docs /> },
 		],
 	},
 ]);

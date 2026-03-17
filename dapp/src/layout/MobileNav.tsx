@@ -6,6 +6,7 @@ const TABS = [
   { to: '/dao',             label: 'DAO',       icon: 'fa-landmark' },
   { to: '/staking',         label: 'Staking',   icon: 'fa-seedling' },
   { to: '/companies-house', label: 'Companies', icon: 'fa-building' },
+  { to: '/docs',            label: 'Docs',      icon: 'fa-file-lines' },
 ];
 
 export default function MobileNav() {

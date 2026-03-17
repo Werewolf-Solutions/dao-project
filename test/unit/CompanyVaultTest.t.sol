@@ -222,6 +222,17 @@ contract CompanyVaultTest is BaseTest {
         CompanyVault(vaultNoAave).supplyToAave(address(mockUSDT), SUPPLY_AMOUNT);
     }
 
+    // ── Admin path: Timelock/admin can call DeFi operations ──────────────────
+
+    function test_admin_can_supply_to_aave() public {
+        // vault.admin == founder (set at init); simulates Timelock executing a DAO proposal
+        vm.prank(founder);
+        vault.supplyToAave(address(mockUSDT), SUPPLY_AMOUNT);
+
+        assertEq(vault.getTokenBalance(address(mockUSDT)), DEPOSIT_USDT - SUPPLY_AMOUNT);
+        assertEq(mockAave.supplied(address(vault), address(mockUSDT)), SUPPLY_AMOUNT);
+    }
+
     // ── Admin: setAllowedToken ────────────────────────────────────────────────
 
     function test_admin_can_whitelist_token() public {

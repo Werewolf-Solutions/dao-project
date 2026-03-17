@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { useAccount, useReadContract, useReadContracts, useWriteContract, useWaitForTransactionReceipt, useSendTransaction } from 'wagmi';
+import { useAccount, useReadContract, useReadContracts, useWriteContract, useWaitForTransactionReceipt, useSendTransaction, usePublicClient } from 'wagmi';
 import { parseUnits, parseEther, encodeAbiParameters, parseAbiParameters, formatEther, formatUnits } from 'viem';
 import { daoABI, werewolfTokenABI, erc20ABI, treasuryABI, tokenSaleABI, companiesHouseABI, stakingABI, companyDeFiABI, companyVaultABI, getAddress } from '@/contracts';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -30,7 +30,7 @@ export default function DAO() {
   const usdcAddress = getAddress(chainId, 'USDC');
   const companyDeFiAddress = getAddress(chainId, 'CompanyDefi');
   // DeFi integration only on chains with a real Aave pool (Base Sepolia, Mainnet)
-  const aaveUsdtAddress = getAddress(chainId, 'AaveToken');
+  const aaveUsdtAddress = getAddress(chainId, 'AaveUSDT');
   // WBTC: mainnet only
   const wbtcAddress: `0x${string}` | undefined = chainId === 1 ? '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599' : undefined;
 
@@ -177,6 +177,87 @@ export default function DAO() {
     query: { enabled: !!companiesHouseAddress && hasDaoCompany },
   });
 
+  // ── Whitelisted vault tokens ─────────────────────────────────────────────────
+  // Candidate list: known addresses from config + any extra discovered via TokenAllowed events.
+  const publicClient = usePublicClient();
+  const ZERO_ADDR_VAULT = '0x0000000000000000000000000000000000000000' as `0x${string}`;
+
+  const knownCandidates = useMemo<`0x${string}`[]>(() => {
+    const list: `0x${string}`[] = [];
+    if (aaveUsdtAddress) list.push(aaveUsdtAddress);
+    if (usdtAddress && usdtAddress !== aaveUsdtAddress) list.push(usdtAddress);
+    if (usdcAddress) list.push(usdcAddress);
+    return list;
+  }, [aaveUsdtAddress, usdtAddress, usdcAddress]);
+
+  const [eventTokenAddrs, setEventTokenAddrs] = useState<`0x${string}`[]>([]);
+  useEffect(() => {
+    if (!daoVaultAddress || (daoVaultAddress as string) === ZERO_ADDR_VAULT || !publicClient) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (publicClient.getLogs as any)({
+      address: daoVaultAddress as `0x${string}`,
+      event: { type: 'event', name: 'TokenAllowed', inputs: [{ name: 'token', type: 'address', indexed: true }, { name: 'allowed', type: 'bool', indexed: false }] },
+      fromBlock: 0n,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    }).then((logs: any[]) => {
+      const allowed = new Set<string>();
+      for (const log of logs) {
+        const token = (log.args?.token as string).toLowerCase();
+        if (log.args?.allowed) allowed.add(token);
+        else allowed.delete(token);
+      }
+      setEventTokenAddrs(Array.from(allowed) as `0x${string}`[]);
+    }).catch(() => {});
+  }, [daoVaultAddress, publicClient]);
+
+  // Deduplicated union of known + event-discovered tokens
+  const allVaultCandidates = useMemo<`0x${string}`[]>(() => {
+    const seen = new Set<string>();
+    const result: `0x${string}`[] = [];
+    for (const t of [...knownCandidates, ...eventTokenAddrs]) {
+      const lower = t.toLowerCase();
+      if (!seen.has(lower)) { seen.add(lower); result.push(t); }
+    }
+    return result;
+  }, [knownCandidates, eventTokenAddrs]);
+
+  // Batch-read: allowedTokens(addr) + symbol + decimals for each candidate
+  const { data: daoVaultTokenMeta } = useReadContracts({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    contracts: allVaultCandidates.flatMap(addr => ([
+      { address: daoVaultAddress as `0x${string}`, abi: companyVaultABI, functionName: 'allowedTokens' as const, args: [addr] as [`0x${string}`] },
+      { address: addr, abi: erc20ABI, functionName: 'symbol' as const },
+      { address: addr, abi: erc20ABI, functionName: 'decimals' as const },
+    ])) as any,
+    query: { enabled: !!daoVaultAddress && (daoVaultAddress as string) !== ZERO_ADDR_VAULT && allVaultCandidates.length > 0 },
+  });
+
+  // Only include tokens that are actually whitelisted in the vault
+  const daoVaultTokenOptions = useMemo(() => {
+    if (!daoVaultTokenMeta) return [];
+    return allVaultCandidates
+      .map((addr, i) => ({
+        address: addr,
+        allowed: (daoVaultTokenMeta[i * 3]?.result as boolean | undefined) ?? false,
+        symbol: (daoVaultTokenMeta[i * 3 + 1]?.result as string | undefined) ?? addr.slice(0, 6),
+        decimals: Number((daoVaultTokenMeta[i * 3 + 2]?.result as bigint | undefined) ?? 18n),
+      }))
+      .filter(t => t.allowed);
+  }, [allVaultCandidates, daoVaultTokenMeta]);
+
+  const [daoVaultSelectedToken, setDaoVaultSelectedToken] = useState<`0x${string}` | ''>('');
+  // Auto-select first token once options load
+  useEffect(() => {
+    if (daoVaultTokenOptions.length > 0 && !daoVaultSelectedToken) {
+      setDaoVaultSelectedToken(daoVaultTokenOptions[0].address);
+    }
+  }, [daoVaultTokenOptions, daoVaultSelectedToken]);
+
+  const selectedTokenMeta = useMemo(
+    () => daoVaultTokenOptions.find(t => t.address.toLowerCase() === daoVaultSelectedToken.toLowerCase()),
+    [daoVaultTokenOptions, daoVaultSelectedToken],
+  );
+
   const { data: daoVaultAaveData, refetch: refetchDaoVaultAave } = useReadContract({
     address: daoVaultAddress,
     abi: companyVaultABI,
@@ -189,6 +270,33 @@ export default function DAO() {
     abi: companyVaultABI,
     functionName: 'minHealthFactor',
     query: { enabled: !!daoVaultAddress, refetchInterval: 60_000 },
+  });
+
+  const { data: daoVaultBorrowingEnabled, refetch: refetchDaoVaultBorrowing } = useReadContract({
+    address: daoVaultAddress,
+    abi: companyVaultABI,
+    functionName: 'borrowingEnabled',
+    query: { enabled: !!daoVaultAddress && (daoVaultAddress as string) !== ZERO_ADDR_VAULT, refetchInterval: 30_000 },
+  });
+
+  const { data: daoVaultAdminAddr } = useReadContract({
+    address: daoVaultAddress,
+    abi: companyVaultABI,
+    functionName: 'admin',
+    query: { enabled: !!daoVaultAddress && (daoVaultAddress as string) !== ZERO_ADDR_VAULT },
+  });
+
+  const { data: daoVaultBalances, refetch: refetchDaoVaultBalances } = useReadContracts({
+    contracts: daoVaultTokenOptions.map(t => ({
+      address: t.address,
+      abi: erc20ABI,
+      functionName: 'balanceOf' as const,
+      args: [daoVaultAddress as `0x${string}`],
+    })) as any,
+    query: {
+      enabled: !!daoVaultAddress && (daoVaultAddress as string) !== ZERO_ADDR_VAULT && daoVaultTokenOptions.length > 0,
+      refetchInterval: 30_000,
+    },
   });
 
   // IDs start at 1; currentCompanyIndex is the next ID to be assigned
@@ -250,9 +358,11 @@ export default function DAO() {
       if (lastAction === 'defi-pause' || lastAction === 'defi-unpause') void refetchDefiPaused();
       if (lastAction === 'defi-borrow-enable' || lastAction === 'defi-borrow-disable') void refetchDefiBorrowing();
       if (lastAction === 'defi-allow-token' || lastAction === 'defi-disallow-token') void refetchDefiUsdtAllowed();
-      if (lastAction === 'dao-vault-proposal') { void refetchDaoVaultAave(); void refetchDaoVaultMinHf(); }
+      if (lastAction === 'dao-vault-proposal') { void refetchDaoVaultAave(); void refetchDaoVaultMinHf(); void refetchDaoVaultBalances(); }
+      if (lastAction === 'vault-borrow-enable' || lastAction === 'vault-borrow-disable') void refetchDaoVaultBorrowing();
+      if (lastAction === 'vault-repay') { void refetchDaoVaultAave(); void refetchDaoVaultBalances(); }
     }
-  }, [isConfirmed, lastAction, refetchCount, refetchWlfAllowance, refetchDaoTokenSale, refetchDefiPaused, refetchDefiBorrowing, refetchDefiUsdtAllowed, refetchDaoVaultAave, refetchDaoVaultMinHf]);
+  }, [isConfirmed, lastAction, refetchCount, refetchWlfAllowance, refetchDaoTokenSale, refetchDefiPaused, refetchDefiBorrowing, refetchDefiUsdtAllowed, refetchDaoVaultAave, refetchDaoVaultMinHf, refetchDaoVaultBorrowing, refetchDaoVaultBalances]);
 
   // Next sale number comes purely from chain: last completed sale + 1
   const nextSaleNumber = saleIdCounter !== undefined ? Number(saleIdCounter) + 1 : undefined;
@@ -261,6 +371,7 @@ export default function DAO() {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalTab, setModalTab] = useState<'quick' | 'raw'>('quick');
+  const [proposalCategory, setProposalCategory] = useState<'all' | 'governance' | 'token-sale' | 'treasury' | 'defi' | 'hr' | 'protocol'>('all');
 
   // Raw proposal inputs
   const [targets, setTargets] = useState('');
@@ -320,6 +431,10 @@ export default function DAO() {
   const [moveFundsAmount, setMoveFundsAmount] = useState('');
   const [moveFundsTo, setMoveFundsTo] = useState('');
 
+  // Quick: move funds from treasury to DAO vault
+  const [treasuryToVaultToken, setTreasuryToVaultToken] = useState<'usdt' | 'wlf' | 'usdc'>('usdt');
+  const [treasuryToVaultAmount, setTreasuryToVaultAmount] = useState('');
+
   // Quick: set CompaniesHouse fees
   const [chWlfBps, setChWlfBps] = useState('50');
   const [chNonWlfBps, setChNonWlfBps] = useState('500');
@@ -328,6 +443,7 @@ export default function DAO() {
   const [daoVaultSupplyAmt, setDaoVaultSupplyAmt] = useState('');
   const [daoVaultWithdrawAmt, setDaoVaultWithdrawAmt] = useState('');
   const [daoVaultBorrowAmt, setDaoVaultBorrowAmt] = useState('');
+  const [daoVaultRepayAmt, setDaoVaultRepayAmt] = useState('');
   const [daoVaultMinHfInput, setDaoVaultMinHfInput] = useState('1.5');
 
   // Quick: update power roles
@@ -341,6 +457,11 @@ export default function DAO() {
   // CompanyDeFi admin
   const [defiAllowTokenInput, setDefiAllowTokenInput] = useState('');
   const isDefiAdmin = !!(defiAdmin && address && defiAdmin.toLowerCase() === address.toLowerCase());
+  const isDaoVaultAdmin = !!(daoVaultAdminAddr && address &&
+    (daoVaultAdminAddr as string).toLowerCase() === address.toLowerCase());
+
+  // ── Mobile section navigation ──────────────────────────────────────────────
+  const [daoSection, setDaoSection] = useState<'overview' | 'admin' | 'proposals'>('overview');
 
   // DAO team live tick (for pending pay display)
   const [daoTeamTick, setDaoTeamTick] = useState(0);
@@ -695,6 +816,29 @@ export default function DAO() {
     setIsModalOpen(false);
   };
 
+  const handleTreasuryToVaultProposal = () => {
+    if (!daoAddress || !treasuryAddress || !daoVaultAddress || !treasuryToVaultAmount) return;
+    const tokenAddr = treasuryToVaultToken === 'wlf' ? wlfAddress
+      : treasuryToVaultToken === 'usdc' ? usdcAddress
+      : usdtAddress;
+    if (!tokenAddr) return;
+    const decimals = treasuryToVaultToken === 'wlf' ? 18 : 6;
+    const amountWei = parseUnits(treasuryToVaultAmount, decimals);
+    if (amountWei <= 0n) return;
+    setLastAction('move-funds-proposal');
+    writeContract({
+      address: daoAddress,
+      abi: daoABI,
+      functionName: 'createProposal',
+      args: [
+        [treasuryAddress],
+        ['withdrawToken(address,uint256,address)'],
+        [encodeAbiParameters(parseAbiParameters('address, uint256, address'), [tokenAddr, amountWei, daoVaultAddress as `0x${string}`])],
+      ],
+    });
+    setIsModalOpen(false);
+  };
+
   const handleSetChFeesProposal = () => {
     if (!daoAddress || !companiesHouseAddress) return;
     const wlfBps = BigInt(parseInt(chWlfBps) || 50);
@@ -715,9 +859,9 @@ export default function DAO() {
 
   const handleDaoVaultSupplyProposal = () => {
     if (!daoAddress || !daoVaultAddress || !daoVaultSupplyAmt) return;
-    const tokenAddr = aaveUsdtAddress ?? usdtAddress;
+    const tokenAddr = daoVaultSelectedToken || (aaveUsdtAddress ?? usdtAddress);
     if (!tokenAddr) return;
-    const decimals = 6;
+    const decimals = selectedTokenMeta?.decimals ?? 6;
     const amountWei = parseUnits(daoVaultSupplyAmt, decimals);
     if (amountWei <= 0n) return;
     setLastAction('dao-vault-proposal');
@@ -736,10 +880,11 @@ export default function DAO() {
 
   const handleDaoVaultWithdrawProposal = () => {
     if (!daoAddress || !daoVaultAddress || !daoVaultWithdrawAmt) return;
-    const tokenAddr = aaveUsdtAddress ?? usdtAddress;
+    const tokenAddr = daoVaultSelectedToken || (aaveUsdtAddress ?? usdtAddress);
     if (!tokenAddr) return;
+    const decimals = selectedTokenMeta?.decimals ?? 6;
     const isMax = daoVaultWithdrawAmt.toLowerCase() === 'max';
-    const amountWei = isMax ? (2n ** 256n - 1n) : parseUnits(daoVaultWithdrawAmt, 6);
+    const amountWei = isMax ? (2n ** 256n - 1n) : parseUnits(daoVaultWithdrawAmt, decimals);
     setLastAction('dao-vault-proposal');
     writeContract({
       address: daoAddress,
@@ -756,9 +901,10 @@ export default function DAO() {
 
   const handleDaoVaultBorrowProposal = () => {
     if (!daoAddress || !daoVaultAddress || !daoVaultBorrowAmt) return;
-    const tokenAddr = aaveUsdtAddress ?? usdtAddress;
+    const tokenAddr = daoVaultSelectedToken || (aaveUsdtAddress ?? usdtAddress);
     if (!tokenAddr) return;
-    const amountWei = parseUnits(daoVaultBorrowAmt, 6);
+    const decimals = selectedTokenMeta?.decimals ?? 6;
+    const amountWei = parseUnits(daoVaultBorrowAmt, decimals);
     if (amountWei <= 0n) return;
     setLastAction('dao-vault-proposal');
     writeContract({
@@ -768,6 +914,28 @@ export default function DAO() {
       args: [
         [daoVaultAddress],
         ['borrowFromAave(address,uint256)'],
+        [encodeAbiParameters(parseAbiParameters('address, uint256'), [tokenAddr, amountWei])],
+      ],
+    });
+    setIsModalOpen(false);
+  };
+
+  const handleDaoVaultRepayProposal = () => {
+    if (!daoAddress || !daoVaultAddress || !daoVaultRepayAmt) return;
+    const tokenAddr = daoVaultSelectedToken || (aaveUsdtAddress ?? usdtAddress);
+    if (!tokenAddr) return;
+    const decimals = selectedTokenMeta?.decimals ?? 6;
+    const isMax = daoVaultRepayAmt.toLowerCase() === 'max';
+    const amountWei = isMax ? (2n ** 256n - 1n) : parseUnits(daoVaultRepayAmt, decimals);
+    if (!isMax && amountWei <= 0n) return;
+    setLastAction('dao-vault-proposal');
+    writeContract({
+      address: daoAddress,
+      abi: daoABI,
+      functionName: 'createProposal',
+      args: [
+        [daoVaultAddress],
+        ['repayToAave(address,uint256)'],
         [encodeAbiParameters(parseAbiParameters('address, uint256'), [tokenAddr, amountWei])],
       ],
     });
@@ -787,6 +955,22 @@ export default function DAO() {
         [daoVaultAddress],
         ['setMinHealthFactor(uint256)'],
         [encodeAbiParameters(parseAbiParameters('uint256'), [hfValue])],
+      ],
+    });
+    setIsModalOpen(false);
+  };
+
+  const handleDaoVaultSetBorrowingProposal = (enabled: boolean) => {
+    if (!daoAddress || !daoVaultAddress) return;
+    setLastAction('dao-vault-proposal');
+    writeContract({
+      address: daoAddress,
+      abi: daoABI,
+      functionName: 'createProposal',
+      args: [
+        [daoVaultAddress],
+        ['setBorrowingEnabled(bool)'],
+        [encodeAbiParameters(parseAbiParameters('bool'), [enabled])],
       ],
     });
     setIsModalOpen(false);
@@ -910,9 +1094,34 @@ export default function DAO() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
+  const showAdminTab = isGuardian || isDaoVaultAdmin || isDefiAdmin;
+  const mobileTabs = [
+    { id: 'overview'  as const, label: 'Overview' },
+    ...(showAdminTab ? [{ id: 'admin' as const, label: 'Admin' }] : []),
+    { id: 'proposals' as const, label: 'Proposals' },
+  ];
+  const showSection = (s: typeof daoSection) => daoSection === s ? '' : 'hidden md:block';
+
   return (
-    <PageContainer maxWidth="lg">
-      <div className="flex items-center justify-between mb-4">
+    <PageContainer maxWidth="3xl">
+      {/* Mobile section tabs — sticky just below the fixed header */}
+      <div className="sticky top-16 z-40 -mx-4 md:hidden bg-[#0a0d14]/95 backdrop-blur border-b border-white/[0.08] flex">
+        {mobileTabs.map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setDaoSection(tab.id)}
+            className={`flex-1 py-2.5 text-xs font-medium transition-colors ${
+              daoSection === tab.id
+                ? 'text-white border-b-2 border-[#8e2421]'
+                : 'text-white/45 hover:text-white/70'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex items-center justify-between mb-4 mt-3">
         <div>
           <h1 className="text-3xl font-bold">DAO Proposals</h1>
           {isGuardian && (
@@ -943,8 +1152,17 @@ export default function DAO() {
 
       <TxStatus isPending={isPending} isConfirming={isConfirming} isConfirmed={isConfirmed} txHash={txHash} label={lastAction} />
 
-      {/* ── Treasury & Governance overview ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+      {/* ── Two-column layout on desktop ── */}
+      <div className="md:grid md:grid-cols-[360px_1fr] md:gap-6 md:items-start mt-4">
+
+        {/* ── LEFT COLUMN: Overview + Admin ── */}
+        <div className="space-y-4">
+
+          {/* Overview section */}
+          <div className={showSection('overview')}>
+
+          {/* ── Treasury & Governance overview ── */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
 
         {/* Treasury Holdings */}
         <div className={`${theme.card} p-4 space-y-2`}>
@@ -1122,6 +1340,25 @@ export default function DAO() {
                 </>
               );
             })()}
+            {daoVaultTokenOptions.length > 0 && (
+              <div className="pt-2 mt-1 border-t border-white/10">
+                <p className="text-xs font-semibold uppercase tracking-wider text-white/30 mb-1.5">Liquid Assets</p>
+                <div className="space-y-1">
+                  {daoVaultTokenOptions.map((t, i) => {
+                    const raw = (daoVaultBalances?.[i]?.result as bigint | undefined);
+                    const fmt = raw !== undefined
+                      ? Number(formatUnits(raw, t.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 })
+                      : '…';
+                    return (
+                      <div key={t.address} className="flex justify-between items-baseline">
+                        <span className={`text-sm ${theme.textMuted}`}>{t.symbol}</span>
+                        <span className="text-sm font-mono text-white">{fmt}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1190,10 +1427,15 @@ export default function DAO() {
         )}
       </div>
 
-      {/* ── Vote Delegation ── */}
-      <LPDelegation daoAddress={daoAddress} lpStakingAddress={lpStakingAddress} />
+          {/* ── Vote Delegation ── */}
+          <LPDelegation daoAddress={daoAddress} lpStakingAddress={lpStakingAddress} />
 
-      {/* ── Guardian: Wire TokenSale into DAO (direct call, no proposal needed) ── */}
+          </div>{/* end overview section */}
+
+          {/* Admin section */}
+          <div className={showSection('admin')}>
+
+          {/* ── Guardian: Wire TokenSale into DAO (direct call, no proposal needed) ── */}
       {isGuardian && tokenSaleAddress && (!daoTokenSaleContract || daoTokenSaleContract === '0x0000000000000000000000000000000000000000') && (
         <div className="mt-4 rounded-xl border border-amber-700/50 bg-amber-950/20 p-4 space-y-2">
           <p className="text-sm font-semibold text-amber-400">Guardian action: Wire TokenSale into DAO</p>
@@ -1312,6 +1554,102 @@ export default function DAO() {
               disabled={isPending || isConfirming}
             >
               Unpause CompaniesHouse
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* ── DAO Vault Admin: Borrowing Control ── */}
+      {daoVaultAddress && (daoVaultAddress as string) !== ZERO_ADDR_VAULT && (isGuardian || isDaoVaultAdmin) && (
+        <div className={`${theme.card} p-4 mt-4 border border-blue-900/30`}>
+          <p className="text-xs font-semibold uppercase tracking-wider text-blue-400/70 mb-1">
+            DAO Vault — Borrowing Control
+          </p>
+          <p className={`text-xs mb-3 ${theme.textMuted}`}>
+            Directly enable or disable borrowing on the DAO company vault. Requires vault admin access.
+            Status: <span className={daoVaultBorrowingEnabled ? 'text-green-400' : 'text-white/40'}>
+              {daoVaultBorrowingEnabled ? 'Enabled' : 'Disabled'}
+            </span>
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="info"
+              size="sm"
+              onClick={() => {
+                if (!daoVaultAddress) return;
+                setLastAction('vault-borrow-enable');
+                writeContract({ address: daoVaultAddress, abi: companyVaultABI, functionName: 'setBorrowingEnabled', args: [true] });
+              }}
+              loading={lastAction === 'vault-borrow-enable' && (isPending || isConfirming)}
+              disabled={isPending || isConfirming || !!daoVaultBorrowingEnabled}
+            >
+              Enable Borrowing
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => {
+                if (!daoVaultAddress) return;
+                setLastAction('vault-borrow-disable');
+                writeContract({ address: daoVaultAddress, abi: companyVaultABI, functionName: 'setBorrowingEnabled', args: [false] });
+              }}
+              loading={lastAction === 'vault-borrow-disable' && (isPending || isConfirming)}
+              disabled={isPending || isConfirming || !daoVaultBorrowingEnabled}
+            >
+              Disable Borrowing
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* ── DAO Vault Admin: Repay to Aave ── */}
+      {daoVaultAddress && (daoVaultAddress as string) !== ZERO_ADDR_VAULT && (isGuardian || isDaoVaultAdmin) && (
+        <div className={`${theme.card} p-4 mt-4 border border-blue-900/30`}>
+          <p className="text-xs font-semibold uppercase tracking-wider text-blue-400/70 mb-1">
+            DAO Vault — Repay to Aave
+          </p>
+          <p className={`text-xs mb-3 ${theme.textMuted}`}>
+            Directly repay a borrow position on the DAO vault using tokens held in the vault.
+            {!daoVaultBorrowingEnabled && (
+              <span className="text-yellow-400/80"> ⚠ Borrowing must be enabled to repay.</span>
+            )}
+          </p>
+          <div className="space-y-2">
+            {daoVaultTokenOptions.length > 0 && (
+              <select
+                value={daoVaultSelectedToken}
+                onChange={e => setDaoVaultSelectedToken(e.target.value as `0x${string}`)}
+                className={theme.input}
+              >
+                {daoVaultTokenOptions.map(t => (
+                  <option key={t.address} value={t.address}>{t.symbol}</option>
+                ))}
+              </select>
+            )}
+            <Input
+              label={`Amount (${selectedTokenMeta?.symbol ?? 'token'}, or 'max')`}
+              type="text"
+              value={daoVaultRepayAmt}
+              onChange={e => setDaoVaultRepayAmt(e.target.value)}
+              placeholder="500 or max"
+            />
+            <Button
+              variant="info"
+              size="sm"
+              onClick={() => {
+                if (!daoVaultAddress || !daoVaultRepayAmt) return;
+                const tokenAddr = daoVaultSelectedToken || (aaveUsdtAddress ?? usdtAddress);
+                if (!tokenAddr) return;
+                const decimals = selectedTokenMeta?.decimals ?? 6;
+                const isMax = daoVaultRepayAmt.toLowerCase() === 'max';
+                const amountWei = isMax ? (2n ** 256n - 1n) : parseUnits(daoVaultRepayAmt, decimals);
+                setLastAction('vault-repay');
+                writeContract({ address: daoVaultAddress, abi: companyVaultABI, functionName: 'repayToAave', args: [tokenAddr, amountWei] });
+              }}
+              loading={lastAction === 'vault-repay' && (isPending || isConfirming)}
+              disabled={isPending || isConfirming || !daoVaultRepayAmt || !daoVaultBorrowingEnabled}
+            >
+              Repay to Aave
             </Button>
           </div>
         </div>
@@ -1457,51 +1795,64 @@ export default function DAO() {
         </div>
       )}
 
-      {/* ── Status filter chips ── */}
-      {proposalIds.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 mt-3 mb-1">
-          {ALL_STATES.map(s => (
-            <button
-              key={s}
-              onClick={() => toggleState(s)}
-              className={`text-xs px-2.5 py-0.5 rounded-full border transition-colors ${
-                visibleStates.has(s)
-                  ? 'border-white/30 text-white bg-white/10'
-                  : `border-white/10 ${theme.textMuted} hover:text-white/60`
-              }`}
-            >
-              {s}
-            </button>
-          ))}
-          {visibleStates.size > 0 && (
-            <button
-              onClick={() => setVisibleStates(new Set())}
-              className="text-xs text-white/30 hover:text-white/55 px-1 transition-colors"
-            >
-              clear
-            </button>
-          )}
-        </div>
-      )}
+          </div>{/* end admin section */}
 
-      {proposalIds.length === 0 ? (
-        <p className={`text-center mt-12 ${theme.textMuted}`}>No proposals yet.</p>
-      ) : (
-        <div className="space-y-4 mt-4">
-          {proposalIds.map((id) => (
-            <ProposalCard
-              key={id}
-              id={id}
-              daoAddress={daoAddress}
-              isGuardian={isGuardian}
-              visibleStates={visibleStates}
-              wlfAddress={wlfAddress}
-              stakingAddress={stakingAddress}
-              lpStakingAddress={lpStakingAddress}
-            />
-          ))}
-        </div>
-      )}
+        </div>{/* end left column */}
+
+        {/* ── RIGHT COLUMN: Proposals ── */}
+        <div>
+          <div className={showSection('proposals')}>
+
+            {/* ── Status filter chips ── */}
+            {proposalIds.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-1">
+                {ALL_STATES.map(s => (
+                  <button
+                    key={s}
+                    onClick={() => toggleState(s)}
+                    className={`text-xs px-2.5 py-0.5 rounded-full border transition-colors ${
+                      visibleStates.has(s)
+                        ? 'border-white/30 text-white bg-white/10'
+                        : `border-white/10 ${theme.textMuted} hover:text-white/60`
+                    }`}
+                  >
+                    {s}
+                  </button>
+                ))}
+                {visibleStates.size > 0 && (
+                  <button
+                    onClick={() => setVisibleStates(new Set())}
+                    className="text-xs text-white/30 hover:text-white/55 px-1 transition-colors"
+                  >
+                    clear
+                  </button>
+                )}
+              </div>
+            )}
+
+            {proposalIds.length === 0 ? (
+              <p className={`text-center mt-12 ${theme.textMuted}`}>No proposals yet.</p>
+            ) : (
+              <div className="space-y-4 mt-4">
+                {proposalIds.map((id) => (
+                  <ProposalCard
+                    key={id}
+                    id={id}
+                    daoAddress={daoAddress}
+                    isGuardian={isGuardian}
+                    visibleStates={visibleStates}
+                    wlfAddress={wlfAddress}
+                    stakingAddress={stakingAddress}
+                    lpStakingAddress={lpStakingAddress}
+                  />
+                ))}
+              </div>
+            )}
+
+          </div>{/* end proposals section */}
+        </div>{/* end right column */}
+
+      </div>{/* end two-column grid */}
 
       {/* ── Create Proposal modal ── */}
       {isModalOpen && (
@@ -1510,15 +1861,17 @@ export default function DAO() {
           onClick={() => setIsModalOpen(false)}
         >
           <div
-            className={`${theme.card} w-full max-w-lg mx-4 flex flex-col max-h-[90vh]`}
+            className={`${theme.card} w-full max-w-2xl mx-4 flex flex-col max-h-[90vh]`}
             onClick={(e) => e.stopPropagation()}
           >
             {/* Fixed header */}
             <div className={`px-6 py-4 ${theme.divider} shrink-0`}>
-              <h2 className="text-lg font-bold">Create Proposal</h2>
-              <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
-                Cost: {proposalCost ? (Number(proposalCost) / 1e18).toFixed(0) : '10'} WLF (paid to Treasury)
-              </p>
+              <div className="flex items-baseline justify-between">
+                <h2 className="text-lg font-bold">Create Proposal</h2>
+                <p className={`text-xs ${theme.textMuted}`}>
+                  Cost: {proposalCost ? (Number(proposalCost) / 1e18).toFixed(0) : '10'} WLF
+                </p>
+              </div>
               <div className="flex gap-1 mt-3">
                 <button
                   className={`text-xs px-3 py-1 rounded-full font-medium transition-colors ${modalTab === 'quick' ? 'bg-primary text-white' : `${theme.textMuted} hover:text-white`}`}
@@ -1533,635 +1886,400 @@ export default function DAO() {
                   Raw
                 </button>
               </div>
+              {modalTab === 'quick' && (
+                <div className="flex gap-1 mt-2 flex-wrap">
+                  {(['all', 'governance', 'token-sale', 'treasury', 'defi', 'hr', 'protocol'] as const).map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setProposalCategory(cat)}
+                      className={`text-xs px-2.5 py-0.5 rounded-full border transition-colors ${proposalCategory === cat ? 'border-white/30 text-white bg-white/10' : `border-white/10 ${theme.textMuted} hover:text-white/60`}`}
+                    >
+                      {cat === 'all' ? 'All' : cat === 'token-sale' ? 'Token Sale' : cat.charAt(0).toUpperCase() + cat.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Scrollable body */}
             {modalTab === 'quick' ? (
-              <div className="px-6 py-5 space-y-4 overflow-y-auto">
+              <div className="px-4 py-3 space-y-2.5 overflow-y-auto">
 
-                {/* ── Set DAO Contract on TokenSale (one-time fix for existing deployments) ── */}
-                {(!tokenSaleDaoContract || tokenSaleDaoContract === '0x0000000000000000000000000000000000000000') && (
-                  <div className={`${theme.cardNested} p-4 space-y-2 border border-amber-700/40`}>
+                {/* ── PROTOCOL: Fix Wire DAO into TokenSale ── */}
+                {(proposalCategory === 'all' || proposalCategory === 'protocol') && (!tokenSaleDaoContract || tokenSaleDaoContract === '0x0000000000000000000000000000000000000000') && (
+                  <div className={`${theme.cardNested} p-3 space-y-2 border border-amber-700/40`}>
                     <p className="font-semibold text-sm text-amber-400">Fix: Wire DAO into TokenSale</p>
                     <p className={`text-xs ${theme.textMuted}`}>
-                      TokenSale.daoContract is not set. Without this, sale #0/#1 buyers&apos; voting power is
-                      never delegated to the founder when the sale ends. This proposal calls
-                      tokenSale.setDaoContract(dao).
+                      TokenSale.daoContract is not set — sale buyers&apos; voting power won&apos;t be delegated.
                     </p>
-                    <div className={`text-xs font-mono ${theme.textMuted} pt-1`}>
-                      tokenSale.setDaoContract({daoAddress?.slice(0, 10)}…)
-                    </div>
-                    <Button
-                      variant="info"
-                      size="sm"
-                      onClick={handleSetDaoContractProposal}
-                      disabled={!tokenSaleAddress || isPending || isConfirming}
-                      loading={isPending || isConfirming}
-                    >
+                    <p className={`text-xs font-mono ${theme.textMuted}`}>tokenSale.setDaoContract({daoAddress?.slice(0, 10)}…)</p>
+                    <Button variant="info" size="sm" onClick={handleSetDaoContractProposal} disabled={!tokenSaleAddress || isPending || isConfirming} loading={isPending || isConfirming}>
                       Submit Fix Proposal
                     </Button>
                   </div>
                 )}
 
-                {/* ── Start Sale #N — hidden when a sale is active or a proposal for it already exists ── */}
-                {!saleActive && nextSaleNumber !== undefined && (
-                  <div className={`${theme.cardNested} p-4 space-y-3`}>
+                {/* ── TOKEN SALE ── */}
+                {(proposalCategory === 'all' || proposalCategory === 'token-sale') && !saleActive && nextSaleNumber !== undefined && (
+                  <div className={`${theme.cardNested} p-3 space-y-2`}>
                     <div>
                       <p className="font-semibold text-sm">Start Sale #{nextSaleNumber}</p>
                       <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
-                        Enter the USDT target. WLF is calculated automatically from the current token price.
-                        The sale price must be ≥ the current floor price.
+                        USDT target → WLF calculated automatically.
+                        {tokenSalePrice !== undefined && <> Floor: <span className="text-white font-mono">{formatUnits(tokenSalePrice, 18)} USDT/WLF</span></>}
                       </p>
-                      {tokenSalePrice !== undefined && (
-                        <p className={`text-xs mt-1 ${theme.textMuted}`}>
-                          Current floor price:{' '}
-                          <span className="text-white font-mono">{formatUnits(tokenSalePrice, 18)} USDT/WLF</span>
-                        </p>
-                      )}
                     </div>
-
-                    <Input
-                      label="USDT to raise"
-                      type="number"
-                      min="0"
-                      value={saleUsdtTarget}
-                      onChange={e => setSaleUsdtTarget(e.target.value)}
-                      placeholder="100000"
-                    />
-
-                    <Input
-                      label="Sale price (USDT / WLF)"
-                      type="number"
-                      min="0"
-                      value={salePriceInput}
-                      onChange={e => setSalePriceInput(e.target.value)}
-                      placeholder="0.004"
-                    />
-
+                    <Input label="USDT to raise" type="number" min="0" value={saleUsdtTarget} onChange={e => setSaleUsdtTarget(e.target.value)} placeholder="100000" />
+                    <Input label="Sale price (USDT / WLF)" type="number" min="0" value={salePriceInput} onChange={e => setSalePriceInput(e.target.value)} placeholder="0.004" />
                     {saleWlfAmount > 0n && (
                       <p className={`text-xs ${theme.textMuted}`}>
-                        WLF to allocate:{' '}
-                        <span className="text-white font-mono">
-                          {Number(formatUnits(saleWlfAmount, 18)).toLocaleString(undefined, { maximumFractionDigits: 0 })} WLF
-                        </span>
+                        WLF to allocate: <span className="text-white font-mono">{Number(formatUnits(saleWlfAmount, 18)).toLocaleString(undefined, { maximumFractionDigits: 0 })} WLF</span>
                       </p>
                     )}
-
-                    <div className={`text-xs font-mono ${theme.textMuted} space-y-0.5 pt-1`}>
-                      <p>1. werewolfToken.airdrop(tokenSale, {saleWlfAmount > 0n ? Number(formatUnits(saleWlfAmount, 18)).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '?'} WLF)</p>
-                      <p>2. tokenSale.startSale(…, {salePriceInput || '?'} USDT/WLF)</p>
-                    </div>
-
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      onClick={handleStartSaleProposal}
-                      disabled={!tokenSaleAddress || saleWlfAmount <= 0n || salePriceWei <= 0n || isPending || isConfirming}
-                      loading={isPending || isConfirming}
-                    >
+                    <Button variant="primary" size="sm" onClick={handleStartSaleProposal} disabled={!tokenSaleAddress || saleWlfAmount <= 0n || salePriceWei <= 0n || isPending || isConfirming} loading={isPending || isConfirming}>
                       Submit Start Sale #{nextSaleNumber}
                     </Button>
                   </div>
                 )}
 
-                {/* ── Set Voting Period ── */}
-                <div className={`${theme.cardNested} p-4 space-y-3`}>
-                  <div>
-                    <p className="font-semibold text-sm">Update Voting Period</p>
-                    <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
-                      Current: {currentVotingPeriod !== undefined ? `${Number(currentVotingPeriod) / 3600}h` : '…'}
-                      {' · '}Min: 1h
-                    </p>
+                {(proposalCategory === 'all' || proposalCategory === 'token-sale') && (
+                  <div className={`${theme.cardNested} p-3 space-y-2`}>
+                    <div>
+                      <p className="font-semibold text-sm">Buy Back WLF</p>
+                      {(!treasurySwapRouter || treasurySwapRouter === '0x0000000000000000000000000000000000000000') && (
+                        <p className="text-xs mt-0.5 text-amber-400">Swap router not configured.</p>
+                      )}
+                      {treasuryUsdtBalance !== undefined && (
+                        <p className={`text-xs mt-0.5 ${theme.textMuted}`}>Treasury USDT: <span className="text-white font-mono">{(Number(treasuryUsdtBalance) / 1e6).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span></p>
+                      )}
+                    </div>
+                    <Input label="USDT to spend" type="number" min="0" value={buybackUsdt} onChange={e => setBuybackUsdt(e.target.value)} placeholder="90000" />
+                    <Input label="Min WLF out (0 = no guard)" type="number" min="0" value={buybackMinWlf} onChange={e => setBuybackMinWlf(e.target.value)} placeholder="0" />
+                    <Button variant="primary" size="sm" onClick={handleBuybackProposal} disabled={!buybackUsdt || parseFloat(buybackUsdt) <= 0 || !treasuryAddress || isPending || isConfirming} loading={isPending || isConfirming}>
+                      Submit Buyback Proposal
+                    </Button>
                   </div>
-                  <Input
-                    label="New period (hours)"
-                    type="number"
-                    min="1"
-                    value={vpHours}
-                    onChange={e => setVpHours(e.target.value)}
-                    placeholder="24"
-                  />
-                  <p className={`text-xs font-mono ${theme.textMuted}`}>
-                    Calls: dao.setVotingPeriod({Math.max(3600, Math.round(parseFloat(vpHours || '0') * 3600))}s)
-                  </p>
-                  <Button
-                    variant="info"
-                    size="sm"
-                    onClick={handleSetVotingPeriod}
-                    disabled={!vpHours || parseFloat(vpHours) < 1 || isPending || isConfirming}
-                    loading={isPending || isConfirming}
-                  >
-                    Submit
-                  </Button>
-                </div>
+                )}
 
-                {/* ── Set Voting Delay ── */}
-                <div className={`${theme.cardNested} p-4 space-y-3`}>
-                  <div>
-                    <p className="font-semibold text-sm">Update Voting Delay</p>
-                    <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
-                      Current: {currentVotingDelay !== undefined ? `${Number(currentVotingDelay)} block(s)` : '…'}
-                    </p>
-                  </div>
-                  <Input
-                    label="New delay (blocks)"
-                    type="number"
-                    min="1"
-                    value={vdBlocks}
-                    onChange={e => setVdBlocks(e.target.value)}
-                    placeholder="1"
-                  />
-                  <p className={`text-xs font-mono ${theme.textMuted}`}>
-                    Calls: dao.setVotingDelay({Math.max(1, parseInt(vdBlocks || '0') || 1)} blocks)
-                  </p>
-                  <Button
-                    variant="info"
-                    size="sm"
-                    onClick={handleSetVotingDelay}
-                    disabled={!vdBlocks || parseInt(vdBlocks) < 1 || isPending || isConfirming}
-                    loading={isPending || isConfirming}
-                  >
-                    Submit
-                  </Button>
-                </div>
-
-                {/* ── WLF Buyback ── */}
-                <div className={`${theme.cardNested} p-4 space-y-3`}>
-                  <div>
-                    <p className="font-semibold text-sm">Buy Back WLF</p>
-                    <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
-                      Propose spending treasury USDT to buy WLF from the Uniswap pool.
-                      Purchased WLF stays in treasury and raises the market price.
-                    </p>
-                    {treasuryUsdtBalance !== undefined && (
-                      <p className={`text-xs mt-1 ${theme.textMuted}`}>
-                        Treasury USDT: <span className="text-white font-mono">{(Number(treasuryUsdtBalance) / 1e6).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
-                      </p>
-                    )}
-                    {!treasurySwapRouter || treasurySwapRouter === '0x0000000000000000000000000000000000000000' ? (
-                      <p className="text-xs mt-1 text-amber-400">Swap router not configured — deploy with swap router or call setSwapRouter first.</p>
-                    ) : null}
-                  </div>
-                  <Input
-                    label="USDT to spend"
-                    type="number"
-                    min="0"
-                    value={buybackUsdt}
-                    onChange={e => setBuybackUsdt(e.target.value)}
-                    placeholder="90000"
-                  />
-                  <Input
-                    label="Min WLF out (0 = no slippage guard)"
-                    type="number"
-                    min="0"
-                    value={buybackMinWlf}
-                    onChange={e => setBuybackMinWlf(e.target.value)}
-                    placeholder="0"
-                  />
-                  <p className={`text-xs font-mono ${theme.textMuted}`}>
-                    Calls: treasury.buybackWLF({buybackUsdt || '0'} USDT, min {buybackMinWlf || '0'} WLF)
-                  </p>
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={handleBuybackProposal}
-                    disabled={!buybackUsdt || parseFloat(buybackUsdt) <= 0 || !treasuryAddress || isPending || isConfirming}
-                    loading={isPending || isConfirming}
-                  >
-                    Submit Buyback Proposal
-                  </Button>
-                </div>
-
-                {/* ── Airdrop WLF ── */}
-                <div className={`${theme.cardNested} p-4 space-y-3`}>
-                  <div>
-                    <p className="font-semibold text-sm">Airdrop WLF</p>
-                    <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
-                      Each address receives the specified amount. One action per address.
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    {airdropEntries.map((entry, i) => (
-                      <div key={i} className="space-y-0.5">
-                        <div className="flex gap-2 items-end">
-                          <div className="flex-1">
-                            <Input
-                              label={i === 0 ? 'Address' : undefined}
-                              type="text"
-                              value={entry.address}
-                              onChange={e => updateAirdropRow(i, 'address', e.target.value)}
-                              placeholder="0x..."
-                              style={airdropRowErrors[i].address ? { borderColor: 'rgb(248 113 113)' } : undefined}
-                            />
-                          </div>
-                          <div className="w-28">
-                            <Input
-                              label={i === 0 ? 'Amount (WLF)' : undefined}
-                              type="number"
-                              min="0"
-                              value={entry.amount}
-                              onChange={e => updateAirdropRow(i, 'amount', e.target.value)}
-                              placeholder="1000"
-                              style={airdropRowErrors[i].amount ? { borderColor: 'rgb(248 113 113)' } : undefined}
-                            />
-                          </div>
-                          {airdropEntries.length > 1 && (
-                            <button
-                              onClick={() => removeAirdropRow(i)}
-                              className={`mb-0.5 px-2 py-1.5 text-sm rounded ${theme.textMuted} hover:text-red-400 transition-colors`}
-                              title="Remove"
-                            >
-                              ✕
-                            </button>
-                          )}
-                        </div>
-                        {(airdropRowErrors[i].address || airdropRowErrors[i].amount) && (
-                          <p className="text-red-400 text-xs">
-                            {airdropRowErrors[i].address ?? airdropRowErrors[i].amount}
-                          </p>
-                        )}
+                {/* ── GOVERNANCE ── */}
+                {(proposalCategory === 'all' || proposalCategory === 'governance') && (
+                  <>
+                    <div className={`${theme.cardNested} p-3 space-y-2`}>
+                      <div>
+                        <p className="font-semibold text-sm">Update Voting Period</p>
+                        <p className={`text-xs mt-0.5 ${theme.textMuted}`}>Current: {currentVotingPeriod !== undefined ? `${Number(currentVotingPeriod) / 3600}h` : '…'} · Min: 1h</p>
                       </div>
-                    ))}
-                  </div>
+                      <Input label="New period (hours)" type="number" min="1" value={vpHours} onChange={e => setVpHours(e.target.value)} placeholder="24" />
+                      <p className={`text-xs font-mono ${theme.textMuted}`}>dao.setVotingPeriod({Math.max(3600, Math.round(parseFloat(vpHours || '0') * 3600))}s)</p>
+                      <Button variant="info" size="sm" onClick={handleSetVotingPeriod} disabled={!vpHours || parseFloat(vpHours) < 1 || isPending || isConfirming} loading={isPending || isConfirming}>Submit</Button>
+                    </div>
 
-                  <button
-                    onClick={addAirdropRow}
-                    className={`text-xs ${theme.textMuted} hover:text-white transition-colors flex items-center gap-1`}
-                  >
-                    <span className="text-base leading-none">+</span> Add address
-                  </button>
+                    <div className={`${theme.cardNested} p-3 space-y-2`}>
+                      <div>
+                        <p className="font-semibold text-sm">Update Voting Delay</p>
+                        <p className={`text-xs mt-0.5 ${theme.textMuted}`}>Current: {currentVotingDelay !== undefined ? `${Number(currentVotingDelay)} block(s)` : '…'}</p>
+                      </div>
+                      <Input label="New delay (blocks)" type="number" min="1" value={vdBlocks} onChange={e => setVdBlocks(e.target.value)} placeholder="1" />
+                      <p className={`text-xs font-mono ${theme.textMuted}`}>dao.setVotingDelay({Math.max(1, parseInt(vdBlocks || '0') || 1)} blocks)</p>
+                      <Button variant="info" size="sm" onClick={handleSetVotingDelay} disabled={!vdBlocks || parseInt(vdBlocks) < 1 || isPending || isConfirming} loading={isPending || isConfirming}>Submit</Button>
+                    </div>
+                  </>
+                )}
 
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={handleAirdropProposal}
-                    disabled={airdropHasErrors || !wlfAddress || isPending || isConfirming}
-                    loading={isPending || isConfirming}
-                  >
-                    Submit Airdrop Proposal
-                  </Button>
-                </div>
+                {/* ── TREASURY ── */}
+                {(proposalCategory === 'all' || proposalCategory === 'treasury') && (
+                  <>
+                    <div className={`${theme.cardNested} p-3 space-y-2`}>
+                      <div>
+                        <p className="font-semibold text-sm">Move Treasury Funds</p>
+                        <div className="flex gap-3 mt-0.5">
+                          <p className={`text-xs ${theme.textMuted}`}>WLF: <span className="text-white font-mono">{treasuryWlfBalance !== undefined ? Number(formatEther(treasuryWlfBalance)).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '…'}</span></p>
+                          <p className={`text-xs ${theme.textMuted}`}>USDT: <span className="text-white font-mono">{treasuryUsdtBalance !== undefined ? Number(formatUnits(treasuryUsdtBalance, 6)).toLocaleString(undefined, { maximumFractionDigits: 2 }) : '…'}</span></p>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={() => setMoveFundsToken('usdt')} className={`text-xs px-3 py-1 rounded-full border transition-colors ${moveFundsToken === 'usdt' ? 'bg-primary border-primary text-white' : `border-white/10 ${theme.textMuted}`}`}>USDT</button>
+                        <button onClick={() => setMoveFundsToken('wlf')} className={`text-xs px-3 py-1 rounded-full border transition-colors ${moveFundsToken === 'wlf' ? 'bg-primary border-primary text-white' : `border-white/10 ${theme.textMuted}`}`}>WLF</button>
+                      </div>
+                      <Input label={`Amount (${moveFundsToken.toUpperCase()})`} type="number" min="0" value={moveFundsAmount} onChange={e => setMoveFundsAmount(e.target.value)} placeholder="1000" />
+                      <Input label="Recipient address" type="text" value={moveFundsTo} onChange={e => setMoveFundsTo(e.target.value)} placeholder="0x..." />
+                      <p className={`text-xs font-mono ${theme.textMuted}`}>treasury.withdrawToken({moveFundsToken.toUpperCase()}, {moveFundsAmount || '?'}, {moveFundsTo ? `${moveFundsTo.slice(0, 8)}…` : '?'})</p>
+                      <Button variant="primary" size="sm" onClick={handleMoveFundsProposal} disabled={!moveFundsAmount || parseFloat(moveFundsAmount) <= 0 || !moveFundsTo || isPending || isConfirming} loading={isPending || isConfirming}>
+                        Submit Move Funds Proposal
+                      </Button>
+                    </div>
 
-                {/* ── Airdrop WLF to Companies ── */}
-                <div className={`${theme.cardNested} p-4 space-y-3`}>
-                  <div>
-                    <p className="font-semibold text-sm">Airdrop WLF to Companies</p>
-                    <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
-                      Select registered companies and airdrop WLF to each company wallet.
-                      One operation per company.
-                    </p>
-                  </div>
+                    {daoVaultAddress && (daoVaultAddress as string) !== ZERO_ADDR_VAULT && (
+                      <div className={`${theme.cardNested} p-3 space-y-2`}>
+                        <p className="font-semibold text-sm">Treasury → DAO Vault</p>
+                        <div className="flex gap-2">
+                          {(['usdt', 'wlf', ...(usdcAddress ? ['usdc' as const] : [])] as ('usdt' | 'wlf' | 'usdc')[]).map((t) => (
+                            <button key={t} onClick={() => setTreasuryToVaultToken(t)} className={`text-xs px-3 py-1 rounded-full border transition-colors ${treasuryToVaultToken === t ? 'bg-primary border-primary text-white' : `border-white/10 ${theme.textMuted}`}`}>
+                              {t.toUpperCase()}
+                            </button>
+                          ))}
+                        </div>
+                        <Input label={`Amount (${treasuryToVaultToken.toUpperCase()})`} type="number" min="0" value={treasuryToVaultAmount} onChange={e => setTreasuryToVaultAmount(e.target.value)} placeholder="1000" />
+                        <p className={`text-xs font-mono ${theme.textMuted}`}>treasury.withdrawToken({treasuryToVaultToken.toUpperCase()}, {treasuryToVaultAmount || '?'}, vault)</p>
+                        <Button variant="primary" size="sm" onClick={handleTreasuryToVaultProposal} disabled={!treasuryToVaultAmount || parseFloat(treasuryToVaultAmount) <= 0 || isPending || isConfirming} loading={isPending || isConfirming}>
+                          Submit Treasury → Vault Proposal
+                        </Button>
+                      </div>
+                    )}
 
-                  {/* Company checklist */}
-                  {activeCompanies.length === 0 ? (
-                    <p className={`text-xs ${theme.textMuted}`}>No active companies found.</p>
-                  ) : (
-                    <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                      {activeCompanies.map(company => (
-                        <label key={company.companyId} className="flex items-center gap-2.5 cursor-pointer group">
-                          <input
-                            type="checkbox"
-                            checked={selectedCompanyIds.has(company.companyId)}
-                            onChange={() => toggleCompany(company.companyId)}
-                            className="accent-primary w-3.5 h-3.5 rounded"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <span className="text-sm text-white group-hover:text-white/80 truncate">{company.name}</span>
-                            <span className={`text-xs ${theme.textMuted} ml-1.5`}>{company.industry}</span>
+                    <div className={`${theme.cardNested} p-3 space-y-2`}>
+                      <div>
+                        <p className="font-semibold text-sm">Airdrop WLF</p>
+                        <p className={`text-xs mt-0.5 ${theme.textMuted}`}>Each address receives the specified amount.</p>
+                      </div>
+                      <div className="space-y-2">
+                        {airdropEntries.map((entry, i) => (
+                          <div key={i} className="space-y-0.5">
+                            <div className="flex gap-2 items-end">
+                              <div className="flex-1">
+                                <Input label={i === 0 ? 'Address' : undefined} type="text" value={entry.address} onChange={e => updateAirdropRow(i, 'address', e.target.value)} placeholder="0x..." style={airdropRowErrors[i].address ? { borderColor: 'rgb(248 113 113)' } : undefined} />
+                              </div>
+                              <div className="w-28">
+                                <Input label={i === 0 ? 'Amount (WLF)' : undefined} type="number" min="0" value={entry.amount} onChange={e => updateAirdropRow(i, 'amount', e.target.value)} placeholder="1000" style={airdropRowErrors[i].amount ? { borderColor: 'rgb(248 113 113)' } : undefined} />
+                              </div>
+                              {airdropEntries.length > 1 && (
+                                <button onClick={() => removeAirdropRow(i)} className={`mb-0.5 px-2 py-1.5 text-sm rounded ${theme.textMuted} hover:text-red-400 transition-colors`} title="Remove">✕</button>
+                              )}
+                            </div>
+                            {(airdropRowErrors[i].address || airdropRowErrors[i].amount) && (
+                              <p className="text-red-400 text-xs">{airdropRowErrors[i].address ?? airdropRowErrors[i].amount}</p>
+                            )}
                           </div>
-                          <span className={`text-xs font-mono ${theme.textMuted} shrink-0`}>
-                            {company.operatorAddress.slice(0, 6)}…{company.operatorAddress.slice(-4)}
-                          </span>
-                        </label>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Select all / none */}
-                  {activeCompanies.length > 1 && (
-                    <div className="flex gap-3">
-                      <button
-                        onClick={() => setSelectedCompanyIds(new Set(activeCompanies.map(c => c.companyId)))}
-                        className={`text-xs ${theme.textMuted} hover:text-white transition-colors`}
-                      >
-                        Select all
+                        ))}
+                      </div>
+                      <button onClick={addAirdropRow} className={`text-xs ${theme.textMuted} hover:text-white transition-colors flex items-center gap-1`}>
+                        <span className="text-base leading-none">+</span> Add address
                       </button>
-                      <button
-                        onClick={() => setSelectedCompanyIds(new Set())}
-                        className={`text-xs ${theme.textMuted} hover:text-white transition-colors`}
-                      >
-                        Clear
-                      </button>
+                      <Button variant="primary" size="sm" onClick={handleAirdropProposal} disabled={airdropHasErrors || !wlfAddress || isPending || isConfirming} loading={isPending || isConfirming}>
+                        Submit Airdrop Proposal
+                      </Button>
                     </div>
-                  )}
 
-                  <Input
-                    label="Amount per company (WLF)"
-                    type="number"
-                    min="0"
-                    value={companyAirdropAmount}
-                    onChange={e => setCompanyAirdropAmount(e.target.value)}
-                    placeholder="1000"
-                  />
-
-                  {selectedCompanyIds.size > 0 && companyAirdropAmount && (
-                    <p className={`text-xs font-mono ${theme.textMuted}`}>
-                      {selectedCompanyIds.size} operation{selectedCompanyIds.size > 1 ? 's' : ''} ·{' '}
-                      Total: {(selectedCompanyIds.size * parseFloat(companyAirdropAmount || '0')).toLocaleString()} WLF
-                    </p>
-                  )}
-
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={handleCompanyAirdropProposal}
-                    disabled={selectedCompanyIds.size === 0 || !companyAirdropAmount || parseFloat(companyAirdropAmount) <= 0 || !wlfAddress || isPending || isConfirming}
-                    loading={isPending || isConfirming}
-                  >
-                    Submit Company Airdrop Proposal
-                  </Button>
-                </div>
-
-                {/* ── Hire Employee ── */}
-                <div className={`${theme.cardNested} p-4 space-y-3`}>
-                  <div>
-                    <p className="font-semibold text-sm">Hire Employee</p>
-                    <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
-                      Add a new employee to a company via governance. Defaults to the DAO company.
-                    </p>
-                  </div>
-                  <Input label="Employee address" type="text" value={hireAddr} onChange={e => setHireAddr(e.target.value)} placeholder="0x..." />
-                  <Input label="Name" type="text" value={hireName} onChange={e => setHireName(e.target.value)} placeholder="Alice" />
-                  <Input label="Role" type="text" value={hireRole} onChange={e => setHireRole(e.target.value)} placeholder="Engineer" />
-                  <Input label="Monthly salary (USD)" type="number" min="0" value={hireSalaryMonthly} onChange={e => setHireSalaryMonthly(e.target.value)} placeholder="5000" />
-                  <Input label="Company ID" type="number" min="1" value={hireCompanyId} onChange={e => setHireCompanyId(e.target.value)} placeholder="1" />
-                  {hireSalaryMonthly && (
-                    <p className={`text-xs font-mono ${theme.textMuted}`}>
-                      ≈ {Math.round(parseFloat(hireSalaryMonthly || '0') * 1_000_000 / 730).toLocaleString()} USDT-wei/hr
-                    </p>
-                  )}
-                  <Button
-                    variant="primary" size="sm"
-                    onClick={handleHireEmployeeProposal}
-                    disabled={!hireAddr || !hireName || !hireRole || !hireSalaryMonthly || !hireCompanyId || isPending || isConfirming}
-                    loading={isPending || isConfirming}
-                  >
-                    Submit Hire Proposal
-                  </Button>
-                </div>
-
-                {/* ── Fire Employee ── */}
-                <div className={`${theme.cardNested} p-4 space-y-3`}>
-                  <div>
-                    <p className="font-semibold text-sm">Fire Employee</p>
-                    <p className={`text-xs mt-0.5 ${theme.textMuted}`}>Soft-remove an employee from a company.</p>
-                  </div>
-                  <Input label="Employee address" type="text" value={fireAddr} onChange={e => setFireAddr(e.target.value)} placeholder="0x..." />
-                  <Input label="Company ID" type="number" min="1" value={fireCompanyId} onChange={e => setFireCompanyId(e.target.value)} placeholder="1" />
-                  <p className={`text-xs font-mono ${theme.textMuted}`}>
-                    Calls: companiesHouse.fireEmployee({fireAddr || '0x...'}, {fireCompanyId || '?'})
-                  </p>
-                  <Button
-                    variant="danger" size="sm"
-                    onClick={handleFireEmployeeProposal}
-                    disabled={!fireAddr || !fireCompanyId || isPending || isConfirming}
-                    loading={isPending || isConfirming}
-                  >
-                    Submit Fire Proposal
-                  </Button>
-                </div>
-
-                {/* ── Update Salary ── */}
-                <div className={`${theme.cardNested} p-4 space-y-3`}>
-                  <div>
-                    <p className="font-semibold text-sm">Update Salary</p>
-                    <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
-                      Propose a pay raise or cut. Replaces all salary items with a single new entry.
-                    </p>
-                  </div>
-                  <Input label="Employee address" type="text" value={salUpdateAddr} onChange={e => setSalUpdateAddr(e.target.value)} placeholder="0x..." />
-                  <Input label="Company ID" type="number" min="1" value={salUpdateCompanyId} onChange={e => setSalUpdateCompanyId(e.target.value)} placeholder="1" />
-                  <Input label="Role" type="text" value={salUpdateRole} onChange={e => setSalUpdateRole(e.target.value)} placeholder="Engineer" />
-                  <Input label="New monthly salary (USD)" type="number" min="0" value={salUpdateMonthly} onChange={e => setSalUpdateMonthly(e.target.value)} placeholder="6000" />
-                  {salUpdateMonthly && (
-                    <p className={`text-xs font-mono ${theme.textMuted}`}>
-                      ≈ {Math.round(parseFloat(salUpdateMonthly || '0') * 1_000_000 / 730).toLocaleString()} USDT-wei/hr
-                    </p>
-                  )}
-                  <Button
-                    variant="info" size="sm"
-                    onClick={handleUpdateSalaryProposal}
-                    disabled={!salUpdateAddr || !salUpdateCompanyId || !salUpdateRole || !salUpdateMonthly || isPending || isConfirming}
-                    loading={isPending || isConfirming}
-                  >
-                    Submit Salary Update Proposal
-                  </Button>
-                </div>
-
-                {/* ── Update Power Roles ── */}
-                <div className={`${theme.cardNested} p-4 space-y-3`}>
-                  <div>
-                    <p className="font-semibold text-sm">Update Power Roles</p>
-                    <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
-                      Change which roles have authority to hire, fire, and pay in a company.
-                      {daoCompany && <span> Current: <span className="text-white/60">{daoCompany.powerRoles.join(', ') || '(none)'}</span></span>}
-                    </p>
-                  </div>
-                  <Input label="Company ID" type="number" min="1" value={powerRolesCompanyId} onChange={e => setPowerRolesCompanyId(e.target.value)} placeholder="1" />
-                  <Input
-                    label="New power roles (comma-separated)"
-                    type="text"
-                    value={powerRolesInput}
-                    onChange={e => setPowerRolesInput(e.target.value)}
-                    placeholder="CEO, CTO, CFO"
-                  />
-                  {powerRolesInput && (
-                    <p className={`text-xs font-mono ${theme.textMuted}`}>
-                      {powerRolesInput.split(',').map(s => s.trim()).filter(Boolean).join(' · ')}
-                    </p>
-                  )}
-                  <Button
-                    variant="info" size="sm"
-                    onClick={handleUpdatePowerRolesProposal}
-                    disabled={!powerRolesInput || !powerRolesCompanyId || !daoCompany || isPending || isConfirming}
-                    loading={isPending || isConfirming}
-                  >
-                    Submit Power Roles Proposal
-                  </Button>
-                  {!daoCompany && powerRolesCompanyId && (
-                    <p className="text-xs text-amber-400">DAO company data not loaded — check company ID.</p>
-                  )}
-                </div>
-
-                {/* ── Move Funds ── */}
-                <div className={`${theme.cardNested} p-4 space-y-3`}>
-                  <div>
-                    <p className="font-semibold text-sm">Move Treasury Funds</p>
-                    <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
-                      Transfer tokens from the DAO Treasury to any address.
-                    </p>
-                    <div className="flex gap-4 mt-1.5">
-                      <p className={`text-xs ${theme.textMuted}`}>
-                        WLF: <span className="text-white font-mono">
-                          {treasuryWlfBalance !== undefined ? Number(formatEther(treasuryWlfBalance)).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '…'}
-                        </span>
-                      </p>
-                      <p className={`text-xs ${theme.textMuted}`}>
-                        USDT: <span className="text-white font-mono">
-                          {treasuryUsdtBalance !== undefined ? Number(formatUnits(treasuryUsdtBalance, 6)).toLocaleString(undefined, { maximumFractionDigits: 2 }) : '…'}
-                        </span>
-                      </p>
+                    <div className={`${theme.cardNested} p-3 space-y-2`}>
+                      <div>
+                        <p className="font-semibold text-sm">Airdrop WLF to Companies</p>
+                        <p className={`text-xs mt-0.5 ${theme.textMuted}`}>Airdrop WLF to each selected company wallet.</p>
+                      </div>
+                      {activeCompanies.length === 0 ? (
+                        <p className={`text-xs ${theme.textMuted}`}>No active companies found.</p>
+                      ) : (
+                        <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                          {activeCompanies.map(company => (
+                            <label key={company.companyId} className="flex items-center gap-2.5 cursor-pointer group">
+                              <input type="checkbox" checked={selectedCompanyIds.has(company.companyId)} onChange={() => toggleCompany(company.companyId)} className="accent-primary w-3.5 h-3.5 rounded" />
+                              <div className="flex-1 min-w-0">
+                                <span className="text-sm text-white group-hover:text-white/80 truncate">{company.name}</span>
+                                <span className={`text-xs ${theme.textMuted} ml-1.5`}>{company.industry}</span>
+                              </div>
+                              <span className={`text-xs font-mono ${theme.textMuted} shrink-0`}>{company.operatorAddress.slice(0, 6)}…{company.operatorAddress.slice(-4)}</span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                      {activeCompanies.length > 1 && (
+                        <div className="flex gap-3">
+                          <button onClick={() => setSelectedCompanyIds(new Set(activeCompanies.map(c => c.companyId)))} className={`text-xs ${theme.textMuted} hover:text-white transition-colors`}>Select all</button>
+                          <button onClick={() => setSelectedCompanyIds(new Set())} className={`text-xs ${theme.textMuted} hover:text-white transition-colors`}>Clear</button>
+                        </div>
+                      )}
+                      <Input label="Amount per company (WLF)" type="number" min="0" value={companyAirdropAmount} onChange={e => setCompanyAirdropAmount(e.target.value)} placeholder="1000" />
+                      {selectedCompanyIds.size > 0 && companyAirdropAmount && (
+                        <p className={`text-xs font-mono ${theme.textMuted}`}>
+                          {selectedCompanyIds.size} op{selectedCompanyIds.size > 1 ? 's' : ''} · Total: {(selectedCompanyIds.size * parseFloat(companyAirdropAmount || '0')).toLocaleString()} WLF
+                        </p>
+                      )}
+                      <Button variant="primary" size="sm" onClick={handleCompanyAirdropProposal} disabled={selectedCompanyIds.size === 0 || !companyAirdropAmount || parseFloat(companyAirdropAmount) <= 0 || !wlfAddress || isPending || isConfirming} loading={isPending || isConfirming}>
+                        Submit Company Airdrop Proposal
+                      </Button>
                     </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => setMoveFundsToken('usdt')}
-                      className={`text-xs px-3 py-1 rounded-full border transition-colors ${moveFundsToken === 'usdt' ? 'bg-primary border-primary text-white' : `border-white/10 ${theme.textMuted}`}`}
-                    >USDT</button>
-                    <button
-                      onClick={() => setMoveFundsToken('wlf')}
-                      className={`text-xs px-3 py-1 rounded-full border transition-colors ${moveFundsToken === 'wlf' ? 'bg-primary border-primary text-white' : `border-white/10 ${theme.textMuted}`}`}
-                    >WLF</button>
-                  </div>
-                  <Input label={`Amount (${moveFundsToken.toUpperCase()})`} type="number" min="0" value={moveFundsAmount} onChange={e => setMoveFundsAmount(e.target.value)} placeholder="1000" />
-                  <Input label="Recipient address" type="text" value={moveFundsTo} onChange={e => setMoveFundsTo(e.target.value)} placeholder="0x..." />
-                  <p className={`text-xs font-mono ${theme.textMuted}`}>
-                    treasury.withdrawToken({moveFundsToken.toUpperCase()}, {moveFundsAmount || '?'}, {moveFundsTo ? `${moveFundsTo.slice(0, 8)}…` : '?'})
-                  </p>
-                  <Button
-                    variant="primary" size="sm"
-                    onClick={handleMoveFundsProposal}
-                    disabled={!moveFundsAmount || parseFloat(moveFundsAmount) <= 0 || !moveFundsTo || isPending || isConfirming}
-                    loading={isPending || isConfirming}
-                  >
-                    Submit Move Funds Proposal
-                  </Button>
-                </div>
+                  </>
+                )}
 
-                {/* ── Set CompaniesHouse Fees ── */}
-                <div className={`${theme.cardNested} p-4 space-y-3`}>
-                  <div>
-                    <p className="font-semibold text-sm">Set CompaniesHouse Fees</p>
-                    <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
-                      Adjust protocol fees charged on employee payments. Current defaults: 0.5% WLF / 5% other.
-                      Max 10% each.
-                    </p>
-                  </div>
-                  <Input label="WLF fee (basis points, e.g. 50 = 0.5%)" type="number" min="0" max="1000" value={chWlfBps} onChange={e => setChWlfBps(e.target.value)} placeholder="50" />
-                  <Input label="Non-WLF fee (basis points, e.g. 500 = 5%)" type="number" min="0" max="1000" value={chNonWlfBps} onChange={e => setChNonWlfBps(e.target.value)} placeholder="500" />
-                  <p className={`text-xs font-mono ${theme.textMuted}`}>
-                    WLF: {parseInt(chWlfBps || '0') / 100}% · Non-WLF: {parseInt(chNonWlfBps || '0') / 100}%
-                  </p>
-                  <Button
-                    variant="info" size="sm"
-                    onClick={handleSetChFeesProposal}
-                    disabled={!chWlfBps || !chNonWlfBps || parseInt(chWlfBps) > 1000 || parseInt(chNonWlfBps) > 1000 || isPending || isConfirming}
-                    loading={isPending || isConfirming}
-                  >
-                    Submit Set Fees Proposal
-                  </Button>
-                </div>
+                {/* ── HR ── */}
+                {(proposalCategory === 'all' || proposalCategory === 'hr') && (
+                  <>
+                    <div className={`${theme.cardNested} p-3 space-y-2`}>
+                      <div>
+                        <p className="font-semibold text-sm">Hire Employee</p>
+                        <p className={`text-xs mt-0.5 ${theme.textMuted}`}>Add a new employee to a company via governance.</p>
+                      </div>
+                      <Input label="Employee address" type="text" value={hireAddr} onChange={e => setHireAddr(e.target.value)} placeholder="0x..." />
+                      <Input label="Name" type="text" value={hireName} onChange={e => setHireName(e.target.value)} placeholder="Alice" />
+                      <Input label="Role" type="text" value={hireRole} onChange={e => setHireRole(e.target.value)} placeholder="Engineer" />
+                      <Input label="Monthly salary (USD)" type="number" min="0" value={hireSalaryMonthly} onChange={e => setHireSalaryMonthly(e.target.value)} placeholder="5000" />
+                      <Input label="Company ID" type="number" min="1" value={hireCompanyId} onChange={e => setHireCompanyId(e.target.value)} placeholder="1" />
+                      {hireSalaryMonthly && (
+                        <p className={`text-xs font-mono ${theme.textMuted}`}>≈ {Math.round(parseFloat(hireSalaryMonthly || '0') * 1_000_000 / 730).toLocaleString()} USDT-wei/hr</p>
+                      )}
+                      <Button variant="primary" size="sm" onClick={handleHireEmployeeProposal} disabled={!hireAddr || !hireName || !hireRole || !hireSalaryMonthly || !hireCompanyId || isPending || isConfirming} loading={isPending || isConfirming}>
+                        Submit Hire Proposal
+                      </Button>
+                    </div>
 
-                {/* ── DAO DeFi: Supply to Aave ── */}
-                {daoVaultAddress && (
-                  <div className={`${theme.cardNested} p-4 space-y-3`}>
-                    <div>
+                    <div className={`${theme.cardNested} p-3 space-y-2`}>
+                      <p className="font-semibold text-sm">Fire Employee</p>
+                      <Input label="Employee address" type="text" value={fireAddr} onChange={e => setFireAddr(e.target.value)} placeholder="0x..." />
+                      <Input label="Company ID" type="number" min="1" value={fireCompanyId} onChange={e => setFireCompanyId(e.target.value)} placeholder="1" />
+                      <p className={`text-xs font-mono ${theme.textMuted}`}>companiesHouse.fireEmployee({fireAddr || '0x...'}, {fireCompanyId || '?'})</p>
+                      <Button variant="danger" size="sm" onClick={handleFireEmployeeProposal} disabled={!fireAddr || !fireCompanyId || isPending || isConfirming} loading={isPending || isConfirming}>
+                        Submit Fire Proposal
+                      </Button>
+                    </div>
+
+                    <div className={`${theme.cardNested} p-3 space-y-2`}>
+                      <div>
+                        <p className="font-semibold text-sm">Update Salary</p>
+                        <p className={`text-xs mt-0.5 ${theme.textMuted}`}>Replaces all salary items with a single new entry.</p>
+                      </div>
+                      <Input label="Employee address" type="text" value={salUpdateAddr} onChange={e => setSalUpdateAddr(e.target.value)} placeholder="0x..." />
+                      <Input label="Company ID" type="number" min="1" value={salUpdateCompanyId} onChange={e => setSalUpdateCompanyId(e.target.value)} placeholder="1" />
+                      <Input label="Role" type="text" value={salUpdateRole} onChange={e => setSalUpdateRole(e.target.value)} placeholder="Engineer" />
+                      <Input label="New monthly salary (USD)" type="number" min="0" value={salUpdateMonthly} onChange={e => setSalUpdateMonthly(e.target.value)} placeholder="6000" />
+                      {salUpdateMonthly && (
+                        <p className={`text-xs font-mono ${theme.textMuted}`}>≈ {Math.round(parseFloat(salUpdateMonthly || '0') * 1_000_000 / 730).toLocaleString()} USDT-wei/hr</p>
+                      )}
+                      <Button variant="info" size="sm" onClick={handleUpdateSalaryProposal} disabled={!salUpdateAddr || !salUpdateCompanyId || !salUpdateRole || !salUpdateMonthly || isPending || isConfirming} loading={isPending || isConfirming}>
+                        Submit Salary Update Proposal
+                      </Button>
+                    </div>
+
+                    <div className={`${theme.cardNested} p-3 space-y-2`}>
+                      <div>
+                        <p className="font-semibold text-sm">Update Power Roles</p>
+                        <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
+                          Change which roles have authority to hire, fire, and pay.
+                          {daoCompany && <span> Current: <span className="text-white/60">{daoCompany.powerRoles.join(', ') || '(none)'}</span></span>}
+                        </p>
+                      </div>
+                      <Input label="Company ID" type="number" min="1" value={powerRolesCompanyId} onChange={e => setPowerRolesCompanyId(e.target.value)} placeholder="1" />
+                      <Input label="New power roles (comma-separated)" type="text" value={powerRolesInput} onChange={e => setPowerRolesInput(e.target.value)} placeholder="CEO, CTO, CFO" />
+                      {powerRolesInput && (
+                        <p className={`text-xs font-mono ${theme.textMuted}`}>{powerRolesInput.split(',').map(s => s.trim()).filter(Boolean).join(' · ')}</p>
+                      )}
+                      <Button variant="info" size="sm" onClick={handleUpdatePowerRolesProposal} disabled={!powerRolesInput || !powerRolesCompanyId || !daoCompany || isPending || isConfirming} loading={isPending || isConfirming}>
+                        Submit Power Roles Proposal
+                      </Button>
+                      {!daoCompany && powerRolesCompanyId && (
+                        <p className="text-xs text-amber-400">DAO company data not loaded — check company ID.</p>
+                      )}
+                    </div>
+                  </>
+                )}
+
+                {/* ── DEFI ── */}
+                {(proposalCategory === 'all' || proposalCategory === 'defi') && daoVaultAddress && (
+                  <>
+                    <div className={`${theme.cardNested} p-3 space-y-2`}>
                       <p className="font-semibold text-sm">Supply to Aave (DAO Vault)</p>
-                      <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
-                        Propose supplying USDT from the DAO company vault into Aave v3 to earn yield.
-                        Vault must hold liquid USDT before execution.
-                      </p>
+                      {daoVaultTokenOptions.length === 0 ? (
+                        <p className={`text-xs ${theme.textMuted}`}>No whitelisted tokens in vault.</p>
+                      ) : (
+                        <select value={daoVaultSelectedToken} onChange={e => setDaoVaultSelectedToken(e.target.value as `0x${string}`)} className={theme.input}>
+                          {daoVaultTokenOptions.map(t => <option key={t.address} value={t.address}>{t.symbol}</option>)}
+                        </select>
+                      )}
+                      <Input label={`Amount (${selectedTokenMeta?.symbol ?? 'token'})`} type="number" min="0" value={daoVaultSupplyAmt} onChange={e => setDaoVaultSupplyAmt(e.target.value)} placeholder="1000" />
+                      <p className={`text-xs font-mono ${theme.textMuted}`}>vault.supplyToAave({selectedTokenMeta?.symbol ?? '?'}, {daoVaultSupplyAmt || '?'})</p>
+                      <Button variant="primary" size="sm" onClick={handleDaoVaultSupplyProposal} disabled={!daoVaultSelectedToken || !daoVaultSupplyAmt || parseFloat(daoVaultSupplyAmt) <= 0 || isPending || isConfirming} loading={isPending || isConfirming}>
+                        Submit Supply Proposal
+                      </Button>
                     </div>
-                    <Input label="Amount (USDT)" type="number" min="0" value={daoVaultSupplyAmt} onChange={e => setDaoVaultSupplyAmt(e.target.value)} placeholder="1000" />
-                    <p className={`text-xs font-mono ${theme.textMuted}`}>
-                      vault.supplyToAave(USDT, {daoVaultSupplyAmt || '?'})
-                    </p>
-                    <Button
-                      variant="primary" size="sm"
-                      onClick={handleDaoVaultSupplyProposal}
-                      disabled={!daoVaultSupplyAmt || parseFloat(daoVaultSupplyAmt) <= 0 || isPending || isConfirming}
-                      loading={isPending || isConfirming}
-                    >
-                      Submit Supply Proposal
-                    </Button>
-                  </div>
+
+                    <div className={`${theme.cardNested} p-3 space-y-2`}>
+                      <div>
+                        <p className="font-semibold text-sm">Withdraw from Aave (DAO Vault)</p>
+                        <p className={`text-xs mt-0.5 ${theme.textMuted}`}>"max" = full position.</p>
+                      </div>
+                      {daoVaultTokenOptions.length > 0 && (
+                        <select value={daoVaultSelectedToken} onChange={e => setDaoVaultSelectedToken(e.target.value as `0x${string}`)} className={theme.input}>
+                          {daoVaultTokenOptions.map(t => <option key={t.address} value={t.address}>{t.symbol}</option>)}
+                        </select>
+                      )}
+                      <Input label={`Amount (${selectedTokenMeta?.symbol ?? 'token'}, or 'max')`} type="text" value={daoVaultWithdrawAmt} onChange={e => setDaoVaultWithdrawAmt(e.target.value)} placeholder="1000 or max" />
+                      <p className={`text-xs font-mono ${theme.textMuted}`}>vault.withdrawFromAave({selectedTokenMeta?.symbol ?? '?'}, {daoVaultWithdrawAmt || '?'})</p>
+                      <Button variant="primary" size="sm" onClick={handleDaoVaultWithdrawProposal} disabled={!daoVaultWithdrawAmt || isPending || isConfirming} loading={isPending || isConfirming}>
+                        Submit Withdraw Proposal
+                      </Button>
+                    </div>
+
+                    <div className={`${theme.cardNested} p-3 space-y-2`}>
+                      <div>
+                        <p className="font-semibold text-sm">Borrow from Aave (DAO Vault)</p>
+                        <p className="text-xs mt-0.5 text-yellow-400/80">⚠ Requires borrowingEnabled = true on vault.</p>
+                      </div>
+                      {daoVaultTokenOptions.length > 0 && (
+                        <select value={daoVaultSelectedToken} onChange={e => setDaoVaultSelectedToken(e.target.value as `0x${string}`)} className={theme.input}>
+                          {daoVaultTokenOptions.map(t => <option key={t.address} value={t.address}>{t.symbol}</option>)}
+                        </select>
+                      )}
+                      <Input label={`Amount (${selectedTokenMeta?.symbol ?? 'token'})`} type="number" min="0" value={daoVaultBorrowAmt} onChange={e => setDaoVaultBorrowAmt(e.target.value)} placeholder="500" />
+                      <p className={`text-xs font-mono ${theme.textMuted}`}>vault.borrowFromAave({selectedTokenMeta?.symbol ?? '?'}, {daoVaultBorrowAmt || '?'})</p>
+                      <Button variant="info" size="sm" onClick={handleDaoVaultBorrowProposal} disabled={!daoVaultBorrowAmt || parseFloat(daoVaultBorrowAmt) <= 0 || isPending || isConfirming} loading={isPending || isConfirming}>
+                        Submit Borrow Proposal
+                      </Button>
+                    </div>
+
+                    <div className={`${theme.cardNested} p-3 space-y-2`}>
+                      <div>
+                        <p className="font-semibold text-sm">Repay to Aave (DAO Vault)</p>
+                        <p className={`text-xs mt-0.5 ${theme.textMuted}`}>"max" = full debt. Requires borrowingEnabled = true.</p>
+                      </div>
+                      {daoVaultTokenOptions.length > 0 && (
+                        <select value={daoVaultSelectedToken} onChange={e => setDaoVaultSelectedToken(e.target.value as `0x${string}`)} className={theme.input}>
+                          {daoVaultTokenOptions.map(t => <option key={t.address} value={t.address}>{t.symbol}</option>)}
+                        </select>
+                      )}
+                      <Input label={`Amount (${selectedTokenMeta?.symbol ?? 'token'}, or 'max')`} type="text" value={daoVaultRepayAmt} onChange={e => setDaoVaultRepayAmt(e.target.value)} placeholder="500 or max" />
+                      <p className={`text-xs font-mono ${theme.textMuted}`}>vault.repayToAave({selectedTokenMeta?.symbol ?? '?'}, {daoVaultRepayAmt || '?'})</p>
+                      <Button variant="info" size="sm" onClick={handleDaoVaultRepayProposal} disabled={!daoVaultRepayAmt || isPending || isConfirming} loading={isPending || isConfirming}>
+                        Submit Repay Proposal
+                      </Button>
+                    </div>
+
+                    <div className={`${theme.cardNested} p-3 space-y-2`}>
+                      <div>
+                        <p className="font-semibold text-sm">Enable / Disable Borrowing (DAO Vault)</p>
+                        <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
+                          Current: <span className={daoVaultBorrowingEnabled ? 'text-green-400' : 'text-white/40'}>{daoVaultBorrowingEnabled ? 'Enabled' : 'Disabled'}</span>
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button variant="info" size="sm" onClick={() => handleDaoVaultSetBorrowingProposal(true)} disabled={!!daoVaultBorrowingEnabled || isPending || isConfirming} loading={isPending || isConfirming}>Propose Enable</Button>
+                        <Button variant="danger" size="sm" onClick={() => handleDaoVaultSetBorrowingProposal(false)} disabled={!daoVaultBorrowingEnabled || isPending || isConfirming} loading={isPending || isConfirming}>Propose Disable</Button>
+                      </div>
+                    </div>
+
+                    <div className={`${theme.cardNested} p-3 space-y-2`}>
+                      <div>
+                        <p className="font-semibold text-sm">Set Min Health Factor (DAO Vault)</p>
+                        <p className={`text-xs mt-0.5 ${theme.textMuted}`}>Current: {daoVaultMinHf !== undefined ? Number(formatUnits(daoVaultMinHf as bigint, 18)).toFixed(2) : '…'}</p>
+                      </div>
+                      <Input label="Min health factor (e.g. 1.5)" type="number" min="1" value={daoVaultMinHfInput} onChange={e => setDaoVaultMinHfInput(e.target.value)} placeholder="1.5" />
+                      <p className={`text-xs font-mono ${theme.textMuted}`}>vault.setMinHealthFactor({daoVaultMinHfInput || '?'}e18)</p>
+                      <Button variant="info" size="sm" onClick={handleDaoVaultSetMinHfProposal} disabled={!daoVaultMinHfInput || parseFloat(daoVaultMinHfInput) <= 0 || isPending || isConfirming} loading={isPending || isConfirming}>
+                        Submit Min HF Proposal
+                      </Button>
+                    </div>
+                  </>
                 )}
 
-                {/* ── DAO DeFi: Withdraw from Aave ── */}
-                {daoVaultAddress && (
-                  <div className={`${theme.cardNested} p-4 space-y-3`}>
+                {/* ── PROTOCOL ── */}
+                {(proposalCategory === 'all' || proposalCategory === 'protocol') && (
+                  <div className={`${theme.cardNested} p-3 space-y-2`}>
                     <div>
-                      <p className="font-semibold text-sm">Withdraw from Aave (DAO Vault)</p>
-                      <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
-                        Propose redeeming supplied USDT (+ accrued yield) back into the DAO vault.
-                        Enter "max" to withdraw full position.
-                      </p>
+                      <p className="font-semibold text-sm">Set CompaniesHouse Fees</p>
+                      <p className={`text-xs mt-0.5 ${theme.textMuted}`}>Protocol fees on employee payments. Max 10% each.</p>
                     </div>
-                    <Input label="Amount (USDT, or 'max')" type="text" value={daoVaultWithdrawAmt} onChange={e => setDaoVaultWithdrawAmt(e.target.value)} placeholder="1000 or max" />
-                    <p className={`text-xs font-mono ${theme.textMuted}`}>
-                      vault.withdrawFromAave(USDT, {daoVaultWithdrawAmt || '?'})
-                    </p>
-                    <Button
-                      variant="primary" size="sm"
-                      onClick={handleDaoVaultWithdrawProposal}
-                      disabled={!daoVaultWithdrawAmt || isPending || isConfirming}
-                      loading={isPending || isConfirming}
-                    >
-                      Submit Withdraw Proposal
-                    </Button>
-                  </div>
-                )}
-
-                {/* ── DAO DeFi: Borrow from Aave ── */}
-                {daoVaultAddress && (
-                  <div className={`${theme.cardNested} p-4 space-y-3`}>
-                    <div>
-                      <p className="font-semibold text-sm">Borrow from Aave (DAO Vault)</p>
-                      <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
-                        Propose borrowing USDT from Aave against the vault's collateral.
-                        Requires admin to enable borrowing first (setBorrowingEnabled).
-                      </p>
-                    </div>
-                    <Input label="Amount (USDT)" type="number" min="0" value={daoVaultBorrowAmt} onChange={e => setDaoVaultBorrowAmt(e.target.value)} placeholder="500" />
-                    <p className={`text-xs font-mono ${theme.textMuted}`}>
-                      vault.borrowFromAave(USDT, {daoVaultBorrowAmt || '?'})
-                    </p>
-                    <p className="text-xs text-yellow-400/80">
-                      ⚠ Borrowing must be enabled on the vault by admin before this proposal can execute.
-                    </p>
-                    <Button
-                      variant="info" size="sm"
-                      onClick={handleDaoVaultBorrowProposal}
-                      disabled={!daoVaultBorrowAmt || parseFloat(daoVaultBorrowAmt) <= 0 || isPending || isConfirming}
-                      loading={isPending || isConfirming}
-                    >
-                      Submit Borrow Proposal
-                    </Button>
-                  </div>
-                )}
-
-                {/* ── DAO DeFi: Set Min Health Factor ── */}
-                {daoVaultAddress && (
-                  <div className={`${theme.cardNested} p-4 space-y-3`}>
-                    <div>
-                      <p className="font-semibold text-sm">Set Min Health Factor (DAO Vault)</p>
-                      <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
-                        Propose updating the governance-defined minimum health factor for the DAO vault.
-                        Current on-chain value: {daoVaultMinHf !== undefined ? Number(formatUnits(daoVaultMinHf as bigint, 18)).toFixed(2) : '…'}
-                      </p>
-                    </div>
-                    <Input label="Min health factor (e.g. 1.5)" type="number" min="1" value={daoVaultMinHfInput} onChange={e => setDaoVaultMinHfInput(e.target.value)} placeholder="1.5" />
-                    <p className={`text-xs font-mono ${theme.textMuted}`}>
-                      vault.setMinHealthFactor({daoVaultMinHfInput || '?'}e18 = {daoVaultMinHfInput ? parseUnits(daoVaultMinHfInput, 18).toString() : '?'})
-                    </p>
-                    <Button
-                      variant="info" size="sm"
-                      onClick={handleDaoVaultSetMinHfProposal}
-                      disabled={!daoVaultMinHfInput || parseFloat(daoVaultMinHfInput) <= 0 || isPending || isConfirming}
-                      loading={isPending || isConfirming}
-                    >
-                      Submit Min HF Proposal
+                    <Input label="WLF fee (bps, 50 = 0.5%)" type="number" min="0" max="1000" value={chWlfBps} onChange={e => setChWlfBps(e.target.value)} placeholder="50" />
+                    <Input label="Non-WLF fee (bps, 500 = 5%)" type="number" min="0" max="1000" value={chNonWlfBps} onChange={e => setChNonWlfBps(e.target.value)} placeholder="500" />
+                    <p className={`text-xs font-mono ${theme.textMuted}`}>WLF: {parseInt(chWlfBps || '0') / 100}% · Non-WLF: {parseInt(chNonWlfBps || '0') / 100}%</p>
+                    <Button variant="info" size="sm" onClick={handleSetChFeesProposal} disabled={!chWlfBps || !chNonWlfBps || parseInt(chWlfBps) > 1000 || parseInt(chNonWlfBps) > 1000 || isPending || isConfirming} loading={isPending || isConfirming}>
+                      Submit Set Fees Proposal
                     </Button>
                   </div>
                 )}

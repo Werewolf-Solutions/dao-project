@@ -1,0 +1,32 @@
+{
+  "lib/aave-address-book": {
+    "tag": {
+      "name": "v4.47.10",
+      "rev": "d5f701e949e624fadf2ca359d99ff8f6964bab4e"
+    }
+  },
+  "lib/forge-std": {
+    "rev": "1eea5bae12ae557d589f9f0f0edae2faa47cb262"
+  },
+  "lib/openzeppelin-contracts": {
+    "rev": "69c8def5f222ff96f2b5beff05dfba996368aa79"
+  },
+  "lib/openzeppelin-contracts-upgradeable": {
+    "rev": "fa525310e45f91eb20a6d3baa2644be8e0adba31"
+  },
+  "lib/openzeppelin-foundry-upgrades": {
+    "rev": "16e0ae21e0e39049f619f2396fa28c57fad07368"
+  },
+  "lib/v3-core": {
+    "rev": "e3589b192d0be27e100cd0daaf6c97204fdb1899"
+  },
+  "lib/v3-periphery": {
+    "rev": "80f26c86c57b8a5e4b913f42844d4c8bd274d058"
+  },
+  "lib/v4-core": {
+    "rev": "b619b6718e31aa5b4fa0286520c455ceb950276d"
+  },
+  "lib/v4-periphery": {
+    "rev": "51df60a67366d3ca9a4f90e0dc4a5a12b56b18aa"
+  }
+}

@@ -30,6 +30,13 @@ export const companyVaultABI = [
   },
   {
     type: 'function',
+    name: 'guardian',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     name: 'allowedTokens',
     inputs: [{ name: 'token', type: 'address' }],
     outputs: [{ name: '', type: 'bool' }],
@@ -170,6 +177,13 @@ export const companyVaultABI = [
   },
   {
     type: 'function',
+    name: 'setGuardian',
+    inputs: [{ name: '_guardian', type: 'address' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
     name: 'setAdmin',
     inputs: [{ name: '_admin', type: 'address' }],
     outputs: [],
@@ -246,6 +260,11 @@ export const companyVaultABI = [
     type: 'event',
     name: 'MinHealthFactorSet',
     inputs: [{ name: 'value', type: 'uint256', indexed: false }],
+  },
+  {
+    type: 'event',
+    name: 'GuardianSet',
+    inputs: [{ name: 'guardian', type: 'address', indexed: true }],
   },
 
   // ── Custom Errors ─────────────────────────────────────────────────────────

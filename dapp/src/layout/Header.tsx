@@ -87,6 +87,7 @@ const NAV_LINKS = [
   { to: '/staking', label: 'Staking' },
   { to: '/account', label: 'Account' },
   { to: '/companies-house', label: 'Companies' },
+  { to: '/docs', label: 'Docs' },
 ];
 
 type StakePosition = {

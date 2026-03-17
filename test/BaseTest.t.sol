@@ -33,8 +33,8 @@ contract BaseTest is Test {
 
     // Constants
     uint256 constant votingPeriod = 2 days;
-    uint256 constant tokenSaleAirdrop = 5_000_000 ether;
-    uint256 constant tokenPrice = 0.0004 ether;
+    uint256 constant tokenSaleAirdrop = 500_000 ether;
+    uint256 constant tokenPrice = 0.004 ether;
 
     function setUp() public virtual {
         // Set up signers

@@ -7,6 +7,10 @@ import {MockUSDT} from "test/mocks/MockUSDT.sol";
 import {MockPositionManager} from "test/mocks/MockPositionManager.sol";
 import {MockWETH} from "test/mocks/MockWETH.sol";
 import {Constants} from "./Constants.sol";
+import {AaveV3Ethereum, AaveV3EthereumAssets} from "aave-address-book/AaveV3Ethereum.sol";
+import {AaveV3Sepolia, AaveV3SepoliaAssets} from "aave-address-book/AaveV3Sepolia.sol";
+import {AaveV3Base, AaveV3BaseAssets} from "aave-address-book/AaveV3Base.sol";
+import {AaveV3BaseSepolia, AaveV3BaseSepoliaAssets} from "aave-address-book/AaveV3BaseSepolia.sol";
 
 /**
  *
@@ -87,12 +91,12 @@ contract HelperConfig is Script, Constants {
             positionManager: positionManager,
             swapRouter: swapRouterAddr,
             weth: weth,
-            timelockDelay: 2 days,
-            minReserveMonths: 3,  // 3-month reserve for testnet (DAO can raise to 60 via proposal)
-            aavePool: 0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951,  // Aave v3 Pool on Sepolia
+            timelockDelay: 1 minutes,
+            minReserveMonths: 3,
+            aavePool:   address(AaveV3Sepolia.POOL),
             isMockUsdt: true,
-            aaveUsdt: 0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8,  // USDC on Aave Sepolia
-            usdc: 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238        // USDC on Sepolia
+            aaveUsdt:   AaveV3SepoliaAssets.USDC_UNDERLYING,
+            usdc:       AaveV3SepoliaAssets.USDC_UNDERLYING
         });
     }
 
@@ -111,16 +115,16 @@ contract HelperConfig is Script, Constants {
         baseSepoliaNetworkConfig = NetworkConfig({
             deployerPrivateKey: deployerPrivateKey,
             multiSig: multiSig,
-            usdt:            mockUsdt,                                      // MockUSDT for token sales
-            positionManager: 0x27F971cb582BF9E50F397e4d29a5C7A34f11faA2,   // Uniswap v3 NonfungiblePositionManager
-            swapRouter:      0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4,   // Uniswap v3 SwapRouter
-            weth:            0x4200000000000000000000000000000000000006,   // WETH9 on Base
-            timelockDelay:   2 days,
+            usdt:            mockUsdt,
+            positionManager: 0x27F971cb582BF9E50F397e4d29a5C7A34f11faA2,
+            swapRouter:      0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4,
+            weth:            0x4200000000000000000000000000000000000006,
+            timelockDelay:   1 minutes,
             minReserveMonths: 3,
-            aavePool:        0x8bAB6d1b75f19e9eD9fCe8b9BD338844fF79aE27,   // Aave v3 Pool on Base Sepolia (AaveV3BaseSepolia.POOL)
+            aavePool:        address(AaveV3BaseSepolia.POOL),
             isMockUsdt:      true,
-            aaveUsdt:        0xba50Cd2A20f6DA35D788639E581bca8d0B5d4D5f,  // Aave-listed USDC on Base Sepolia
-            usdc:            0x036CbD53842c5426634e7929541eC2318f3dCF7e    // USDC on Base Sepolia
+            aaveUsdt:        AaveV3BaseSepoliaAssets.USDC_UNDERLYING,
+            usdc:            AaveV3BaseSepoliaAssets.USDC_UNDERLYING
         });
     }
 
@@ -130,16 +134,16 @@ contract HelperConfig is Script, Constants {
         return NetworkConfig({
             deployerPrivateKey: deployerPrivateKey,
             multiSig: multiSig,
-            usdt:            0xdAC17F958D2ee523a2206206994597C13D831ec7, // Tether USDT
-            positionManager: 0xC36442b4a4522E871399CD717aBDD847Ab11FE88, // Uniswap v3 NonfungiblePositionManager
-            swapRouter:      0xE592427A0AEce92De3Edee1F18E0157C05861564, // Uniswap v3 SwapRouter
-            weth:            0xc02AAa39B223fE8d0a0e8E4f27eAd9083c756CC2, // WETH9
-            timelockDelay:   2 days,   // 172800 s — enforces governance delay
-            minReserveMonths: 60,      // 5-year reserve floor for CompaniesHouse
-            aavePool:        0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2,  // Aave v3 Pool on Ethereum mainnet
-            isMockUsdt:      false,  // Real Tether USDT — cannot mint
-            aaveUsdt:        address(0),  // Same as usdt on mainnet
-            usdc:            0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48  // Circle USDC on mainnet
+            usdt:            AaveV3EthereumAssets.USDT_UNDERLYING,
+            positionManager: 0xC36442b4a4522E871399CD717aBDD847Ab11FE88,
+            swapRouter:      0xE592427A0AEce92De3Edee1F18E0157C05861564,
+            weth:            0xc02AAa39B223fE8d0a0e8E4f27eAd9083c756CC2,
+            timelockDelay:   2 days,
+            minReserveMonths: 60,
+            aavePool:        address(AaveV3Ethereum.POOL),
+            isMockUsdt:      false,
+            aaveUsdt:        AaveV3EthereumAssets.USDC_UNDERLYING,
+            usdc:            AaveV3EthereumAssets.USDC_UNDERLYING
         });
     }
 
@@ -162,7 +166,7 @@ contract HelperConfig is Script, Constants {
             positionManager: positionManager,
             swapRouter: address(0),  // No real SwapRouter on local chain
             weth: weth,
-            timelockDelay: 2 days,
+            timelockDelay: 1 minutes,
             minReserveMonths: 1,     // 1-month reserve for local testing
             aavePool: address(0),    // No Aave on local chain — CompanyDeFiV1 skips integration
             isMockUsdt: true,

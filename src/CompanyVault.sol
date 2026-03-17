@@ -62,6 +62,9 @@ contract CompanyVault is Initializable {
     /// @notice Privileged admin (CompaniesHouseV1 admin — initially founder, then Timelock).
     address public admin;
 
+    /// @notice Guardian address — can toggle borrowingEnabled without going through governance.
+    address public guardian;
+
     /// @notice Tokens whitelisted for Aave operations.
     mapping(address token => bool) public allowedTokens;
 
@@ -72,7 +75,7 @@ contract CompanyVault is Initializable {
     /// @dev Default: 1.5e18. Informational — callers should respect this before borrowing.
     uint256 public minHealthFactor;
 
-    uint256[38] private __gap;
+    uint256[37] private __gap;
 
     ///////////////////////////////////////
     //           Events                  //
@@ -88,6 +91,7 @@ contract CompanyVault is Initializable {
     event AavePoolUpdated(address pool);
     event BorrowingEnabledSet(bool enabled);
     event MinHealthFactorSet(uint256 value);
+    event GuardianSet(address indexed guardian);
 
     ///////////////////////////////////////
     //           Modifiers               //
@@ -98,8 +102,17 @@ contract CompanyVault is Initializable {
         _;
     }
 
+    modifier onlyAdminOrGuardian() {
+        if (msg.sender != admin && msg.sender != guardian) revert NotAdmin();
+        _;
+    }
+
     modifier onlyAuthorized() {
-        if (!companiesHouse.isAuthorized(msg.sender, companyId)) revert NotAuthorized();
+        if (
+            msg.sender != admin &&
+            msg.sender != companiesHouse.admin() &&
+            !companiesHouse.isAuthorized(msg.sender, companyId)
+        ) revert NotAuthorized();
         _;
     }
 
@@ -274,6 +287,14 @@ contract CompanyVault is Initializable {
     }
 
     /**
+     * @notice Set the guardian address. Guardian can enable/disable borrowing directly.
+     */
+    function setGuardian(address _guardian) external onlyAdmin {
+        guardian = _guardian;
+        emit GuardianSet(_guardian);
+    }
+
+    /**
      * @notice Transfer admin role.
      */
     function setAdmin(address _admin) external onlyAdmin {
@@ -284,7 +305,7 @@ contract CompanyVault is Initializable {
     /**
      * @notice Enable or disable borrowing. Disabled by default to limit risk.
      */
-    function setBorrowingEnabled(bool enabled) external onlyAdmin {
+    function setBorrowingEnabled(bool enabled) external onlyAdminOrGuardian {
         borrowingEnabled = enabled;
         emit BorrowingEnabledSet(enabled);
     }
