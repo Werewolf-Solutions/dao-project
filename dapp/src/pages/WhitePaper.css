@@ -1,0 +1,206 @@
+/* VS Code markdown preview-inspired styles — dark page, light print */
+
+.vscode-md {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Ubuntu", sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  color: #d4d4d4;
+  word-wrap: break-word;
+}
+
+/* ── Headings ──────────────────────────────────────────────────────────────── */
+
+.vscode-md h1,
+.vscode-md h2,
+.vscode-md h3,
+.vscode-md h4,
+.vscode-md h5,
+.vscode-md h6 {
+  font-weight: 600;
+  line-height: 1.25;
+  margin-top: 24px;
+  margin-bottom: 16px;
+  color: #e8e8e8;
+  scroll-margin-top: 80px;
+}
+
+.vscode-md h1 {
+  font-size: 2em;
+  border-bottom: 1px solid #404040;
+  padding-bottom: 0.3em;
+}
+
+.vscode-md h2 {
+  font-size: 1.5em;
+  border-bottom: 1px solid #404040;
+  padding-bottom: 0.3em;
+}
+
+.vscode-md h3 { font-size: 1.25em; }
+.vscode-md h4 { font-size: 1em; }
+.vscode-md h5 { font-size: 0.875em; }
+.vscode-md h6 { font-size: 0.85em; color: #999; }
+
+/* ── Body text ─────────────────────────────────────────────────────────────── */
+
+.vscode-md p {
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
+.vscode-md strong { font-weight: 600; color: #e8e8e8; }
+.vscode-md em { font-style: italic; }
+
+/* ── Links ─────────────────────────────────────────────────────────────────── */
+
+.vscode-md a { color: #4ec9b0; text-decoration: none; }
+.vscode-md a:hover { text-decoration: underline; }
+
+/* ── Inline code ───────────────────────────────────────────────────────────── */
+
+.vscode-md :not(pre) > code {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.875em;
+  background: #1e1e1e;
+  border: 1px solid #404040;
+  border-radius: 3px;
+  padding: 0.1em 0.4em;
+  color: #9cdcfe;
+}
+
+/* ── Code blocks ───────────────────────────────────────────────────────────── */
+
+.vscode-md pre {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  background: #1e1e1e;
+  border: 1px solid #404040;
+  border-radius: 6px;
+  padding: 16px;
+  overflow: auto;
+  line-height: 1.45;
+  margin-bottom: 16px;
+}
+
+.vscode-md pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 0.9em;
+  color: #d4d4d4;
+}
+
+/* ── Blockquotes ───────────────────────────────────────────────────────────── */
+
+.vscode-md blockquote {
+  margin: 0 0 16px 0;
+  padding: 0 1em;
+  border-left: 4px solid #555;
+  color: #999;
+}
+
+.vscode-md blockquote > :first-child { margin-top: 0; }
+.vscode-md blockquote > :last-child  { margin-bottom: 0; }
+
+/* ── Horizontal rule ───────────────────────────────────────────────────────── */
+
+.vscode-md hr {
+  height: 4px;
+  padding: 0;
+  margin: 24px 0;
+  background: #404040;
+  border: 0;
+  border-radius: 2px;
+}
+
+/* ── Lists ─────────────────────────────────────────────────────────────────── */
+
+.vscode-md ul,
+.vscode-md ol {
+  padding-left: 2em;
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
+.vscode-md li { margin-bottom: 4px; }
+.vscode-md li + li { margin-top: 4px; }
+.vscode-md li > p { margin-bottom: 4px; }
+
+/* ── Tables ────────────────────────────────────────────────────────────────── */
+
+.vscode-md table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 16px;
+  display: block;
+  overflow-x: auto;
+}
+
+.vscode-md th,
+.vscode-md td {
+  padding: 6px 13px;
+  border: 1px solid #404040;
+}
+
+.vscode-md th {
+  font-weight: 600;
+  background: #252d3d;
+  color: #e8e8e8;
+  text-align: left;
+}
+
+.vscode-md tr:nth-child(even) { background: #1a2030; }
+.vscode-md tr:nth-child(odd)  { background: transparent; }
+
+/* ── Images ────────────────────────────────────────────────────────────────── */
+
+.vscode-md img { max-width: 100%; }
+
+/* ── Print / PDF — VS Code light theme ────────────────────────────────────── */
+
+@media print {
+  .vscode-md {
+    color: #24292e;
+    font-size: 14px;
+  }
+
+  .vscode-md h1,
+  .vscode-md h2,
+  .vscode-md h3,
+  .vscode-md h4,
+  .vscode-md h5,
+  .vscode-md h6 {
+    color: #000;
+  }
+
+  .vscode-md h1,
+  .vscode-md h2 { border-bottom-color: #e1e4e8; }
+
+  .vscode-md a { color: #0366d6; }
+  .vscode-md strong { color: #000; }
+  .vscode-md blockquote { border-left-color: #dfe2e5; color: #6a737d; }
+  .vscode-md hr { background: #e1e4e8; }
+
+  .vscode-md :not(pre) > code {
+    background: #f6f8fa;
+    border-color: #e1e4e8;
+    color: #24292e;
+  }
+
+  .vscode-md pre {
+    background: #f6f8fa;
+    border-color: #e1e4e8;
+  }
+
+  .vscode-md pre code { color: #24292e; }
+
+  .vscode-md th {
+    background: #f6f8fa;
+    color: #000;
+  }
+
+  .vscode-md th,
+  .vscode-md td { border-color: #dfe2e5; }
+
+  .vscode-md tr:nth-child(even) { background: #f6f8fa; }
+  .vscode-md tr:nth-child(odd)  { background: #fff; }
+}

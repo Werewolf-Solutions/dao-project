@@ -231,6 +231,9 @@ cast-debug:
 sync-dapp:
 	node scripts/sync-dapp.mjs
 
+sync-whitepaper:
+	cp white-paper.md dapp/public/whitepaper.md
+
 # ─── Utils ────────────────────────────────────────────────────────────────────
 
 create-interfaces:

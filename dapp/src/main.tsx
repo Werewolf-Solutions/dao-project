@@ -19,6 +19,7 @@ import Companies from "@/pages/Companies";
 import DeFi from "@/pages/DeFi";
 import Docs from "@/pages/Docs";
 import Business from "@/pages/Business";
+import WhitePaper from "@/pages/WhitePaper";
 import ErrorPage from "@/pages/ErrorPage";
 import "./index.css";
 
@@ -48,6 +49,7 @@ const router = createBrowserRouter([
 			{ path: "/companies-house/:companyId", element: <Business /> },
 			{ path: "/defi/:companyId", element: <DeFi /> },
 			{ path: "/docs", element: <Docs /> },
+			{ path: "/whitepaper", element: <WhitePaper /> },
 		],
 	},
 ]);

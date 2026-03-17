@@ -26,3 +26,17 @@ body,
 
 /* ── Selection ────────────────────────────────────────────────────────────── */
 ::selection { background-color: rgba(142, 36, 33, 0.4); color: #fff; }
+
+/* ── White paper print styles ─────────────────────────────────────────────── */
+@media print {
+  header, nav { display: none !important; }
+  html, body, #root { background: #fff !important; color: #000 !important; }
+  article { color: #000 !important; }
+  article h1, article h2, article h3, article h4 { color: #000 !important; }
+  article p, article li, article td, article th { color: #111 !important; }
+  article code { background: #f3f4f6 !important; color: #1f2937 !important; }
+  article pre  { background: #f3f4f6 !important; border: 1px solid #d1d5db !important; }
+  article a    { color: #1d4ed8 !important; }
+  article hr   { border-color: #d1d5db !important; }
+  article blockquote { border-color: #9ca3af !important; color: #4b5563 !important; }
+}

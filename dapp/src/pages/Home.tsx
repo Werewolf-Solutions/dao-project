@@ -365,6 +365,58 @@ export default function Home() {
         </div>
       </section>
 
+      {/* ══ WHITE PAPER ════════════════════════════════════════════════════════ */}
+      <section className="py-20 px-4 border-t border-white/[0.06]">
+        <div className="max-w-4xl mx-auto">
+          <div className="relative rounded-2xl border border-[#8e2421]/30 bg-[#8e2421]/[0.07] overflow-hidden px-8 py-10 flex flex-col sm:flex-row items-center gap-8">
+            {/* Glow */}
+            <div aria-hidden className="absolute -top-20 -right-20 w-64 h-64 rounded-full bg-[#8e2421]/20 blur-[80px] pointer-events-none" />
+
+            {/* Icon */}
+            <div className="shrink-0 w-16 h-16 rounded-2xl bg-[#8e2421]/20 border border-[#8e2421]/30 flex items-center justify-center text-3xl">
+              📄
+            </div>
+
+            {/* Text */}
+            <div className="flex-1 text-center sm:text-left">
+              <p className="text-xs font-semibold tracking-[0.18em] uppercase text-[#e87070] mb-2">
+                Documentation
+              </p>
+              <h3 className="text-xl sm:text-2xl font-black text-white mb-2">
+                Read the White Paper
+              </h3>
+              <p className="text-white/45 text-sm leading-relaxed max-w-xl">
+                Covers the full architecture, tokenomics, governance model, company management
+                system, roadmap, and security design — v0.1.4.
+              </p>
+            </div>
+
+            {/* CTAs */}
+            <div className="relative z-10 flex flex-col sm:flex-row gap-3 shrink-0">
+              <Link
+                to="/whitepaper"
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white transition-colors"
+                style={{ background: '#8e2421' }}
+                onMouseEnter={e => (e.currentTarget.style.background = '#a12c29')}
+                onMouseLeave={e => (e.currentTarget.style.background = '#8e2421')}
+              >
+                Read Online <ArrowRight />
+              </Link>
+              <Link
+                to="/whitepaper"
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold border border-white/[0.15] text-white/70 hover:text-white hover:border-white/30 transition-colors"
+                state={{ print: true }}
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+                </svg>
+                Download PDF
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* ══ FINAL CTA ══════════════════════════════════════════════════════════ */}
       <section className="py-28 px-4 border-t border-white/[0.06]">
         <div className="max-w-2xl mx-auto text-center flex flex-col items-center gap-6">
@@ -400,6 +452,7 @@ export default function Home() {
               { to: "/staking",         label: "Staking" },
               { to: "/companies-house", label: "Companies" },
               { to: "/account",         label: "Account" },
+              { to: "/whitepaper",      label: "White Paper" },
             ].map(({ to, label }) => (
               <Link
                 key={to}
