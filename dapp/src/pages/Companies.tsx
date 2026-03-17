@@ -4,8 +4,7 @@ import { useAccount, useChainId, useReadContract, useWriteContract, useWaitForTr
 import { formatEther } from 'viem';
 import { theme } from '@/contexts/ThemeContext';
 import { companiesHouseABI, erc20ABI, getAddress } from '@/contracts';
-import { useWLFPrice } from '@/hooks/useWLFPrice';
-import { monthlyUSDToHourlyWei, hourlyWeiToMonthlyUSD, fmtUSDT, fmtMonths } from '@/utils/formatters';
+import { monthlyUSDToHourlyWei, fmtUSDT, fmtMonths } from '@/utils/formatters';
 
 // ─── types ────────────────────────────────────────────────────────────────────
 
@@ -342,10 +341,6 @@ function CompanyListCard({
 export default function Companies() {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
-  const wlfPriceHuman = useWLFPrice();
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const _wlfPrice = wlfPriceHuman !== null ? BigInt(Math.round(wlfPriceHuman * 1e18)) : 0n;
-
   const companiesHouseAddress = getAddress(chainId, 'CompaniesHouse');
   const wlfAddress = getAddress(chainId, 'WerewolfToken');
   const usdtAddress = getAddress(chainId, 'USDT');

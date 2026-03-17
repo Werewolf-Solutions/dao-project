@@ -193,7 +193,7 @@ export default function Docs() {
   });
 
   return (
-    <PageContainer title="Docs">
+    <PageContainer>
       {/* Useful Links */}
       <div className="mb-8">
         <h2 className={`text-xs font-semibold uppercase tracking-wider mb-3 ${theme.textMuted}`}>Useful Links</h2>
@@ -215,7 +215,7 @@ export default function Docs() {
       </div>
 
       <div className="space-y-3 mb-8">
-        <h1 className={`text-2xl font-bold ${theme.text}`}>Contract Addresses</h1>
+        <h1 className={`text-2xl font-bold ${theme.textPrimary}`}>Contract Addresses</h1>
         <p className={`text-sm ${theme.textMuted}`}>
           Deployed contracts across all supported networks. Click <span className="font-mono bg-white/5 px-1 py-0.5 rounded text-white/60">copy</span> on any address to copy it, or use "Copy all addresses" to grab every address for a chain at once.
         </p>

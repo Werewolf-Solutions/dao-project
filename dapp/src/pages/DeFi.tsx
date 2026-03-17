@@ -990,7 +990,7 @@ export default function DeFi() {
                   className="font-mono px-2 py-0.5 rounded-full"
                   style={{ background: 'rgba(255,255,255,0.05)', color: row.vaultBal > 0n ? '#52b788' : 'rgba(255,255,255,0.3)' }}
                 >
-                  {fmtToken(row.vaultBal, row.decimals, 2)} {row.symbol}
+                  {Number(formatUnits(row.vaultBal, row.decimals)).toFixed(2)} {row.symbol}
                 </span>
               ))}
             </div>
@@ -1149,7 +1149,7 @@ export default function DeFi() {
               borrowAmt={borrowAmt}
               setBorrowAmt={setBorrowAmt}
               borrowTokenAddr={borrowTokenAddr || (allowedTokenRows[0]?.token ?? '')}
-              setBorrowTokenAddr={setBorrowTokenAddr}
+              setBorrowTokenAddr={(v) => setBorrowTokenAddr(v as `0x${string}` | '')}
               borrowTokenOptions={allowedTokenRows}
               availableBorrowsUsd={(() => {
                 const d = aaveUserData as [bigint,bigint,bigint,bigint,bigint,bigint] | undefined;
