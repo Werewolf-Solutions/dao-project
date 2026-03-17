@@ -371,6 +371,7 @@ export default function DAO() {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalTab, setModalTab] = useState<'quick' | 'raw'>('quick');
+  const [showProposals, setShowProposals] = useState(true);
   const [proposalCategory, setProposalCategory] = useState<'all' | 'governance' | 'token-sale' | 'treasury' | 'defi' | 'hr' | 'protocol'>('all');
 
   // Raw proposal inputs
@@ -1122,11 +1123,32 @@ export default function DAO() {
       </div>
 
       <div className="flex items-center justify-between mb-4 mt-3">
-        <div>
-          <h1 className="text-3xl font-bold">DAO Proposals</h1>
-          {isGuardian && (
-            <span className="text-xs text-amber-400 font-medium mt-0.5 block">You are the guardian</span>
+        <div className="flex items-center gap-3">
+          {proposalIds.length > 0 && (
+            <button
+              onClick={() => setShowProposals(v => !v)}
+              className="text-white/40 hover:text-white/70 transition-colors shrink-0"
+              aria-label={showProposals ? 'Hide proposals' : 'Show proposals'}
+            >
+              <svg
+                className={`w-5 h-5 transition-transform ${showProposals ? '' : '-rotate-90'}`}
+                fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
           )}
+          <div>
+            <h1 className="text-3xl font-bold">
+              DAO Proposals
+              {proposalIds.length > 0 && (
+                <span className="ml-2 text-lg font-normal text-white/40">({proposalIds.length})</span>
+              )}
+            </h1>
+            {isGuardian && (
+              <span className="text-xs text-amber-400 font-medium mt-0.5 block">You are the guardian</span>
+            )}
+          </div>
         </div>
         {needsWlfApproval ? (
           <Button
@@ -1803,51 +1825,75 @@ export default function DAO() {
         <div>
           <div className={showSection('proposals')}>
 
-            {/* ── Status filter chips ── */}
-            {proposalIds.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mb-1">
-                {ALL_STATES.map(s => (
-                  <button
-                    key={s}
-                    onClick={() => toggleState(s)}
-                    className={`text-xs px-2.5 py-0.5 rounded-full border transition-colors ${
-                      visibleStates.has(s)
-                        ? 'border-white/30 text-white bg-white/10'
-                        : `border-white/10 ${theme.textMuted} hover:text-white/60`
-                    }`}
-                  >
-                    {s}
-                  </button>
-                ))}
-                {visibleStates.size > 0 && (
-                  <button
-                    onClick={() => setVisibleStates(new Set())}
-                    className="text-xs text-white/30 hover:text-white/55 px-1 transition-colors"
-                  >
-                    clear
-                  </button>
+            {proposalIds.length === 0 ? (
+              /* ── Empty state ── */
+              <div
+                className="flex flex-col items-center justify-center text-center py-16 px-6 rounded-xl border border-white/10 mt-6"
+                style={{ background: 'rgba(255,255,255,0.03)' }}
+              >
+                <svg
+                  className="w-12 h-12 text-white/20 mb-4"
+                  fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round"
+                    d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25zM6.75 12h.008v.008H6.75V12zm0 3h.008v.008H6.75V15zm0 3h.008v.008H6.75V18z"
+                  />
+                </svg>
+                <p className="text-white/60 font-medium mb-1">No proposals yet</p>
+                <p className={`text-sm ${theme.textMuted} mb-5`}>Be the first to propose a governance change.</p>
+                {needsWlfApproval ? (
+                  <Button variant="info" size="sm" onClick={handleApproveWLF} loading={isPending || isConfirming} disabled={isPending || isConfirming}>
+                    Approve WLF (proposal fee)
+                  </Button>
+                ) : (
+                  <Button variant="primary" size="sm" onClick={() => setIsModalOpen(true)}>
+                    + Create Proposal
+                  </Button>
                 )}
               </div>
-            )}
-
-            {proposalIds.length === 0 ? (
-              <p className={`text-center mt-12 ${theme.textMuted}`}>No proposals yet.</p>
-            ) : (
-              <div className="space-y-4 mt-4">
-                {proposalIds.map((id) => (
-                  <ProposalCard
-                    key={id}
-                    id={id}
-                    daoAddress={daoAddress}
-                    isGuardian={isGuardian}
-                    visibleStates={visibleStates}
-                    wlfAddress={wlfAddress}
-                    stakingAddress={stakingAddress}
-                    lpStakingAddress={lpStakingAddress}
-                  />
-                ))}
-              </div>
-            )}
+            ) : showProposals ? (
+              <>
+                {/* ── Status filter chips ── */}
+                <div className="flex flex-wrap gap-1.5 mb-1">
+                  {ALL_STATES.map(s => (
+                    <button
+                      key={s}
+                      onClick={() => toggleState(s)}
+                      className={`text-xs px-2.5 py-0.5 rounded-full border transition-colors ${
+                        visibleStates.has(s)
+                          ? 'border-white/30 text-white bg-white/10'
+                          : `border-white/10 ${theme.textMuted} hover:text-white/60`
+                      }`}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                  {visibleStates.size > 0 && (
+                    <button
+                      onClick={() => setVisibleStates(new Set())}
+                      className="text-xs text-white/30 hover:text-white/55 px-1 transition-colors"
+                    >
+                      clear
+                    </button>
+                  )}
+                </div>
+                {/* ── Cards ── */}
+                <div className="space-y-4 mt-4">
+                  {proposalIds.map((id) => (
+                    <ProposalCard
+                      key={id}
+                      id={id}
+                      daoAddress={daoAddress}
+                      isGuardian={isGuardian}
+                      visibleStates={visibleStates}
+                      wlfAddress={wlfAddress}
+                      stakingAddress={stakingAddress}
+                      lpStakingAddress={lpStakingAddress}
+                    />
+                  ))}
+                </div>
+              </>
+            ) : null}
 
           </div>{/* end proposals section */}
         </div>{/* end right column */}
