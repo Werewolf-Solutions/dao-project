@@ -1,4 +1,4 @@
-import { StrictMode } from "react";
+import { StrictMode, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { WagmiProvider } from "wagmi";
@@ -10,17 +10,18 @@ import { aaveClient } from "@/config/aave";
 import { ChainProvider } from "@/contexts/ChainContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import App from "./App";
-import Home from "@/pages/Home";
-import TokenSale from "@/pages/TokenSale";
-import DAO from "@/pages/DAO";
-import Staking from "@/pages/Staking";
-import Account from "@/pages/Account";
-import Companies from "@/pages/Companies";
-import DeFi from "@/pages/DeFi";
-import Docs from "@/pages/Docs";
-import Business from "@/pages/Business";
-import WhitePaper from "@/pages/WhitePaper";
 import ErrorPage from "@/pages/ErrorPage";
+
+const Home = lazy(() => import("@/pages/Home"));
+const TokenSale = lazy(() => import("@/pages/TokenSale"));
+const DAO = lazy(() => import("@/pages/DAO"));
+const Staking = lazy(() => import("@/pages/Staking"));
+const Account = lazy(() => import("@/pages/Account"));
+const Companies = lazy(() => import("@/pages/Companies"));
+const DeFi = lazy(() => import("@/pages/DeFi"));
+const Docs = lazy(() => import("@/pages/Docs"));
+const Business = lazy(() => import("@/pages/Business"));
+const WhitePaper = lazy(() => import("@/pages/WhitePaper"));
 import "./index.css";
 
 reconnect(config);
@@ -61,7 +62,9 @@ createRoot(document.getElementById("root")!).render(
 				<AaveProvider client={aaveClient}>
 					<ThemeProvider>
 						<ChainProvider>
-							<RouterProvider router={router} />
+							<Suspense fallback={null}>
+						<RouterProvider router={router} />
+					</Suspense>
 						</ChainProvider>
 					</ThemeProvider>
 				</AaveProvider>
