@@ -89,6 +89,7 @@ contract CompaniesHouseTest is BaseTest {
         CompaniesHouseV1.SalaryItem[] memory items = new CompaniesHouseV1.SalaryItem[](1);
         items[0] = CompaniesHouseV1.SalaryItem({
             role:          "Engineer",
+            earningsType:  CompaniesHouseV1.EarningsType.SALARY,
             salaryPerHour: HOURLY_SALARY,
             lastPayDate:   0
         });
@@ -447,5 +448,154 @@ contract CompaniesHouseTest is BaseTest {
         vm.expectRevert();
         vm.prank(founder);
         companiesHouse.setDaoCompanyId(badId);
+    }
+
+    // ── Tests: submitEarning (earnings codes & triggers) ──────────────────────
+
+    /// @dev Submits a bonus and verifies it appears in getTotalPendingUSDT.
+    function test_SubmitEarning_Bonus_AppearsInPending() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id);
+
+        uint256 bonusUSDT = 50e6; // $50 USDT
+
+        vm.prank(founder);
+        companiesHouse.submitEarning(
+            employee1, id, CompaniesHouseV1.EarningsType.BONUS, bonusUSDT, "Q1 bonus"
+        );
+
+        // Bonus should be immediately visible in total pending
+        uint256 pending = companiesHouse.getTotalPendingUSDT(id);
+        assertGe(pending, bonusUSDT, "Bonus not included in pending USDT");
+    }
+
+    /// @dev Submits overtime and verifies the EarningSubmitted event fires.
+    function test_SubmitEarning_EmitsEvent() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id);
+
+        uint256 amount = 25e6;
+
+        vm.expectEmit(true, true, false, true, address(companiesHouse));
+        emit CompaniesHouseV1.EarningSubmitted(
+            employee1, id, CompaniesHouseV1.EarningsType.OVERTIME, amount, "10hrs OT week 12"
+        );
+
+        vm.prank(founder);
+        companiesHouse.submitEarning(
+            employee1, id, CompaniesHouseV1.EarningsType.OVERTIME, amount, "10hrs OT week 12"
+        );
+    }
+
+    /// @dev Non-authorized caller cannot submit an earning.
+    function test_SubmitEarning_Unauthorized_Reverts() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id);
+
+        address stranger = makeAddr("stranger");
+        vm.expectRevert(CompaniesHouseV1.NotAuthorized.selector);
+        vm.prank(stranger);
+        companiesHouse.submitEarning(
+            employee1, id, CompaniesHouseV1.EarningsType.BONUS, 10e6, "sneaky bonus"
+        );
+    }
+
+    /// @dev Submitting a SALARY type via submitEarning is rejected (use addRoleToEmployee).
+    function test_SubmitEarning_SalaryType_Reverts() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id);
+
+        vm.expectRevert(CompaniesHouseV1.InvalidSalaryIndex.selector);
+        vm.prank(founder);
+        companiesHouse.submitEarning(
+            employee1, id, CompaniesHouseV1.EarningsType.SALARY, 10e6, "should fail"
+        );
+    }
+
+    /// @dev Submitting a zero amount is rejected.
+    function test_SubmitEarning_ZeroAmount_Reverts() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id);
+
+        vm.expectRevert(CompaniesHouseV1.NothingToPay.selector);
+        vm.prank(founder);
+        companiesHouse.submitEarning(
+            employee1, id, CompaniesHouseV1.EarningsType.BONUS, 0, "empty bonus"
+        );
+    }
+
+    /// @dev Paying an employee drains pendingEarnings and the payout includes both salary and bonus.
+    function test_PayEmployee_DrainsPendingEarnings() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id);
+
+        uint256 bonusUSDT = 100e6; // $100 bonus
+
+        // Submit bonus
+        vm.prank(founder);
+        companiesHouse.submitEarning(
+            employee1, id, CompaniesHouseV1.EarningsType.BONUS, bonusUSDT, "annual bonus"
+        );
+
+        // Warp 30 days so salary also accrues
+        vm.warp(block.timestamp + 30 days);
+
+        uint256 salaryAccrued = HOURLY_SALARY * 30 days / 1 hours;
+        uint256 totalExpected = salaryAccrued + bonusUSDT;
+        uint256 needed = _requiredUSDT(id, totalExpected);
+        _depositUSDT(id, needed);
+
+        uint256 balanceBefore = mockUSDT.balanceOf(employee1);
+        uint256 fee = totalExpected * 500 / 10_000; // 5%
+        uint256 netExpected = totalExpected - fee;
+
+        uint256 pendingBefore = companiesHouse.getTotalPendingUSDT(id);
+
+        vm.prank(founder);
+        companiesHouse.payEmployee(employee1, id);
+
+        assertApproxEqAbs(
+            mockUSDT.balanceOf(employee1) - balanceBefore,
+            netExpected,
+            1e3, // 0.001 USDT tolerance for rounding
+            "Employee did not receive salary + bonus"
+        );
+
+        // pendingEarnings cleared: total pending dropped by at least the bonus amount
+        // (founder's salary still accrues, so pending is not exactly 0)
+        uint256 pendingAfter = companiesHouse.getTotalPendingUSDT(id);
+        assertLe(pendingAfter, pendingBefore - bonusUSDT, "Bonus not drained from pendingEarnings");
+    }
+
+    /// @dev Batch payEmployees also drains pending earnings across employees.
+    function test_PayEmployees_BatchIncludesPendingEarnings() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id);
+
+        uint256 bonus = 50e6;
+
+        vm.prank(founder);
+        companiesHouse.submitEarning(
+            employee1, id, CompaniesHouseV1.EarningsType.BONUS, bonus, "batch bonus"
+        );
+
+        vm.warp(block.timestamp + 30 days);
+
+        uint256 totalPending = companiesHouse.getTotalPendingUSDT(id);
+        _depositUSDT(id, _requiredUSDT(id, totalPending));
+
+        uint256 balanceBefore = mockUSDT.balanceOf(employee1);
+
+        vm.prank(founder);
+        companiesHouse.payEmployees(id);
+
+        // Employee received more than salary alone (bonus included)
+        uint256 salaryOnly = HOURLY_SALARY * 30 days / 1 hours;
+        uint256 netSalaryOnly = salaryOnly * 9_500 / 10_000;
+        assertGt(
+            mockUSDT.balanceOf(employee1) - balanceBefore,
+            netSalaryOnly,
+            "Batch pay did not include pending bonus"
+        );
     }
 }

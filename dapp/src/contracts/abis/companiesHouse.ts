@@ -40,9 +40,10 @@ export const companiesHouseABI = [
             "type": "tuple[]",
             "internalType": "struct CompaniesHouseV1.SalaryItem[]",
             "components": [
-              { "name": "role",           "type": "string",  "internalType": "string"  },
-              { "name": "salaryPerHour",  "type": "uint256", "internalType": "uint256" },
-              { "name": "lastPayDate",    "type": "uint256", "internalType": "uint256" }
+              { "name": "role",          "type": "string",  "internalType": "string"  },
+              { "name": "earningsType",  "type": "uint8",   "internalType": "enum CompaniesHouseV1.EarningsType" },
+              { "name": "salaryPerHour", "type": "uint256", "internalType": "uint256" },
+              { "name": "lastPayDate",   "type": "uint256", "internalType": "uint256" }
             ]
           }
         ]
@@ -68,6 +69,7 @@ export const companiesHouseABI = [
             "internalType": "struct CompaniesHouseV1.SalaryItem[]",
             "components": [
               { "name": "role",          "type": "string",  "internalType": "string"  },
+              { "name": "earningsType",  "type": "uint8",   "internalType": "enum CompaniesHouseV1.EarningsType" },
               { "name": "salaryPerHour", "type": "uint256", "internalType": "uint256" },
               { "name": "lastPayDate",   "type": "uint256", "internalType": "uint256" }
             ]
@@ -90,10 +92,24 @@ export const companiesHouseABI = [
         "internalType": "struct CompaniesHouseV1.SalaryItem",
         "components": [
           { "name": "role",          "type": "string",  "internalType": "string"  },
+          { "name": "earningsType",  "type": "uint8",   "internalType": "enum CompaniesHouseV1.EarningsType" },
           { "name": "salaryPerHour", "type": "uint256", "internalType": "uint256" },
           { "name": "lastPayDate",   "type": "uint256", "internalType": "uint256" }
         ]
       }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "submitEarning",
+    "inputs": [
+      { "name": "_employeeAddress", "type": "address", "internalType": "address" },
+      { "name": "_companyId",       "type": "uint96",  "internalType": "uint96"  },
+      { "name": "_earningsType",    "type": "uint8",   "internalType": "enum CompaniesHouseV1.EarningsType" },
+      { "name": "_amount",          "type": "uint256", "internalType": "uint256" },
+      { "name": "_description",     "type": "string",  "internalType": "string"  }
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
@@ -307,6 +323,7 @@ export const companiesHouseABI = [
                 "internalType": "struct CompaniesHouseV1.SalaryItem[]",
                 "components": [
                   { "name": "role",          "type": "string",  "internalType": "string"  },
+                  { "name": "earningsType",  "type": "uint8",   "internalType": "enum CompaniesHouseV1.EarningsType" },
                   { "name": "salaryPerHour", "type": "uint256", "internalType": "uint256" },
                   { "name": "lastPayDate",   "type": "uint256", "internalType": "uint256" }
                 ]
@@ -511,6 +528,18 @@ export const companiesHouseABI = [
       { "name": "employee",  "type": "address", "indexed": true  },
       { "name": "companyId", "type": "uint96",  "indexed": true  },
       { "name": "role",      "type": "string",  "indexed": false }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "EarningSubmitted",
+    "inputs": [
+      { "name": "employee",     "type": "address", "indexed": true  },
+      { "name": "companyId",    "type": "uint96",  "indexed": true  },
+      { "name": "earningsType", "type": "uint8",   "indexed": false },
+      { "name": "amount",       "type": "uint256", "indexed": false },
+      { "name": "description",  "type": "string",  "indexed": false }
     ],
     "anonymous": false
   },

@@ -30,7 +30,7 @@ contract Timelock is Initializable {
     );
 
     uint256 public constant GRACE_PERIOD = 14 days;
-    uint256 public constant MINIMUM_DELAY = 1 minutes;
+    uint256 public constant MINIMUM_DELAY = 60 seconds; // TODO: change to 2 days before mainnet deploy
     uint256 public constant MAXIMUM_DELAY = 30 days;
 
     address public admin;

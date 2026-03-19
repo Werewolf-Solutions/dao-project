@@ -44,15 +44,38 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     ///////////////////////////////////////
 
     /**
-     * @notice A single salary stream within an employee's compensation package.
+     * @notice Categorises how an employee's pay is calculated and triggered.
+     * @dev    SALARY      — continuous hourly accrual (default, value 0 for backward-compat).
+     *         OVERTIME    — discrete amount submitted per pay period by an authorised party.
+     *         BONUS       — discrete one-time amount.
+     *         COMMISSION  — discrete amount, percentage pre-calculated off-chain.
+     *         REIMBURSEMENT — discrete expense amount.
+     */
+    enum EarningsType { SALARY, OVERTIME, BONUS, COMMISSION, REIMBURSEMENT }
+
+    /**
+     * @notice A single continuous salary stream within an employee's compensation package.
      * @dev Salary is denominated in USDT with 6 decimal places (e.g., $500/month
      *      ≈ 684_931 USDT-wei per hour). USDT is sent directly from the company's
      *      internal balance at pay time.
+     *      earningsType labels the stream; existing entries default to SALARY (0).
      */
     struct SalaryItem {
         string role;
-        uint256 salaryPerHour; // USDT 6-decimal wei per hour
+        EarningsType earningsType; // labels the continuous stream type
+        uint256 salaryPerHour;     // USDT 6-decimal wei per hour
         uint256 lastPayDate;
+    }
+
+    /**
+     * @notice A discrete (one-time) earning queued by an authorised party and paid at next pay run.
+     * @dev    Used for overtime, bonuses, commissions, and reimbursements. Drained to zero on payment.
+     */
+    struct PendingEarning {
+        EarningsType earningsType;
+        string description;
+        uint256 amount;      // USDT 6-decimal wei
+        uint256 submittedAt;
     }
 
     struct CreateCompany {
@@ -110,7 +133,8 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         uint256 companyId;
         uint256 hiredAt;
         bool active;
-        SalaryItem[] salaryItems; // all salary streams (one per role held)
+        SalaryItem[] salaryItems;          // continuous pay streams (one per role held)
+        PendingEarning[] pendingEarnings;  // discrete triggered earnings (drained on pay)
     }
 
     struct CompanyBrief {
@@ -220,6 +244,10 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     /// @param feeAmount  Fee sent to treasury
     event ProtocolFeePaid(uint96 indexed companyId, address indexed token, uint256 feeAmount);
     event CompanyReserveMonthsSet(uint96 indexed companyId, uint256 months);
+    /// @param earningsType The type of discrete earning submitted
+    /// @param amount       USDT (6 dec) queued for payment
+    /// @param description  Free-text reason (e.g. "Q1 bonus", "10hrs overtime week 12")
+    event EarningSubmitted(address indexed employee, uint96 indexed companyId, EarningsType earningsType, uint256 amount, string description);
 
     ///////////////////////////////////////
     //           Modifiers               //
@@ -587,6 +615,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         SalaryItem[] memory ownerSalary = new SalaryItem[](1);
         ownerSalary[0] = SalaryItem({
             role: _params.ownerRole,
+            earningsType: EarningsType.SALARY,
             salaryPerHour: _params.ownerSalaryPerHour,
             lastPayDate: block.timestamp
         });
@@ -683,6 +712,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         for (uint256 i = oldLen; i < newLen; i++) {
             emp.salaryItems.push(SalaryItem({
                 role: _params.salaryItems[i].role,
+                earningsType: _params.salaryItems[i].earningsType,
                 salaryPerHour: _params.salaryItems[i].salaryPerHour,
                 lastPayDate: block.timestamp
             }));
@@ -737,11 +767,53 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         Employee storage emp = compPtr.employees[empBrief.employeeIndex];
         emp.salaryItems.push(SalaryItem({
             role: _item.role,
+            earningsType: _item.earningsType,
             salaryPerHour: _item.salaryPerHour,
             lastPayDate: block.timestamp
         }));
 
         emit RoleAdded(_employeeAddress, _companyId, _item.role);
+    }
+
+    /**
+     * @notice Submit a discrete (one-time) earning for an employee — the "trigger" for overtime,
+     *         bonuses, commissions, and reimbursements.
+     * @dev    The amount is queued in the employee's pendingEarnings[] and paid out at the next
+     *         payEmployee / payEmployees call. Calculation of the amount (e.g. hours × rate × 1.5
+     *         for overtime) is done off-chain by the caller.
+     *         SALARY type is rejected — use addRoleToEmployee for continuous streams.
+     * @param _employeeAddress  The employee receiving the earning
+     * @param _companyId        Company the employee belongs to
+     * @param _earningsType     Must be OVERTIME, BONUS, COMMISSION, or REIMBURSEMENT
+     * @param _amount           USDT 6-decimal wei to queue
+     * @param _description      Free-text reason (e.g. "10 hrs overtime week 12", "Q1 bonus")
+     */
+    function submitEarning(
+        address _employeeAddress,
+        uint96 _companyId,
+        EarningsType _earningsType,
+        uint256 _amount,
+        string calldata _description
+    ) public whenNotPaused {
+        if (!_isAuthorized(msg.sender, _companyId)) revert NotAuthorized();
+        if (_earningsType == EarningsType.SALARY) revert InvalidSalaryIndex();
+        if (_amount == 0) revert NothingToPay();
+
+        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
+        if (!empBrief.isMember) revert NotMember();
+
+        CompanyBrief memory compBrief = companyBrief[_companyId];
+        Employee storage emp = ownerToCompanies[compBrief.owner][compBrief.index].employees[empBrief.employeeIndex];
+        if (!emp.active) revert EmployeeNotActive();
+
+        emp.pendingEarnings.push(PendingEarning({
+            earningsType: _earningsType,
+            description: _description,
+            amount: _amount,
+            submittedAt: block.timestamp
+        }));
+
+        emit EarningSubmitted(_employeeAddress, _companyId, _earningsType, _amount, _description);
     }
 
     /**
@@ -938,6 +1010,9 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
                 SalaryItem storage item = employees[i].salaryItems[j];
                 totalUSDT += ((block.timestamp - item.lastPayDate) * item.salaryPerHour) / 1 hours;
             }
+            for (uint256 j = 0; j < employees[i].pendingEarnings.length; j++) {
+                totalUSDT += employees[i].pendingEarnings[j].amount;
+            }
         }
     }
 
@@ -1001,6 +1076,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         for (uint256 i = 0; i < _salaryItems.length; i++) {
             newEmp.salaryItems.push(SalaryItem({
                 role: _salaryItems[i].role,
+                earningsType: _salaryItems[i].earningsType,
                 salaryPerHour: _salaryItems[i].salaryPerHour,
                 lastPayDate: block.timestamp
             }));
@@ -1056,6 +1132,10 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
             totalUSDT += ((payTimestamp - s_emp.salaryItems[i].lastPayDate) * s_emp.salaryItems[i].salaryPerHour) / 1 hours;
             s_emp.salaryItems[i].lastPayDate = payTimestamp;
         }
+        for (uint256 i = 0; i < s_emp.pendingEarnings.length; i++) {
+            totalUSDT += s_emp.pendingEarnings[i].amount;
+        }
+        delete s_emp.pendingEarnings; // drain all discrete earnings on payment
         if (totalUSDT == 0) return;
 
         if (daoCompanyId > 0 && _companyId == daoCompanyId) {
@@ -1080,6 +1160,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
                 return true;
             }
         }
+        if (_emp.pendingEarnings.length > 0) return true;
         return false;
     }
 

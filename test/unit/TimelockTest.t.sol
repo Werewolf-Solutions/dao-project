@@ -15,7 +15,7 @@ contract TimelockTest is BaseTest {
     function test_initialize_reverts_belowMinDelay() public {
         address impl = address(new Timelock());
         bytes memory initData = abi.encodeWithSelector(
-            Timelock.initialize.selector, founder, 1 days  // < MINIMUM_DELAY (2 days)
+            Timelock.initialize.selector, founder, 30 seconds  // < MINIMUM_DELAY (60 seconds)
         );
         vm.expectRevert("Timelock::constructor: Delay must exceed minimum delay.");
         new TransparentUpgradeableProxy(impl, multiSig, initData);

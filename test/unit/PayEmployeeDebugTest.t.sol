@@ -87,7 +87,7 @@ contract PayEmployeeDebugTest is BaseTest {
 
         CompaniesHouseV1.SalaryItem[] memory items = new CompaniesHouseV1.SalaryItem[](1);
         items[0] = CompaniesHouseV1.SalaryItem({
-            role: "Engineer", salaryPerHour: HOURLY_SALARY, lastPayDate: 0
+            role: "Engineer", earningsType: CompaniesHouseV1.EarningsType.SALARY, salaryPerHour: HOURLY_SALARY, lastPayDate: 0
         });
         vm.prank(founder);
         companiesHouse.hireEmployee(CompaniesHouseV1.HireEmployee({

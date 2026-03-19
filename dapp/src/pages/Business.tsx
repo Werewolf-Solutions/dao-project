@@ -364,6 +364,12 @@ function EmployeeCard({
   const [showHistory, setShowHistory] = useState(false);
   const [payHistory, setPayHistory] = useState<{ date: Date; usdt: bigint }[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [showSubmitEarning, setShowSubmitEarning] = useState(false);
+  const [earningType, setEarningType] = useState<1 | 2 | 3 | 4>(2); // default BONUS
+  const [earningAmountStr, setEarningAmountStr] = useState('');
+  const [earningDesc, setEarningDesc] = useState('');
+  const [earningTxHash, setEarningTxHash] = useState<`0x${string}` | undefined>();
+  const [earningError, setEarningError] = useState<string | null>(null);
 
   // Tick every 5s so pending-USDT recalculates from Date.now() without a contract call
   const [, setTick] = useState(0);
@@ -377,6 +383,9 @@ function EmployeeCard({
 
   const { writeContract: writeFire, isPending: isFirePending } = useWriteContract();
   const { isLoading: isFireMining, isSuccess: isFireSuccess } = useWaitForTransactionReceipt({ hash: fireTxHash });
+
+  const { writeContract: writeEarning, isPending: isEarningPending } = useWriteContract();
+  const { isLoading: isEarningMining, isSuccess: isEarningSuccess } = useWaitForTransactionReceipt({ hash: earningTxHash });
 
   useEffect(() => { if (isFireSuccess) onRefetch(); }, [isFireSuccess]);
 
@@ -475,6 +484,24 @@ function EmployeeCard({
         args: [employee.employeeId, company.companyId],
       },
       { onSuccess: (hash) => setFireTxHash(hash) }
+    );
+  }
+
+  function handleSubmitEarning() {
+    setEarningError(null);
+    const amount = parseUnits(earningAmountStr || '0', 6);
+    if (amount === 0n) { setEarningError('Amount must be greater than 0'); return; }
+    writeEarning(
+      {
+        address: companiesHouseAddress,
+        abi: companiesHouseABI,
+        functionName: 'submitEarning',
+        args: [employee.employeeId, company.companyId, earningType, amount, earningDesc],
+      },
+      {
+        onSuccess: (hash) => { setEarningTxHash(hash); },
+        onError: (err) => setEarningError((err as { shortMessage?: string }).shortMessage ?? err.message),
+      }
     );
   }
 
@@ -594,6 +621,63 @@ function EmployeeCard({
 
       {isSuccess && (
         <p className="text-xs text-green-400">Payment sent successfully.</p>
+      )}
+
+      {/* Submit Earning (authorized users only) */}
+      {isAuthorized && (
+        <div className="pt-1 border-t border-white/5">
+          <button
+            onClick={() => setShowSubmitEarning(v => !v)}
+            className={`text-xs transition-colors ${showSubmitEarning ? 'text-white/60' : 'text-white/30 hover:text-white/60'}`}
+          >
+            Submit Earning {showSubmitEarning ? '▴' : '▾'}
+          </button>
+          {showSubmitEarning && (
+            <div className="mt-2 space-y-2">
+              <div className="flex gap-2 flex-wrap">
+                <select
+                  value={earningType}
+                  onChange={e => setEarningType(Number(e.target.value) as 1 | 2 | 3 | 4)}
+                  className="bg-white/5 border border-white/10 rounded px-2 py-1 text-xs text-white/80 focus:outline-none focus:border-white/20"
+                >
+                  <option value={1}>Overtime</option>
+                  <option value={2}>Bonus</option>
+                  <option value={3}>Commission</option>
+                  <option value={4}>Reimbursement</option>
+                </select>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="Amount (USDT)"
+                  value={earningAmountStr}
+                  onChange={e => setEarningAmountStr(e.target.value)}
+                  className="bg-white/5 border border-white/10 rounded px-2 py-1 text-xs text-white/80 focus:outline-none focus:border-white/20 w-36"
+                />
+              </div>
+              <input
+                type="text"
+                placeholder="Description (e.g. 10hrs overtime week 12)"
+                value={earningDesc}
+                onChange={e => setEarningDesc(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs text-white/80 focus:outline-none focus:border-white/20"
+              />
+              <button
+                onClick={handleSubmitEarning}
+                disabled={isEarningPending || isEarningMining || !earningAmountStr}
+                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                  isEarningPending || isEarningMining || !earningAmountStr
+                    ? 'bg-white/5 text-white/30 cursor-not-allowed'
+                    : 'bg-white/10 text-white/70 hover:bg-white/15 hover:text-white/90'
+                }`}
+              >
+                {isEarningPending ? 'Confirm…' : isEarningMining ? 'Submitting…' : 'Queue Earning'}
+              </button>
+              {isEarningSuccess && <p className="text-xs text-green-400">Earning queued — will be paid at next pay run.</p>}
+              {earningError && <p className="text-xs text-red-400 break-words">{earningError}</p>}
+            </div>
+          )}
+        </div>
       )}
 
       {employee.employeeId.toLowerCase() === connectedAddress.toLowerCase() && (
