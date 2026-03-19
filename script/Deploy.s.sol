@@ -353,26 +353,23 @@ contract Deploy is Script {
             : uint256(10_000 * 1_000_000) / 730;  // ≈ 13,698,630 USDT-wei/hr on testnets/local
 
         // 3. Build the Werewolf DAO company params
-        string[] memory roles = new string[](7);
-        roles[0] = "Founder";
-        roles[1] = "Engineer";
-        roles[2] = "Advisor";
-        roles[3] = "HR";
-        roles[4] = "SMM";
-        roles[5] = "Developer";
-        roles[6] = "Tester";
-
-        string[] memory powerRoles = new string[](1);
-        powerRoles[0] = "Founder";
+        CompaniesHouseV1.RoleDefinition[] memory roles = new CompaniesHouseV1.RoleDefinition[](7);
+        roles[0] = CompaniesHouseV1.RoleDefinition({ name: "Founder",   level: 2 });
+        roles[1] = CompaniesHouseV1.RoleDefinition({ name: "Engineer",  level: 3 });
+        roles[2] = CompaniesHouseV1.RoleDefinition({ name: "Advisor",   level: 3 });
+        roles[3] = CompaniesHouseV1.RoleDefinition({ name: "HR",        level: 3 });
+        roles[4] = CompaniesHouseV1.RoleDefinition({ name: "SMM",       level: 3 });
+        roles[5] = CompaniesHouseV1.RoleDefinition({ name: "Developer", level: 3 });
+        roles[6] = CompaniesHouseV1.RoleDefinition({ name: "Tester",    level: 3 });
 
         CompaniesHouseV1.CreateCompany memory params = CompaniesHouseV1.CreateCompany({
             name:               "Werewolf DAO",
             industry:           "software",
             domain:             "dao.werewolf.solutions",
             roles:              roles,
-            powerRoles:         powerRoles,
-            operatorAddress:      founder,
+            operatorAddress:    founder,
             ownerRole:          "Founder",
+            ownerRoleLevel:     2,
             ownerSalaryPerHour: hourlyWei,
             ownerName:          "Lorenzo"
         });
@@ -427,28 +424,24 @@ contract Deploy is Script {
         uint256 hourlyWei = uint256(5_000 * 1_000_000) / 730; // ≈ 6,849,315 USDT-wei/hr
 
         // 3. Build Werewolf Solutions company params
-        string[] memory roles = new string[](8);
-        roles[0] = "Founder";
-        roles[1] = "CEO";
-        roles[2] = "CTO";
-        roles[3] = "Engineer";
-        roles[4] = "Designer";
-        roles[5] = "HR";
-        roles[6] = "Advisor";
-        roles[7] = "SMM";
-
-        string[] memory powerRoles = new string[](2);
-        powerRoles[0] = "Founder";
-        powerRoles[1] = "CEO";
+        CompaniesHouseV1.RoleDefinition[] memory roles = new CompaniesHouseV1.RoleDefinition[](8);
+        roles[0] = CompaniesHouseV1.RoleDefinition({ name: "Founder",  level: 2 });
+        roles[1] = CompaniesHouseV1.RoleDefinition({ name: "CEO",      level: 2 });
+        roles[2] = CompaniesHouseV1.RoleDefinition({ name: "CTO",      level: 2 });
+        roles[3] = CompaniesHouseV1.RoleDefinition({ name: "Engineer", level: 3 });
+        roles[4] = CompaniesHouseV1.RoleDefinition({ name: "Designer", level: 3 });
+        roles[5] = CompaniesHouseV1.RoleDefinition({ name: "HR",       level: 3 });
+        roles[6] = CompaniesHouseV1.RoleDefinition({ name: "Advisor",  level: 3 });
+        roles[7] = CompaniesHouseV1.RoleDefinition({ name: "SMM",      level: 3 });
 
         CompaniesHouseV1.CreateCompany memory params = CompaniesHouseV1.CreateCompany({
             name:               "Werewolf Solutions",
             industry:           "software",
             domain:             "werewolf.solutions",
             roles:              roles,
-            powerRoles:         powerRoles,
             operatorAddress:    founder,
             ownerRole:          "Founder",
+            ownerRoleLevel:     2,
             ownerSalaryPerHour: hourlyWei,
             ownerName:          "Lorenzo"
         });

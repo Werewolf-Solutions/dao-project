@@ -8,15 +8,22 @@ export const companiesHouseABI = [
         "type": "tuple",
         "internalType": "struct CompaniesHouseV1.CreateCompany",
         "components": [
-          { "name": "name",               "type": "string",    "internalType": "string"  },
-          { "name": "industry",           "type": "string",    "internalType": "string"  },
-          { "name": "domain",             "type": "string",    "internalType": "string"  },
-          { "name": "roles",              "type": "string[]",  "internalType": "string[]" },
-          { "name": "powerRoles",         "type": "string[]",  "internalType": "string[]" },
-          { "name": "operatorAddress",      "type": "address",   "internalType": "address" },
-          { "name": "ownerRole",          "type": "string",    "internalType": "string"  },
-          { "name": "ownerSalaryPerHour", "type": "uint256",   "internalType": "uint256" },
-          { "name": "ownerName",          "type": "string",    "internalType": "string"  }
+          { "name": "name",               "type": "string",  "internalType": "string"  },
+          { "name": "industry",           "type": "string",  "internalType": "string"  },
+          { "name": "domain",             "type": "string",  "internalType": "string"  },
+          {
+            "name": "roles", "type": "tuple[]",
+            "internalType": "struct CompaniesHouseV1.RoleDefinition[]",
+            "components": [
+              { "name": "name",  "type": "string", "internalType": "string" },
+              { "name": "level", "type": "uint8",  "internalType": "uint8"  }
+            ]
+          },
+          { "name": "operatorAddress",    "type": "address", "internalType": "address" },
+          { "name": "ownerRole",          "type": "string",  "internalType": "string"  },
+          { "name": "ownerRoleLevel",     "type": "uint8",   "internalType": "uint8"   },
+          { "name": "ownerSalaryPerHour", "type": "uint256", "internalType": "uint256" },
+          { "name": "ownerName",          "type": "string",  "internalType": "string"  }
         ]
       }
     ],
@@ -166,12 +173,18 @@ export const companiesHouseABI = [
         "type": "tuple",
         "internalType": "struct CompaniesHouseV1.UpdateCompany",
         "components": [
-          { "name": "name",          "type": "string",   "internalType": "string"   },
-          { "name": "industry",      "type": "string",   "internalType": "string"   },
-          { "name": "domain",        "type": "string",   "internalType": "string"   },
-          { "name": "roles",         "type": "string[]", "internalType": "string[]" },
-          { "name": "powerRoles",    "type": "string[]", "internalType": "string[]" },
-          { "name": "operatorAddress", "type": "address",  "internalType": "address"  }
+          { "name": "name",    "type": "string",  "internalType": "string"  },
+          { "name": "industry","type": "string",  "internalType": "string"  },
+          { "name": "domain",  "type": "string",  "internalType": "string"  },
+          {
+            "name": "roles", "type": "tuple[]",
+            "internalType": "struct CompaniesHouseV1.RoleDefinition[]",
+            "components": [
+              { "name": "name",  "type": "string", "internalType": "string" },
+              { "name": "level", "type": "uint8",  "internalType": "uint8"  }
+            ]
+          },
+          { "name": "operatorAddress", "type": "address", "internalType": "address" }
         ]
       }
     ],
@@ -330,9 +343,15 @@ export const companiesHouseABI = [
               }
             ]
           },
-          { "name": "domain",     "type": "string",   "internalType": "string"   },
-          { "name": "roles",      "type": "string[]", "internalType": "string[]" },
-          { "name": "powerRoles", "type": "string[]", "internalType": "string[]" }
+          { "name": "domain", "type": "string", "internalType": "string" },
+          {
+            "name": "roles", "type": "tuple[]",
+            "internalType": "struct CompaniesHouseV1.RoleDefinition[]",
+            "components": [
+              { "name": "name",  "type": "string", "internalType": "string" },
+              { "name": "level", "type": "uint8",  "internalType": "uint8"  }
+            ]
+          }
         ]
       }
     ],

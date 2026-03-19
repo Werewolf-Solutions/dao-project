@@ -60,12 +60,9 @@ contract CompaniesHouseTest is BaseTest {
 
     /// @dev Creates a standard company as `founder`. Returns companyId (always 1).
     function _createCompany() internal returns (uint96 companyId) {
-        string[] memory roles = new string[](2);
-        roles[0] = "CEO";
-        roles[1] = "Engineer";
-
-        string[] memory powerRoles = new string[](1);
-        powerRoles[0] = "CEO";
+        CompaniesHouseV1.RoleDefinition[] memory roles = new CompaniesHouseV1.RoleDefinition[](2);
+        roles[0] = CompaniesHouseV1.RoleDefinition({ name: "CEO",      level: 2 });
+        roles[1] = CompaniesHouseV1.RoleDefinition({ name: "Engineer", level: 3 });
 
         vm.startPrank(founder);
         werewolfToken.approve(address(companiesHouse), CREATION_FEE);
@@ -74,9 +71,9 @@ contract CompaniesHouseTest is BaseTest {
             industry:           "Software",
             domain:             "werewolf.io",
             roles:              roles,
-            powerRoles:         powerRoles,
-            operatorAddress:      founder,
+            operatorAddress:    founder,
             ownerRole:          "CEO",
+            ownerRoleLevel:     2,
             ownerSalaryPerHour: HOURLY_SALARY,
             ownerName:          "Alice Founder"
         }));
@@ -152,18 +149,17 @@ contract CompaniesHouseTest is BaseTest {
         vm.prank(address(timelock));
         werewolfToken.airdrop(employee1, CREATION_FEE - 1);
 
-        string[] memory roles = new string[](1);
-        roles[0] = "CEO";
-        string[] memory powerRoles = new string[](0);
+        CompaniesHouseV1.RoleDefinition[] memory roles = new CompaniesHouseV1.RoleDefinition[](1);
+        roles[0] = CompaniesHouseV1.RoleDefinition({ name: "CEO", level: 2 });
 
         vm.startPrank(employee1);
         werewolfToken.approve(address(companiesHouse), CREATION_FEE - 1);
         vm.expectRevert(CompaniesHouseV1.InsufficientFee.selector);
         companiesHouse.createCompany(CompaniesHouseV1.CreateCompany({
             name: "Broke Inc", industry: "None", domain: "x.io",
-            roles: roles, powerRoles: powerRoles,
+            roles: roles,
             operatorAddress: employee1,
-            ownerRole: "CEO", ownerSalaryPerHour: 0, ownerName: "Nobody"
+            ownerRole: "CEO", ownerRoleLevel: 2, ownerSalaryPerHour: 0, ownerName: "Nobody"
         }));
         vm.stopPrank();
     }
@@ -597,5 +593,139 @@ contract CompaniesHouseTest is BaseTest {
             netSalaryOnly,
             "Batch pay did not include pending bonus"
         );
+    }
+
+    // ── Tests: Role Hierarchy Auth ────────────────────────────────────────────
+
+    /// @dev Hire a Level 3 employee then use them as a caller for hierarchy tests.
+    function _hireManager(uint96 id) internal returns (address manager) {
+        manager = makeAddr("manager");
+        deal(address(werewolfToken), manager, 0); // no tokens needed — just to set up address
+
+        // Give manager some WLF so founder can pay them (not strictly needed for auth tests)
+        CompaniesHouseV1.SalaryItem[] memory items = new CompaniesHouseV1.SalaryItem[](1);
+        items[0] = CompaniesHouseV1.SalaryItem({
+            role:          "Engineer",
+            earningsType:  CompaniesHouseV1.EarningsType.SALARY,
+            salaryPerHour: HOURLY_SALARY,
+            lastPayDate:   0
+        });
+        vm.prank(founder);
+        companiesHouse.hireEmployee(CompaniesHouseV1.HireEmployee({
+            employeeAddress: manager,
+            name:            "Manager",
+            companyId:       id,
+            salaryItems:     items
+        }));
+    }
+
+    /// @dev Level 3 (Engineer) can pay another Level 3 (Engineer) — LENIENT rule.
+    function test_SameLevel_CanPay() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id); // employee1 = Engineer (level 3)
+        address eng2 = makeAddr("eng2");
+
+        CompaniesHouseV1.SalaryItem[] memory items = new CompaniesHouseV1.SalaryItem[](1);
+        items[0] = CompaniesHouseV1.SalaryItem({
+            role: "Engineer", earningsType: CompaniesHouseV1.EarningsType.SALARY,
+            salaryPerHour: HOURLY_SALARY, lastPayDate: 0
+        });
+        vm.prank(founder);
+        companiesHouse.hireEmployee(CompaniesHouseV1.HireEmployee({
+            employeeAddress: eng2, name: "Eng2", companyId: id, salaryItems: items
+        }));
+
+        _depositUSDT(id, 5_000e6);
+        vm.warp(block.timestamp + 730 hours);
+
+        // employee1 (level 3) pays eng2 (level 3) — should succeed
+        vm.prank(employee1);
+        companiesHouse.payEmployee(eng2, id);
+    }
+
+    /// @dev Level 3 (Engineer) cannot fire another Level 3 (Engineer) — STRICT rule.
+    function test_SameLevel_CannotFire() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id); // employee1 = Engineer (level 3)
+        address eng2 = makeAddr("eng2");
+
+        CompaniesHouseV1.SalaryItem[] memory items = new CompaniesHouseV1.SalaryItem[](1);
+        items[0] = CompaniesHouseV1.SalaryItem({
+            role: "Engineer", earningsType: CompaniesHouseV1.EarningsType.SALARY,
+            salaryPerHour: HOURLY_SALARY, lastPayDate: 0
+        });
+        vm.prank(founder);
+        companiesHouse.hireEmployee(CompaniesHouseV1.HireEmployee({
+            employeeAddress: eng2, name: "Eng2", companyId: id, salaryItems: items
+        }));
+
+        // employee1 (level 3) tries to fire eng2 (level 3) — must fail
+        vm.prank(employee1);
+        vm.expectRevert(CompaniesHouseV1.NotAuthorized.selector);
+        companiesHouse.fireEmployee(eng2, id);
+    }
+
+    /// @dev Level 2 (CEO/founder) can fire Level 3 (Engineer).
+    function test_HigherAuthority_CanFireLower() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id); // employee1 = Engineer (level 3)
+
+        vm.prank(founder); // founder = CEO (level 2)
+        companiesHouse.fireEmployee(employee1, id);
+
+        CompaniesHouseV1.CompanyStruct memory co = companiesHouse.retrieveCompany(id);
+        assertFalse(co.employees[1].active, "Engineer should be fired");
+    }
+
+    /// @dev Level 3 cannot fire Level 2 — STRICT rule.
+    function test_LowerAuthority_CannotFireHigher() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id); // employee1 = Engineer (level 3)
+
+        // Engineer (level 3) tries to fire founder (level 2) — must fail
+        vm.prank(employee1);
+        vm.expectRevert(CompaniesHouseV1.NotAuthorized.selector);
+        companiesHouse.fireEmployee(founder, id);
+    }
+
+    /// @dev Level 3 can submit an earning for another Level 3 — LENIENT rule.
+    function test_SameLevel_CanSubmitEarning() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id); // employee1 = Engineer (level 3)
+        address eng2 = makeAddr("eng2");
+
+        CompaniesHouseV1.SalaryItem[] memory items = new CompaniesHouseV1.SalaryItem[](1);
+        items[0] = CompaniesHouseV1.SalaryItem({
+            role: "Engineer", earningsType: CompaniesHouseV1.EarningsType.SALARY,
+            salaryPerHour: HOURLY_SALARY, lastPayDate: 0
+        });
+        vm.prank(founder);
+        companiesHouse.hireEmployee(CompaniesHouseV1.HireEmployee({
+            employeeAddress: eng2, name: "Eng2", companyId: id, salaryItems: items
+        }));
+
+        // employee1 (level 3) submits bonus for eng2 (level 3) — should succeed
+        vm.prank(employee1);
+        companiesHouse.submitEarning(eng2, id, CompaniesHouseV1.EarningsType.BONUS, 50e6, "peer bonus");
+    }
+
+    /// @dev Level 3 cannot hire someone with a Level 2 (CEO) role.
+    function test_CannotHireAboveOwnLevel() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id); // employee1 = Engineer (level 3)
+
+        address newCeo = makeAddr("newCeo");
+        CompaniesHouseV1.SalaryItem[] memory items = new CompaniesHouseV1.SalaryItem[](1);
+        items[0] = CompaniesHouseV1.SalaryItem({
+            role: "CEO", earningsType: CompaniesHouseV1.EarningsType.SALARY,
+            salaryPerHour: HOURLY_SALARY, lastPayDate: 0
+        });
+
+        // employee1 (level 3) tries to hire someone as CEO (level 2) — must fail
+        vm.prank(employee1);
+        vm.expectRevert(CompaniesHouseV1.NotAuthorized.selector);
+        companiesHouse.hireEmployee(CompaniesHouseV1.HireEmployee({
+            employeeAddress: newCeo, name: "New CEO", companyId: id, salaryItems: items
+        }));
     }
 }

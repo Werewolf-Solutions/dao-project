@@ -64,10 +64,9 @@ contract PayEmployeeDebugTest is BaseTest {
         mockUSDT.mint(founder, FOUNDER_USDT);
 
         // Create company and hire employee1 once for all tests
-        string[] memory roles = new string[](2);
-        roles[0] = "CEO"; roles[1] = "Engineer";
-        string[] memory powerRoles = new string[](1);
-        powerRoles[0] = "CEO";
+        CompaniesHouseV1.RoleDefinition[] memory roles = new CompaniesHouseV1.RoleDefinition[](2);
+        roles[0] = CompaniesHouseV1.RoleDefinition({ name: "CEO",      level: 2 });
+        roles[1] = CompaniesHouseV1.RoleDefinition({ name: "Engineer", level: 3 });
 
         vm.startPrank(founder);
         werewolfToken.approve(address(companiesHouse), CREATION_FEE);
@@ -76,9 +75,9 @@ contract PayEmployeeDebugTest is BaseTest {
             industry:           "Software",
             domain:             "debug.io",
             roles:              roles,
-            powerRoles:         powerRoles,
-            operatorAddress:      founder,
+            operatorAddress:    founder,
             ownerRole:          "CEO",
+            ownerRoleLevel:     2,
             ownerSalaryPerHour: HOURLY_SALARY,
             ownerName:          "Debug Owner"
         }));

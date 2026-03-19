@@ -102,12 +102,9 @@ contract CompanyVaultTest is BaseTest {
     // ── Helpers ────────────────────────────────────────────────────────────────
 
     function _createCompany() internal returns (uint96) {
-        string[] memory roles = new string[](2);
-        roles[0] = "CEO";
-        roles[1] = "Engineer";
-
-        string[] memory powerRoles = new string[](1);
-        powerRoles[0] = "CEO";
+        CompaniesHouseV1.RoleDefinition[] memory roles = new CompaniesHouseV1.RoleDefinition[](2);
+        roles[0] = CompaniesHouseV1.RoleDefinition({ name: "CEO",      level: 2 });
+        roles[1] = CompaniesHouseV1.RoleDefinition({ name: "Engineer", level: 3 });
 
         vm.startPrank(founder);
         werewolfToken.approve(address(companiesHouse), CREATION_FEE);
@@ -116,9 +113,9 @@ contract CompanyVaultTest is BaseTest {
             industry:           "Software",
             domain:             "test.io",
             roles:              roles,
-            powerRoles:         powerRoles,
             operatorAddress:    founder,
             ownerRole:          "CEO",
+            ownerRoleLevel:     2,
             ownerSalaryPerHour: HOURLY_USDT,
             ownerName:          "Alice"
         }));
@@ -200,12 +197,12 @@ contract CompanyVaultTest is BaseTest {
         // Need a second company for this
         vm.startPrank(founder);
         werewolfToken.approve(address(companiesHouse), CREATION_FEE);
-        string[] memory roles = new string[](1); roles[0] = "CEO";
-        string[] memory powerRoles = new string[](1); powerRoles[0] = "CEO";
+        CompaniesHouseV1.RoleDefinition[] memory roles2 = new CompaniesHouseV1.RoleDefinition[](1);
+        roles2[0] = CompaniesHouseV1.RoleDefinition({ name: "CEO", level: 2 });
         companiesHouse.createCompany(CompaniesHouseV1.CreateCompany({
             name: "Corp2", industry: "Finance", domain: "corp2.io",
-            roles: roles, powerRoles: powerRoles,
-            operatorAddress: founder, ownerRole: "CEO",
+            roles: roles2,
+            operatorAddress: founder, ownerRole: "CEO", ownerRoleLevel: 2,
             ownerSalaryPerHour: HOURLY_USDT, ownerName: "Bob"
         }));
         address vaultNoAave = companiesHouse.createVault(2, address(0), address(mockUSDT));

@@ -12,7 +12,6 @@ library CompaniesHouseV1 {
         Employee[] employees;
         string domain;
         string[] roles;
-        string[] powerRoles;
     }
 
     struct CreateCompany {
@@ -20,7 +19,6 @@ library CompaniesHouseV1 {
         string industry;
         string domain;
         string[] roles;
-        string[] powerRoles;
         string ownerName;
         uint256 ownerSalary;
         string ownerCurrency;

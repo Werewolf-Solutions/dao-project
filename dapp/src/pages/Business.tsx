@@ -29,8 +29,7 @@ type Company = {
   active: boolean;
   employees: readonly Employee[];
   domain: string;
-  roles: readonly string[];
-  powerRoles: readonly string[];
+  roles: readonly { name: string; level: number }[];
 };
 
 // ─── EmployeePaid event ABI ───────────────────────────────────────────────────
@@ -338,7 +337,7 @@ function MyWalletPanel({
 function EmployeeCard({
   employee,
   company,
-  isAuthorized,
+  myLevel,
   companyUsdtBalance,
   requiredReserve,
   wlfPrice,
@@ -348,7 +347,7 @@ function EmployeeCard({
 }: {
   employee: Employee;
   company: Company;
-  isAuthorized: boolean;
+  myLevel: number;
   companyUsdtBalance: bigint;
   requiredReserve: bigint;
   wlfPrice: bigint;
@@ -356,6 +355,16 @@ function EmployeeCard({
   companiesHouseAddress: `0x${string}`;
   onRefetch: () => void;
 }) {
+  // Effective level of this employee (min role level across all salary streams; 99 = no role)
+  const empLevel = (() => {
+    const levels = employee.salaryItems
+      .map(s => company.roles.find(r => r.name === s.role)?.level ?? 0)
+      .filter(l => l > 0);
+    return levels.length > 0 ? Math.min(...levels) : 99;
+  })();
+
+  const canManage = myLevel > 0 && myLevel < empLevel; // STRICT: outrank target
+  const canPayOrSubmit = myLevel > 0 && myLevel <= empLevel; // LENIENT: same or above
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>();
   const [payError, setPayError] = useState<string | null>(null);
   const [showEditForm, setShowEditForm] = useState(false);
@@ -525,7 +534,7 @@ function EmployeeCard({
         <div className="flex flex-col items-end gap-1 shrink-0">
           <p className="text-sm font-mono text-white/80">${totalMonthlyUSD.toLocaleString(undefined, { maximumFractionDigits: 2 })}/mo</p>
           <p className={`text-xs ${theme.textMuted}`}>USDT</p>
-          {isAuthorized && (
+          {canManage && (
             <button
               onClick={() => setShowEditForm(v => !v)}
               className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
@@ -537,7 +546,7 @@ function EmployeeCard({
               {showEditForm ? 'Cancel' : 'Edit'}
             </button>
           )}
-          {isAuthorized && employee.employeeId.toLowerCase() !== connectedAddress.toLowerCase() && (
+          {canManage && employee.employeeId.toLowerCase() !== connectedAddress.toLowerCase() && (
             showFireConfirm ? (
               <div className="flex items-center gap-1">
                 <button onClick={handleFire} className="px-2 py-0.5 rounded text-xs font-medium bg-red-700/60 text-white hover:bg-red-600/70">
@@ -577,7 +586,7 @@ function EmployeeCard({
                 ${fmtUSDT(totalPendingUSDT)} USDT pending
               </p>
             </div>
-            {isAuthorized && (
+            {canPayOrSubmit && (
               <div className="flex items-center gap-2">
                 <button
                   onClick={handlePay}
@@ -605,7 +614,7 @@ function EmployeeCard({
                 </span>
               </div>
             )}
-            {isAuthorized && canPay && (
+            {canPayOrSubmit && canPay && (
               <p className="text-xs text-white/25 mt-1">
                 Fee: ${fmtUSDT(totalPendingUSDT * 500n / 10_000n)} USDT (5%) → employee receives ${fmtUSDT(totalPendingUSDT * 9_500n / 10_000n)}
               </p>
@@ -624,27 +633,39 @@ function EmployeeCard({
       )}
 
       {/* Submit Earning (authorized users only) */}
-      {isAuthorized && (
-        <div className="pt-1 border-t border-white/5">
+      {canPayOrSubmit && (
+        <div className="pt-2 border-t border-white/5">
           <button
             onClick={() => setShowSubmitEarning(v => !v)}
-            className={`text-xs transition-colors ${showSubmitEarning ? 'text-white/60' : 'text-white/30 hover:text-white/60'}`}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium border transition-colors ${
+              showSubmitEarning
+                ? 'bg-white/15 border-white/20 text-white/90'
+                : 'bg-white/8 border-white/15 text-white/60 hover:bg-white/12 hover:text-white/80'
+            }`}
           >
-            Submit Earning {showSubmitEarning ? '▴' : '▾'}
+            + Submit Earning {showSubmitEarning ? '▴' : '▾'}
           </button>
           {showSubmitEarning && (
             <div className="mt-2 space-y-2">
-              <div className="flex gap-2 flex-wrap">
-                <select
-                  value={earningType}
-                  onChange={e => setEarningType(Number(e.target.value) as 1 | 2 | 3 | 4)}
-                  className="bg-white/5 border border-white/10 rounded px-2 py-1 text-xs text-white/80 focus:outline-none focus:border-white/20"
-                >
-                  <option value={1}>Overtime</option>
-                  <option value={2}>Bonus</option>
-                  <option value={3}>Commission</option>
-                  <option value={4}>Reimbursement</option>
-                </select>
+              <div className="flex gap-2 flex-wrap items-center">
+                <div className="relative">
+                  <select
+                    value={earningType}
+                    onChange={e => setEarningType(Number(e.target.value) as 1 | 2 | 3 | 4)}
+                    className={`appearance-none rounded px-3 py-1.5 text-xs font-medium focus:outline-none focus:ring-1 pr-6 cursor-pointer ${
+                      earningType === 1 ? 'bg-amber-900/40 border border-amber-700/50 text-amber-300 focus:ring-amber-600' :
+                      earningType === 2 ? 'bg-green-900/40 border border-green-700/50 text-green-300 focus:ring-green-600' :
+                      earningType === 3 ? 'bg-blue-900/40 border border-blue-700/50 text-blue-300 focus:ring-blue-600' :
+                                         'bg-purple-900/40 border border-purple-700/50 text-purple-300 focus:ring-purple-600'
+                    }`}
+                  >
+                    <option value={1}>Overtime</option>
+                    <option value={2}>Bonus</option>
+                    <option value={3}>Commission</option>
+                    <option value={4}>Reimbursement</option>
+                  </select>
+                  <span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] opacity-60">▾</span>
+                </div>
                 <input
                   type="number"
                   min="0"
@@ -993,10 +1014,9 @@ function EditCompanyForm({
   const [industry, setIndustry] = useState(company.industry);
   const [domain, setDomain] = useState(company.domain);
   const [wallet, setWallet] = useState(company.operatorAddress);
-  const [roles, setRoles] = useState<string[]>([...company.roles]);
-  const [powerRoles, setPowerRoles] = useState<string[]>([...company.powerRoles]);
-  const [newRole, setNewRole] = useState('');
-  const [newPowerRole, setNewPowerRole] = useState('');
+  const [roles, setRoles] = useState<{ name: string; level: number }[]>([...company.roles]);
+  const [newRoleName, setNewRoleName] = useState('');
+  const [newRoleLevel, setNewRoleLevel] = useState(3);
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>();
 
   const { writeContract, isPending } = useWriteContract();
@@ -1006,18 +1026,14 @@ function EditCompanyForm({
   useEffect(() => { if (isSuccess) onSaved(); }, [isSuccess]);
 
   function addRole() {
-    const r = newRole.trim();
-    if (r && !roles.includes(r)) { setRoles([...roles, r]); }
-    setNewRole('');
+    const n = newRoleName.trim();
+    if (n && !roles.find(r => r.name === n)) {
+      setRoles([...roles, { name: n, level: newRoleLevel }]);
+    }
+    setNewRoleName('');
+    setNewRoleLevel(3);
   }
-  function removeRole(r: string) { setRoles(roles.filter(x => x !== r)); }
-
-  function addPowerRole() {
-    const r = newPowerRole.trim();
-    if (r && !powerRoles.includes(r)) { setPowerRoles([...powerRoles, r]); }
-    setNewPowerRole('');
-  }
-  function removePowerRole(r: string) { setPowerRoles(powerRoles.filter(x => x !== r)); }
+  function removeRole(name: string) { setRoles(roles.filter(r => r.name !== name)); }
 
   function handleSave() {
     if (!name.trim()) return;
@@ -1031,7 +1047,6 @@ function EditCompanyForm({
           industry: industry.trim(),
           domain: domain.trim(),
           roles,
-          powerRoles,
           operatorAddress: wallet as `0x${string}`,
         }],
         gas: 500_000n,
@@ -1063,58 +1078,39 @@ function EditCompanyForm({
         </div>
       </div>
 
-      {/* Roles */}
+      {/* Role Hierarchy */}
       <div>
-        <label className={`block text-xs mb-1 ${theme.textMuted}`}>Roles</label>
-        <div className="flex flex-wrap gap-1.5 mb-2">
-          {roles.map(r => (
-            <span key={r} className="flex items-center gap-1 px-2 py-0.5 rounded bg-white/10 text-xs text-white/80">
-              {r}
-              <button onClick={() => removeRole(r)} className="text-white/40 hover:text-red-400 leading-none">×</button>
-            </span>
+        <label className={`block text-xs mb-1 ${theme.textMuted}`}>Role hierarchy (L2 = highest, L3+= lower)</label>
+        <div className="space-y-1 mb-2">
+          {[...roles].sort((a, b) => a.level - b.level).map(r => (
+            <div key={r.name} className="flex items-center gap-2">
+              <span className="text-white/40 text-xs font-mono w-6">L{r.level}</span>
+              <span className="flex-1 px-2 py-0.5 rounded bg-white/10 text-xs text-white/80">{r.name}</span>
+              <button onClick={() => removeRole(r.name)} className="text-white/30 hover:text-red-400 text-xs leading-none px-1">×</button>
+            </div>
           ))}
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
           <input
             className={`${theme.input} flex-1`}
-            placeholder="New role"
-            value={newRole}
-            onChange={e => setNewRole(e.target.value)}
+            placeholder="Role name"
+            value={newRoleName}
+            onChange={e => setNewRoleName(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addRole(); } }}
+          />
+          <input
+            type="number"
+            min={2}
+            max={99}
+            value={newRoleLevel}
+            onChange={e => setNewRoleLevel(Number(e.target.value))}
+            className={`${theme.input} w-16 text-center`}
+            title="Level (2=highest non-owner, 3=lower, etc.)"
           />
           <button
             onClick={addRole}
-            disabled={!newRole.trim()}
+            disabled={!newRoleName.trim()}
             className="px-3 py-1.5 rounded text-xs bg-white/10 text-white/70 hover:bg-white/20 disabled:opacity-40"
-          >
-            + Add
-          </button>
-        </div>
-      </div>
-
-      {/* Power Roles */}
-      <div>
-        <label className={`block text-xs mb-1 ${theme.textMuted}`}>Power Roles (admin access)</label>
-        <div className="flex flex-wrap gap-1.5 mb-2">
-          {powerRoles.map(r => (
-            <span key={r} className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-900/40 border border-amber-700/40 text-xs text-amber-300">
-              {r}
-              <button onClick={() => removePowerRole(r)} className="text-amber-400/60 hover:text-red-400 leading-none">×</button>
-            </span>
-          ))}
-        </div>
-        <div className="flex gap-2">
-          <input
-            className={`${theme.input} flex-1`}
-            placeholder="New power role"
-            value={newPowerRole}
-            onChange={e => setNewPowerRole(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addPowerRole(); } }}
-          />
-          <button
-            onClick={addPowerRole}
-            disabled={!newPowerRole.trim()}
-            className="px-3 py-1.5 rounded text-xs bg-amber-900/30 text-amber-300 hover:bg-amber-900/50 disabled:opacity-40"
           >
             + Add
           </button>
@@ -1280,17 +1276,19 @@ function CompanyCard({
     );
   }
 
-  // Authorized if: company owner, company wallet, or active employee with a power role
+  // Compute caller's authority level: 1=owner, 2=operator, role-level for employees, 0=none
   const addrLower = address.toLowerCase();
-  const isAuthorized =
-    company.owner.toLowerCase() === addrLower ||
-    company.operatorAddress.toLowerCase() === addrLower ||
-    company.employees.some(
-      e =>
-        e.active &&
-        e.employeeId.toLowerCase() === addrLower &&
-        e.salaryItems.some(s => (company.powerRoles as readonly string[]).includes(s.role))
-    );
+  const myLevel = (() => {
+    if (company.owner.toLowerCase() === addrLower) return 1;
+    if (company.operatorAddress.toLowerCase() === addrLower) return 2;
+    const me = company.employees.find(e => e.active && e.employeeId.toLowerCase() === addrLower);
+    if (!me) return 0;
+    const levels = me.salaryItems
+      .map(s => company.roles.find(r => r.name === s.role)?.level ?? 0)
+      .filter(l => l > 0);
+    return levels.length > 0 ? Math.min(...levels) : 0;
+  })();
+  const isAuthorized = myLevel > 0; // any level can trigger some ops (e.g. hire form)
   const activeEmployees = company.employees.filter(e => e.active);
 
   const companyBalance = companyUSDTBalance ?? 0n;
@@ -1536,14 +1534,18 @@ function CompanyCard({
           )}
           {company.roles.length > 0 && (
             <div className="flex items-start justify-between gap-2">
-              <span className={`${theme.textMuted} shrink-0`}>Roles</span>
-              <span className="text-white/70 text-right">{(company.roles as string[]).join(', ')}</span>
-            </div>
-          )}
-          {company.powerRoles.length > 0 && (
-            <div className="flex items-start justify-between gap-2">
-              <span className={`${theme.textMuted} shrink-0`}>Power roles</span>
-              <span className="text-white/70 text-right">{(company.powerRoles as string[]).join(', ')}</span>
+              <span className={`${theme.textMuted} shrink-0`}>Role hierarchy</span>
+              <div className="text-right space-y-0.5">
+                {[...company.roles]
+                  .sort((a, b) => a.level - b.level)
+                  .map(r => (
+                    <div key={r.name} className="flex items-center justify-end gap-2">
+                      <span className="text-white/40 text-xs font-mono">L{r.level}</span>
+                      <span className="text-white/70 text-xs">{r.name}</span>
+                    </div>
+                  ))
+                }
+              </div>
             </div>
           )}
         </div>
@@ -1706,7 +1708,7 @@ function CompanyCard({
             key={`${emp.employeeId}-${idx}`}
             employee={emp}
             company={{ ...company, companyId } as Company}
-            isAuthorized={isAuthorized}
+            myLevel={myLevel}
             companyUsdtBalance={companyBalance}
             requiredReserve={reserve}
             wlfPrice={wlfPrice}

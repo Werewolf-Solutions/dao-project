@@ -447,10 +447,6 @@ export default function DAO() {
   const [daoVaultRepayAmt, setDaoVaultRepayAmt] = useState('');
   const [daoVaultMinHfInput, setDaoVaultMinHfInput] = useState('1.5');
 
-  // Quick: update power roles
-  const [powerRolesInput, setPowerRolesInput] = useState('');
-  const [powerRolesCompanyId, setPowerRolesCompanyId] = useState('');
-
   // Fund treasury
   const [fundToken, setFundToken] = useState<'usdt' | 'usdc' | 'wlf' | 'eth' | 'wbtc'>('usdt');
   const [fundAmount, setFundAmount] = useState('');
@@ -501,7 +497,7 @@ export default function DAO() {
 
   type SalaryItemData = { role: string; salaryPerHour: bigint; lastPayDate: bigint };
   type EmployeeData   = { employeeAddress: `0x${string}`; payableAddress: `0x${string}`; name: string; salaryItems: SalaryItemData[]; active: boolean };
-  type DaoCompanyData = { companyId: bigint; name: string; industry: string; domain: string; roles: string[]; powerRoles: string[]; operatorAddress: `0x${string}`; active: boolean; employees: EmployeeData[] };
+  type DaoCompanyData = { companyId: bigint; name: string; industry: string; domain: string; roles: { name: string; level: number }[]; operatorAddress: `0x${string}`; active: boolean; employees: EmployeeData[] };
 
   const daoCompany   = daoCompanyRaw as DaoCompanyData | undefined;
   const daoEmployees = daoCompany?.employees?.filter(e => e.active) ?? [];
@@ -707,7 +703,6 @@ export default function DAO() {
       if (!hireCompanyId) setHireCompanyId(idStr);
       if (!fireCompanyId) setFireCompanyId(idStr);
       if (!salUpdateCompanyId) setSalUpdateCompanyId(idStr);
-      if (!powerRolesCompanyId) setPowerRolesCompanyId(idStr);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [daoCompanyIdOnChain]);
@@ -972,47 +967,6 @@ export default function DAO() {
         [daoVaultAddress],
         ['setBorrowingEnabled(bool)'],
         [encodeAbiParameters(parseAbiParameters('bool'), [enabled])],
-      ],
-    });
-    setIsModalOpen(false);
-  };
-
-  const handleUpdatePowerRolesProposal = () => {
-    if (!daoAddress || !companiesHouseAddress || !powerRolesCompanyId || !daoCompany) return;
-    const compId = BigInt(parseInt(powerRolesCompanyId));
-    const newPowerRoles = powerRolesInput.split(',').map(s => s.trim()).filter(Boolean);
-    setLastAction('update-power-roles-proposal');
-    writeContract({
-      address: daoAddress,
-      abi: daoABI,
-      functionName: 'createProposal',
-      args: [
-        [companiesHouseAddress],
-        ['updateCompany(uint96,(string,string,string,string[],string[],address))'],
-        [encodeAbiParameters(
-          [
-            { type: 'uint96' },
-            { type: 'tuple', components: [
-              { name: 'name', type: 'string' },
-              { name: 'industry', type: 'string' },
-              { name: 'domain', type: 'string' },
-              { name: 'roles', type: 'string[]' },
-              { name: 'powerRoles', type: 'string[]' },
-              { name: 'operatorAddress', type: 'address' },
-            ]},
-          ] as const,
-          [
-            compId,
-            {
-              name: daoCompany.name,
-              industry: daoCompany.industry,
-              domain: daoCompany.domain,
-              roles: [...daoCompany.roles],
-              powerRoles: newPowerRoles,
-              operatorAddress: daoCompany.operatorAddress,
-            },
-          ]
-        )],
       ],
     });
     setIsModalOpen(false);
@@ -2194,26 +2148,6 @@ export default function DAO() {
                       </Button>
                     </div>
 
-                    <div className={`${theme.cardNested} p-3 space-y-2`}>
-                      <div>
-                        <p className="font-semibold text-sm">Update Power Roles</p>
-                        <p className={`text-xs mt-0.5 ${theme.textMuted}`}>
-                          Change which roles have authority to hire, fire, and pay.
-                          {daoCompany && <span> Current: <span className="text-white/60">{daoCompany.powerRoles.join(', ') || '(none)'}</span></span>}
-                        </p>
-                      </div>
-                      <Input label="Company ID" type="number" min="1" value={powerRolesCompanyId} onChange={e => setPowerRolesCompanyId(e.target.value)} placeholder="1" />
-                      <Input label="New power roles (comma-separated)" type="text" value={powerRolesInput} onChange={e => setPowerRolesInput(e.target.value)} placeholder="CEO, CTO, CFO" />
-                      {powerRolesInput && (
-                        <p className={`text-xs font-mono ${theme.textMuted}`}>{powerRolesInput.split(',').map(s => s.trim()).filter(Boolean).join(' · ')}</p>
-                      )}
-                      <Button variant="info" size="sm" onClick={handleUpdatePowerRolesProposal} disabled={!powerRolesInput || !powerRolesCompanyId || !daoCompany || isPending || isConfirming} loading={isPending || isConfirming}>
-                        Submit Power Roles Proposal
-                      </Button>
-                      {!daoCompany && powerRolesCompanyId && (
-                        <p className="text-xs text-amber-400">DAO company data not loaded — check company ID.</p>
-                      )}
-                    </div>
                   </>
                 )}
 

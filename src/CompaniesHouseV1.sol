@@ -78,14 +78,32 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         uint256 submittedAt;
     }
 
+    /**
+     * @notice Defines a named role and its authorization level.
+     * @dev    Level 1 is reserved for the company owner (hardcoded, not assignable).
+     *         Assignable roles start at level 2 (highest non-owner authority).
+     *         Higher numbers = lower authority (e.g. 2=CEO, 3=Manager, 4=Engineer).
+     */
+    struct RoleDefinition {
+        string name;
+        uint8  level; // 2 = highest non-owner, increasing = lower authority
+    }
+
+    /**
+     * @dev Per-operation authorization rule for same-level callers.
+     *      STRICT  — callerLevel must be strictly less than targetLevel (fire, update, addRole)
+     *      LENIENT — callerLevel must be <= targetLevel (pay, submitEarning)
+     */
+    enum AuthRule { STRICT, LENIENT }
+
     struct CreateCompany {
         string name;
         string industry;
         string domain;
-        string[] roles;
-        string[] powerRoles;
+        RoleDefinition[] roles;
         address operatorAddress; // address authorized to operate the company (call payEmployee, hire, etc.) — not a fund holder
         string ownerRole;      // role assigned to the creator (auto-added to roles[] if missing)
+        uint8  ownerRoleLevel; // level for the ownerRole if it must be auto-added
         uint256 ownerSalaryPerHour; // USDT 6-dec wei per hour for the creator's first salary stream
         string ownerName;
     }
@@ -94,8 +112,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         string name;
         string industry;
         string domain;
-        string[] roles;
-        string[] powerRoles;
+        RoleDefinition[] roles;
         address operatorAddress;
     }
 
@@ -121,9 +138,8 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         uint256 createdAt;    // slot 4
         bool active;          // slot 5
         Employee[] employees; // slot 6
-        string domain;        // slot 7
-        string[] roles;       // slot 8
-        string[] powerRoles;  // slot 9
+        string domain;            // slot 7
+        RoleDefinition[] roles;   // slot 8 — replaces string[] roles + powerRoles
     }
 
     struct Employee {
@@ -151,15 +167,8 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     //           Custom Errors           //
     ///////////////////////////////////////
 
-    error NotAdmin();
-    error NotEmployee();
-    error NoPowerRole();
     error CompanyNotFound();
-    error NotOwner();
-    error CompanyNotActive();
     error NotAuthorized();
-    error NotMember();
-    error EmployeeNotActive();
     error BelowReserve();
     error InsufficientFee();
     error TransferFailed();
@@ -167,6 +176,10 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     error InvalidSalaryIndex();
     error RoleNotFound();
     error InsufficientWLF();
+    error BeaconNotSet();
+    error VaultAlreadyExists();
+    error FeeTooHigh();
+
 
     ///////////////////////////////////////
     //           State Variables         //
@@ -254,36 +267,15 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     ///////////////////////////////////////
 
     modifier onlyAdmin() {
-        if (msg.sender != admin) revert NotAdmin();
+        if (msg.sender != admin) revert NotAuthorized();
         _;
     }
 
     modifier onlyCompanyDefi() {
-        require(msg.sender == companyDefi, "CompaniesHouse: caller is not companyDefi");
+        if (msg.sender != companyDefi) revert NotAuthorized();
         _;
     }
 
-    modifier onlyRoleWithPower(uint96 _companyId) {
-        EmployeeBrief memory empBrief = employeeBrief[msg.sender][_companyId];
-        if (!empBrief.isMember) revert NotEmployee();
-
-        CompanyBrief memory compBrief = companyBrief[_companyId];
-        CompanyStruct storage s_company = ownerToCompanies[compBrief.owner][compBrief.index];
-        SalaryItem[] storage items = s_company.employees[empBrief.employeeIndex].salaryItems;
-
-        bool hasPower;
-        uint256 powerRolesLen = s_company.powerRoles.length;
-        for (uint256 i = 0; i < items.length && !hasPower; i++) {
-            bytes32 roleHash = keccak256(abi.encodePacked(items[i].role));
-            for (uint256 j = 0; j < powerRolesLen && !hasPower; j++) {
-                if (keccak256(abi.encodePacked(s_company.powerRoles[j])) == roleHash) {
-                    hasPower = true;
-                }
-            }
-        }
-        if (!hasPower) revert NoPowerRole();
-        _;
-    }
 
     ///////////////////////////////////////
     //      Constructor/Initializer      //
@@ -444,10 +436,10 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         address _aavePool,
         address _allowedToken
     ) external returns (address vault) {
-        require(beacon != address(0), "CompaniesHouse: beacon not set");
+        if (beacon == address(0)) revert BeaconNotSet();
         if (companyBrief[_companyId].owner == address(0)) revert CompanyNotFound();
-        if (!_isAuthorized(msg.sender, _companyId)) revert NotAuthorized();
-        require(companyVault[_companyId] == address(0), "CompaniesHouse: vault already exists");
+        if (_getLevel(msg.sender, _companyId) != 1) revert NotAuthorized(); // owner only
+        if (companyVault[_companyId] != address(0)) revert VaultAlreadyExists();
 
         bytes memory initData = abi.encodeWithSignature(
             "initialize(uint96,address,address,address,address)",
@@ -501,8 +493,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
      * @param _nonWlfFeeBps Fee in basis points for non-WLF payments (e.g. 500 = 5%)
      */
     function setFees(uint256 _wlfFeeBps, uint256 _nonWlfFeeBps) external onlyAdmin {
-        require(_wlfFeeBps    <= 1_000, "CompaniesHouse: wlf fee > 10%");
-        require(_nonWlfFeeBps <= 1_000, "CompaniesHouse: non-wlf fee > 10%");
+        if (_wlfFeeBps > 1_000 || _nonWlfFeeBps > 1_000) revert FeeTooHigh();
         wlfFeeBps    = _wlfFeeBps;
         nonWlfFeeBps = _nonWlfFeeBps;
     }
@@ -513,7 +504,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
      * @param _id Company ID of the Werewolf DAO company (must exist).
      */
     function setDaoCompanyId(uint96 _id) external onlyAdmin {
-        require(_id < currentCompanyIndex, "CompaniesHouse: company does not exist");
+        if (_id >= currentCompanyIndex) revert CompanyNotFound();
         daoCompanyId = _id;
     }
 
@@ -594,19 +585,17 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         compPtr.createdAt = block.timestamp;
         compPtr.active = true;
         compPtr.domain = _params.domain;
-        compPtr.roles = _params.roles;
-        compPtr.powerRoles = _params.powerRoles;
 
-        // Auto-add ownerRole to roles[] if not already present
+        // Copy roles and auto-add ownerRole if missing
         bool ownerRoleFound;
         for (uint256 i = 0; i < _params.roles.length; i++) {
-            if (keccak256(abi.encodePacked(_params.roles[i])) == keccak256(abi.encodePacked(_params.ownerRole))) {
+            compPtr.roles.push(_params.roles[i]);
+            if (keccak256(abi.encodePacked(_params.roles[i].name)) == keccak256(abi.encodePacked(_params.ownerRole))) {
                 ownerRoleFound = true;
-                break;
             }
         }
         if (!ownerRoleFound) {
-            compPtr.roles.push(_params.ownerRole);
+            compPtr.roles.push(RoleDefinition({ name: _params.ownerRole, level: _params.ownerRoleLevel }));
         }
 
         companyBrief[currentCompanyIndex] = CompanyBrief(msg.sender, uint96(nextCompIndex));
@@ -637,7 +626,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
      * @dev Uses soft delete to avoid storage issues with nested dynamic arrays.
      */
     function deleteCompany(uint96 _companyId) public {
-        if (companyBrief[_companyId].owner != msg.sender) revert NotOwner();
+        if (companyBrief[_companyId].owner != msg.sender) revert NotAuthorized();
         uint96 companyIndex = companyBrief[_companyId].index;
         ownerToCompanies[msg.sender][companyIndex].active = false;
         delete companyBrief[_companyId];
@@ -652,10 +641,10 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
      * @param _params New values for name, industry, domain, roles, powerRoles, operatorAddress
      */
     function updateCompany(uint96 _companyId, UpdateCompany memory _params) public {
-        if (companyBrief[_companyId].owner != msg.sender) revert NotOwner();
+        if (companyBrief[_companyId].owner != msg.sender) revert NotAuthorized();
         uint96 idx = companyBrief[_companyId].index;
         CompanyStruct storage compPtr = ownerToCompanies[msg.sender][idx];
-        if (!compPtr.active) revert CompanyNotActive();
+        if (!compPtr.active) revert NotAuthorized();
 
         compPtr.name = _params.name;
         compPtr.industry = _params.industry;
@@ -665,11 +654,6 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         delete compPtr.roles;
         for (uint256 i = 0; i < _params.roles.length; i++) {
             compPtr.roles.push(_params.roles[i]);
-        }
-
-        delete compPtr.powerRoles;
-        for (uint256 i = 0; i < _params.powerRoles.length; i++) {
-            compPtr.powerRoles.push(_params.powerRoles[i]);
         }
 
         emit CompanyUpdated(msg.sender, _companyId);
@@ -685,17 +669,19 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         uint96 _companyId,
         UpdateEmployee memory _params
     ) public {
-        if (!_isAuthorized(msg.sender, _companyId)) revert NotAuthorized();
+        if (!_canOperateOn(msg.sender, _employeeAddress, _companyId, AuthRule.STRICT)) revert NotAuthorized();
 
         EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
-        if (!empBrief.isMember) revert NotMember();
+        if (!empBrief.isMember) revert NotAuthorized();
 
         CompanyBrief memory compBrief = companyBrief[_companyId];
         CompanyStruct storage s_company = ownerToCompanies[compBrief.owner][compBrief.index];
         Employee storage emp = s_company.employees[empBrief.employeeIndex];
-        if (!emp.active) revert EmployeeNotActive();
+        if (!emp.active) revert NotAuthorized();
 
-        _validateSalaryItemRoles(_params.salaryItems, s_company.roles);
+        for (uint256 i = 0; i < _params.salaryItems.length; i++) {
+            if (_findRoleLevel(_params.salaryItems[i].role, s_company.roles) == 0) revert RoleNotFound();
+        }
 
         emp.name = _params.name;
         emp.payableAddress = _params.payableAddress;
@@ -730,11 +716,18 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
      *      item represents a separate role + pay stream (e.g., CTO at $300/mo, HR at $200/mo).
      */
     function hireEmployee(HireEmployee memory _hireParams) public whenNotPaused {
-        CompanyBrief memory compBrief = companyBrief[_hireParams.companyId];
-        if (!_isAuthorized(msg.sender, _hireParams.companyId)) revert NotAuthorized();
+        uint8 callerLevel = _getLevel(msg.sender, _hireParams.companyId);
+        if (callerLevel == 0) revert NotAuthorized();
 
+        CompanyBrief memory compBrief = companyBrief[_hireParams.companyId];
         CompanyStruct storage compPtr = ownerToCompanies[compBrief.owner][compBrief.index];
-        _validateSalaryItemRoles(_hireParams.salaryItems, compPtr.roles);
+
+        // Validate roles exist; non-owners must also outrank every role being assigned
+        for (uint256 i = 0; i < _hireParams.salaryItems.length; i++) {
+            uint8 roleLevel = _findRoleLevel(_hireParams.salaryItems[i].role, compPtr.roles);
+            if (roleLevel == 0) revert RoleNotFound();
+            if (callerLevel != 1 && callerLevel >= roleLevel) revert NotAuthorized();
+        }
 
         _hireEmployeeInternal(
             _hireParams.employeeAddress,
@@ -755,14 +748,14 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         uint96 _companyId,
         SalaryItem memory _item
     ) public {
-        CompanyBrief memory compBrief = companyBrief[_companyId];
-        if (!_isAuthorized(msg.sender, _companyId)) revert NotAuthorized();
+        if (!_canOperateOn(msg.sender, _employeeAddress, _companyId, AuthRule.STRICT)) revert NotAuthorized();
 
         EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
-        if (!empBrief.isMember) revert NotMember();
+        if (!empBrief.isMember) revert NotAuthorized();
 
+        CompanyBrief memory compBrief = companyBrief[_companyId];
         CompanyStruct storage compPtr = ownerToCompanies[compBrief.owner][compBrief.index];
-        _requireRoleExists(_item.role, compPtr.roles);
+        if (_findRoleLevel(_item.role, compPtr.roles) == 0) revert RoleNotFound();
 
         Employee storage emp = compPtr.employees[empBrief.employeeIndex];
         emp.salaryItems.push(SalaryItem({
@@ -795,16 +788,16 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         uint256 _amount,
         string calldata _description
     ) public whenNotPaused {
-        if (!_isAuthorized(msg.sender, _companyId)) revert NotAuthorized();
+        if (!_canOperateOn(msg.sender, _employeeAddress, _companyId, AuthRule.LENIENT)) revert NotAuthorized();
         if (_earningsType == EarningsType.SALARY) revert InvalidSalaryIndex();
         if (_amount == 0) revert NothingToPay();
 
         EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
-        if (!empBrief.isMember) revert NotMember();
+        if (!empBrief.isMember) revert NotAuthorized();
 
         CompanyBrief memory compBrief = companyBrief[_companyId];
         Employee storage emp = ownerToCompanies[compBrief.owner][compBrief.index].employees[empBrief.employeeIndex];
-        if (!emp.active) revert EmployeeNotActive();
+        if (!emp.active) revert NotAuthorized();
 
         emp.pendingEarnings.push(PendingEarning({
             earningsType: _earningsType,
@@ -820,11 +813,11 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
      * @notice Soft-fires an employee (marks them inactive, clears their brief).
      */
     function fireEmployee(address _employeeAddress, uint96 _companyId) public {
+        if (!_canOperateOn(msg.sender, _employeeAddress, _companyId, AuthRule.STRICT)) revert NotAuthorized();
         CompanyBrief memory compBrief = companyBrief[_companyId];
-        if (!_isAuthorized(msg.sender, _companyId)) revert NotAuthorized();
 
         EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
-        if (!empBrief.isMember) revert NotMember();
+        if (!empBrief.isMember) revert NotAuthorized();
 
         ownerToCompanies[compBrief.owner][compBrief.index].employees[empBrief.employeeIndex].active = false;
         delete employeeBrief[_employeeAddress][_companyId];
@@ -844,14 +837,14 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
      * @param _companyId company the employee belongs to
      */
     function payEmployee(address _employeeAddress, uint96 _companyId) public whenNotPaused {
-        if (!_isAuthorized(msg.sender, _companyId)) revert NotAuthorized();
+        if (!_canOperateOn(msg.sender, _employeeAddress, _companyId, AuthRule.LENIENT)) revert NotAuthorized();
 
         EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
-        if (!empBrief.isMember) revert NotMember();
+        if (!empBrief.isMember) revert NotAuthorized();
 
         CompanyBrief memory compBrief = companyBrief[_companyId];
         Employee storage s_emp = ownerToCompanies[compBrief.owner][compBrief.index].employees[empBrief.employeeIndex];
-        if (!s_emp.active) revert EmployeeNotActive();
+        if (!s_emp.active) revert NotAuthorized();
 
         // ── 1. Checks ────────────────────────────────────────────────────────
 
@@ -888,14 +881,14 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         address _wlfToken,
         uint256 _wlfAmount
     ) public {
-        if (!_isAuthorized(msg.sender, _companyId)) revert NotAuthorized();
+        if (!_canOperateOn(msg.sender, _employeeAddress, _companyId, AuthRule.LENIENT)) revert NotAuthorized();
 
         EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
-        if (!empBrief.isMember) revert NotMember();
+        if (!empBrief.isMember) revert NotAuthorized();
 
         CompanyBrief memory compBrief = companyBrief[_companyId];
         Employee storage s_emp = ownerToCompanies[compBrief.owner][compBrief.index].employees[empBrief.employeeIndex];
-        if (!s_emp.active) revert EmployeeNotActive();
+        if (!s_emp.active) revert NotAuthorized();
         if (_usdtAmount == 0 && _wlfAmount == 0) revert NothingToPay();
 
         // ── 1. Checks ────────────────────────────────────────────────────────
@@ -941,14 +934,14 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         string memory _newRole,
         uint96 _companyId
     ) public {
-        CompanyBrief memory compBrief = companyBrief[_companyId];
-        if (!_isAuthorized(msg.sender, _companyId)) revert NotAuthorized();
+        if (!_canOperateOn(msg.sender, _employeeAddress, _companyId, AuthRule.STRICT)) revert NotAuthorized();
 
         EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
-        if (!empBrief.isMember) revert NotMember();
+        if (!empBrief.isMember) revert NotAuthorized();
 
+        CompanyBrief memory compBrief = companyBrief[_companyId];
         CompanyStruct storage s_company = ownerToCompanies[compBrief.owner][compBrief.index];
-        _requireRoleExists(_newRole, s_company.roles);
+        if (_findRoleLevel(_newRole, s_company.roles) == 0) revert RoleNotFound();
 
         Employee storage emp = s_company.employees[empBrief.employeeIndex];
         if (_salaryItemIndex >= emp.salaryItems.length) revert InvalidSalaryIndex();
@@ -974,12 +967,11 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     }
 
     /**
-     * @notice Returns true if `_caller` is authorized to manage the given company.
-     * @dev Exposes the internal _isAuthorized check so CompanyDeFiV1 can delegate auth
-     *      without duplicating role logic.
+     * @notice Returns true if `_caller` has any authority level in the given company.
+     * @dev Exposes the level check so CompanyDeFiV1 can delegate auth without duplicating logic.
      */
     function isAuthorized(address _caller, uint96 _companyId) public view returns (bool) {
-        return _isAuthorized(_caller, _companyId);
+        return _getLevel(_caller, _companyId) > 0;
     }
 
     function retrieveCompany(uint96 _companyId) public view returns (CompanyStruct memory) {
@@ -994,7 +986,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     ) public view returns (Employee memory) {
         CompanyBrief memory compBrief = companyBrief[_companyId];
         EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
-        if (!empBrief.isMember) revert NotMember();
+        if (!empBrief.isMember) revert NotAuthorized();
         return ownerToCompanies[compBrief.owner][compBrief.index].employees[empBrief.employeeIndex];
     }
 
@@ -1086,25 +1078,61 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         emit EmployeeHired(_employeeAddress);
     }
 
-    function _validateSalaryItemRoles(
-        SalaryItem[] memory _items,
-        string[] storage _roles
-    ) internal view {
-        for (uint256 si = 0; si < _items.length; si++) {
-            _requireRoleExists(_items[si].role, _roles);
+    /// @dev Returns the level of `_role` in `_roles`, or 0 if not found.
+    function _findRoleLevel(string memory _role, RoleDefinition[] storage _roles) internal view returns (uint8) {
+        bytes32 h = keccak256(abi.encodePacked(_role));
+        for (uint256 i = 0; i < _roles.length; i++) {
+            if (keccak256(abi.encodePacked(_roles[i].name)) == h) return _roles[i].level;
         }
+        return 0;
     }
 
-    function _requireRoleExists(string memory _role, string[] storage _roles) internal view {
-        bool found;
-        bytes32 roleHash = keccak256(abi.encodePacked(_role));
-        for (uint256 i = 0; i < _roles.length; i++) {
-            if (keccak256(abi.encodePacked(_roles[i])) == roleHash) {
-                found = true;
-                break;
-            }
+    /**
+     * @dev Returns the effective authority level for `_caller` in `_companyId`.
+     *      1 = owner (highest), 2 = operator, role-level for active employees, 0 = none.
+     */
+    function _getLevel(address _caller, uint96 _companyId) internal view returns (uint8) {
+        CompanyBrief memory compBrief = companyBrief[_companyId];
+        if (_caller == compBrief.owner) return 1;
+
+        CompanyStruct storage s_company = ownerToCompanies[compBrief.owner][compBrief.index];
+        if (_caller == s_company.operatorAddress) return 2;
+
+        EmployeeBrief memory empBrief = employeeBrief[_caller][_companyId];
+        if (!empBrief.isMember) return 0;
+
+        Employee storage emp = s_company.employees[empBrief.employeeIndex];
+        if (!emp.active) return 0;
+
+        // Minimum role level across all salary streams (lower number = higher authority)
+        uint8 minLevel = type(uint8).max;
+        for (uint256 i = 0; i < emp.salaryItems.length; i++) {
+            uint8 lvl = _findRoleLevel(emp.salaryItems[i].role, s_company.roles);
+            if (lvl > 0 && lvl < minLevel) minLevel = lvl;
         }
-        if (!found) revert RoleNotFound();
+        return minLevel == type(uint8).max ? 0 : minLevel;
+    }
+
+    /**
+     * @dev Checks whether `_caller` may perform an operation on `_target` in `_companyId`.
+     *      STRICT:  callerLevel < targetLevel  (fire, update, addRole — must outrank target)
+     *      LENIENT: callerLevel <= targetLevel (pay, submitEarning — same level is ok)
+     *      Owner (level 1) can always operate on anyone.
+     */
+    function _canOperateOn(
+        address _caller,
+        address _target,
+        uint96 _companyId,
+        AuthRule _rule
+    ) internal view returns (bool) {
+        uint8 callerLevel = _getLevel(_caller, _companyId);
+        if (callerLevel == 0) return false;
+        if (callerLevel == 1) return true;
+
+        uint8 targetLevel = _getLevel(_target, _companyId);
+        return _rule == AuthRule.STRICT
+            ? callerLevel < targetLevel
+            : callerLevel <= targetLevel;
     }
 
     /// @dev Returns the effective reserve months for a company: per-company override or global fallback.
@@ -1154,48 +1182,6 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         }
     }
 
-    function _hasPendingPay(Employee storage _emp) internal view returns (bool) {
-        for (uint256 i = 0; i < _emp.salaryItems.length; i++) {
-            if (block.timestamp - _emp.salaryItems[i].lastPayDate >= 1 hours) {
-                return true;
-            }
-        }
-        if (_emp.pendingEarnings.length > 0) return true;
-        return false;
-    }
-
-    /**
-     * @notice Returns true if _caller is authorized to manage the given company.
-     * @dev Authorized callers: company owner, company wallet, or any active employee
-     *      whose role is listed in the company's powerRoles[].
-     */
-    function _isAuthorized(address _caller, uint96 _companyId) internal view returns (bool) {
-        CompanyBrief memory compBrief = companyBrief[_companyId];
-
-        // Owner always authorized
-        if (_caller == compBrief.owner) return true;
-
-        CompanyStruct storage s_company = ownerToCompanies[compBrief.owner][compBrief.index];
-
-        // Company wallet authorized (e.g., automated scripts using its private key)
-        if (_caller == s_company.operatorAddress) return true;
-
-        // Active employee with a power role
-        EmployeeBrief memory empBrief = employeeBrief[_caller][_companyId];
-        if (!empBrief.isMember) return false;
-
-        Employee storage emp = s_company.employees[empBrief.employeeIndex];
-        if (!emp.active) return false;
-
-        uint256 powerRolesLen = s_company.powerRoles.length;
-        for (uint256 i = 0; i < emp.salaryItems.length; i++) {
-            bytes32 roleHash = keccak256(abi.encodePacked(emp.salaryItems[i].role));
-            for (uint256 j = 0; j < powerRolesLen; j++) {
-                if (keccak256(abi.encodePacked(s_company.powerRoles[j])) == roleHash) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
 }
+
+

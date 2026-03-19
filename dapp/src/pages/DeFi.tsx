@@ -880,18 +880,17 @@ export default function DeFi() {
   const isAuthorized = useMemo(() => {
     if (!connectedAddress || !company) return false;
     const lower = connectedAddress.toLowerCase();
-    return (
-      company.owner.toLowerCase() === lower ||
-      company.operatorAddress.toLowerCase() === lower ||
-      company.employees.some(
-        (e) =>
-          e.active &&
-          e.employeeId.toLowerCase() === lower &&
-          e.salaryItems.some((s) =>
-            (company.powerRoles as readonly string[]).includes(s.role),
-          ),
-      )
+    if (company.owner.toLowerCase() === lower) return true;
+    if (company.operatorAddress.toLowerCase() === lower) return true;
+    const me = company.employees.find(
+      (e) => e.active && e.employeeId.toLowerCase() === lower,
     );
+    if (!me) return false;
+    // Authorized if the employee holds at least one role with level <= 2 (owner-equivalent or highest non-owner)
+    return me.salaryItems.some((s) => {
+      const rd = company.roles.find((r) => r.name === s.role);
+      return rd !== undefined && rd.level <= 2;
+    });
   }, [connectedAddress, company]);
 
   // ── Aave APY for protocol card ───────────────────────────────────────────────

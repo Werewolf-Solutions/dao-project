@@ -28,8 +28,7 @@ type Company = {
   active: boolean;
   employees: readonly Employee[];
   domain: string;
-  roles: readonly string[];
-  powerRoles: readonly string[];
+  roles: readonly { name: string; level: number }[];
 };
 
 // ─── CreateCompanyForm ────────────────────────────────────────────────────────
@@ -50,8 +49,7 @@ function CreateCompanyForm({
   const [industry, setIndustry] = useState('');
   const [domain, setDomain] = useState('');
 
-  const [rolesStr, setRolesStr] = useState('Founder,CEO,CTO,HR,Developer');
-  const [powerRolesStr, setPowerRolesStr] = useState('Founder,CEO');
+  const [rolesStr, setRolesStr] = useState('Founder:2,CEO:2,CTO:2,HR:3,Developer:3');
   const [ownerRole, setOwnerRole] = useState('Founder');
   const [ownerName, setOwnerName] = useState('');
   const [monthlyUSD, setMonthlyUSD] = useState('500');
@@ -80,8 +78,11 @@ function CreateCompanyForm({
   const approveLoading = isApprovePending || isApproveConfirming;
   const createLoading = isCreatePending || isCreateConfirming;
 
-  const rolesArr = rolesStr.split(',').map(r => r.trim()).filter(Boolean);
-  const powerRolesArr = powerRolesStr.split(',').map(r => r.trim()).filter(Boolean);
+  // Parse "Name:Level,Name:Level,…" — default level 3 if omitted
+  const rolesArr = rolesStr.split(',').map(r => {
+    const [namePart, lvlPart] = r.trim().split(':');
+    return { name: namePart.trim(), level: lvlPart ? parseInt(lvlPart, 10) : 3 };
+  }).filter(r => r.name);
   const salaryPerHour = monthlyUSDToHourlyWei(monthlyUSD);
   const canCreate = !!name && !!ownerName && !!ownerRole && rolesArr.length > 0 && salaryPerHour > 0n;
 
@@ -111,9 +112,9 @@ function CreateCompanyForm({
           industry,
           domain,
           roles: rolesArr,
-          powerRoles: powerRolesArr,
           operatorAddress: address,
           ownerRole,
+          ownerRoleLevel: rolesArr.find(r => r.name === ownerRole)?.level ?? 2,
           ownerSalaryPerHour: salaryPerHour,
           ownerName,
         }],
@@ -132,15 +133,10 @@ function CreateCompanyForm({
         <input className={`${theme.input} col-span-full sm:col-span-1`} placeholder="Domain (e.g. werewolf.solutions)" value={domain} onChange={e => setDomain(e.target.value)} />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div>
-          <label className={`block text-xs mb-1 ${theme.textMuted}`}>All roles (comma-separated)</label>
-          <input className={theme.input} value={rolesStr} onChange={e => setRolesStr(e.target.value)} />
-        </div>
-        <div>
-          <label className={`block text-xs mb-1 ${theme.textMuted}`}>Power roles (admin access)</label>
-          <input className={theme.input} value={powerRolesStr} onChange={e => setPowerRolesStr(e.target.value)} />
-        </div>
+      <div>
+        <label className={`block text-xs mb-1 ${theme.textMuted}`}>Roles with levels — format: Name:Level (e.g. <span className="font-mono">Founder:2,CEO:2,Engineer:3</span>)</label>
+        <input className={theme.input} value={rolesStr} onChange={e => setRolesStr(e.target.value)} />
+        <p className={`text-xs mt-1 ${theme.textMuted}`}>L2 = highest authority (after owner), L3+ = lower. Level 1 is reserved for the owner.</p>
       </div>
 
       <div className={`p-3 rounded-lg ${theme.cardNested} space-y-3`}>
