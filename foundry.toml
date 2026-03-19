@@ -20,4 +20,7 @@ via_ir = true
 # fix the compiler version to standardize testing
 solc_version = "0.8.28"
 
+[rpc_endpoints]
+base_sepolia = "${BASE_SEPOLIA_RPC_URL}"
+
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
