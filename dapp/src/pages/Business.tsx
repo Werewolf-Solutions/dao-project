@@ -32,6 +32,14 @@ type Company = {
   roles: readonly { name: string; level: number }[];
 };
 
+type PayrollPreviewItem = {
+  employeeAddress: `0x${string}`;
+  name: string;
+  grossUSDT: bigint;
+  fee: bigint;
+  netUSDT: bigint;
+};
+
 // ─── EmployeePaid event ABI ───────────────────────────────────────────────────
 
 const employeePaidEventAbi = {
@@ -652,19 +660,19 @@ function EmployeeCard({
                   <select
                     value={earningType}
                     onChange={e => setEarningType(Number(e.target.value) as 1 | 2 | 3 | 4)}
-                    className={`appearance-none rounded px-3 py-1.5 text-xs font-medium focus:outline-none focus:ring-1 pr-6 cursor-pointer ${
-                      earningType === 1 ? 'bg-amber-900/40 border border-amber-700/50 text-amber-300 focus:ring-amber-600' :
-                      earningType === 2 ? 'bg-green-900/40 border border-green-700/50 text-green-300 focus:ring-green-600' :
-                      earningType === 3 ? 'bg-blue-900/40 border border-blue-700/50 text-blue-300 focus:ring-blue-600' :
-                                         'bg-purple-900/40 border border-purple-700/50 text-purple-300 focus:ring-purple-600'
+                    className={`appearance-none rounded-lg px-3 py-1.5 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-[#8e2421]/60 pr-6 cursor-pointer border transition-colors ${
+                      earningType === 1 ? 'bg-amber-400/10   border-amber-400/25   text-amber-400'  :
+                      earningType === 2 ? 'bg-green-400/10   border-green-400/25   text-green-400'  :
+                      earningType === 3 ? 'bg-sky-400/10     border-sky-400/25     text-sky-400'    :
+                                         'bg-violet-400/10  border-violet-400/25  text-violet-400'
                     }`}
                   >
-                    <option value={1}>Overtime</option>
-                    <option value={2}>Bonus</option>
-                    <option value={3}>Commission</option>
-                    <option value={4}>Reimbursement</option>
+                    <option value={1} className="bg-[#161b27] text-amber-400">Overtime</option>
+                    <option value={2} className="bg-[#161b27] text-green-400">Bonus</option>
+                    <option value={3} className="bg-[#161b27] text-sky-400">Commission</option>
+                    <option value={4} className="bg-[#161b27] text-violet-400">Reimbursement</option>
                   </select>
-                  <span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] opacity-60">▾</span>
+                  <span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] opacity-50">▾</span>
                 </div>
                 <input
                   type="number"
@@ -673,7 +681,7 @@ function EmployeeCard({
                   placeholder="Amount (USDT)"
                   value={earningAmountStr}
                   onChange={e => setEarningAmountStr(e.target.value)}
-                  className="bg-white/5 border border-white/10 rounded px-2 py-1 text-xs text-white/80 focus:outline-none focus:border-white/20 w-36"
+                  className="bg-[#0f1117] border border-white/[0.12] rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#8e2421] focus:ring-1 focus:ring-[#8e2421]/50 placeholder:text-white/25 w-36 transition-colors"
                 />
               </div>
               <input
@@ -681,7 +689,7 @@ function EmployeeCard({
                 placeholder="Description (e.g. 10hrs overtime week 12)"
                 value={earningDesc}
                 onChange={e => setEarningDesc(e.target.value)}
-                className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs text-white/80 focus:outline-none focus:border-white/20"
+                className="w-full bg-[#0f1117] border border-white/[0.12] rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#8e2421] focus:ring-1 focus:ring-[#8e2421]/50 placeholder:text-white/25 transition-colors"
               />
               <button
                 onClick={handleSubmitEarning}
@@ -1173,12 +1181,19 @@ function CompanyCard({
   const [payAllTxHash, setPayAllTxHash] = useState<`0x${string}` | undefined>();
   const [payAllError, setPayAllError] = useState<string | null>(null);
   const [copiedWallet, setCopiedWallet] = useState(false);
+  const [showPayrollPreview, setShowPayrollPreview] = useState(false);
+  const [payBatchTxHash, setPayBatchTxHash] = useState<`0x${string}` | undefined>();
+  const [payBatchError, setPayBatchError] = useState<string | null>(null);
   const { writeContract: writePayAll, isPending: isPayAllPending } = useWriteContract();
   const { isSuccess: isPayAllSuccess, isLoading: isPayAllMining } = useWaitForTransactionReceipt({ hash: payAllTxHash });
   const isPayAllLoading = isPayAllPending || isPayAllMining;
+  const { writeContract: writePayBatch, isPending: isPayBatchPending } = useWriteContract();
+  const { isSuccess: isPayBatchSuccess, isLoading: isPayBatchMining } = useWaitForTransactionReceipt({ hash: payBatchTxHash });
+  const isPayBatchLoading = isPayBatchPending || isPayBatchMining;
   const publicClientCompany = usePublicClient();
 
   useEffect(() => { if (isPayAllSuccess) { refetchCompany(); setPayAllError(null); } }, [isPayAllSuccess]);
+  useEffect(() => { if (isPayBatchSuccess) { refetchCompany(); setPayBatchError(null); refetchPreview(); } }, [isPayBatchSuccess]);
 
   const { writeContract: writeDelete, isPending: isDeletePending } = useWriteContract();
   const { isLoading: isDeleteMining, isSuccess: isDeleteSuccess } = useWaitForTransactionReceipt({ hash: deleteTxHash });
@@ -1239,6 +1254,19 @@ function CompanyCard({
     query: { refetchInterval: 60_000 },
   });
   const minResMo = minReserveMonthsData !== undefined ? Number(minReserveMonthsData) : undefined;
+
+  const { data: previewData, isFetching: isPreviewFetching, refetch: refetchPreview } = useReadContract({
+    address: companiesHouseAddress,
+    abi: companiesHouseABI,
+    functionName: 'previewPayroll',
+    args: [companyId],
+    query: { enabled: false },
+  });
+  // previewData is [items, totalGross, totalFee, totalNet]
+  const previewItems = previewData ? (previewData as [PayrollPreviewItem[], bigint, bigint, bigint])[0] : undefined;
+  const previewTotalGross = previewData ? (previewData as [PayrollPreviewItem[], bigint, bigint, bigint])[1] : 0n;
+  const previewTotalFee   = previewData ? (previewData as [PayrollPreviewItem[], bigint, bigint, bigint])[2] : 0n;
+  const previewTotalNet   = previewData ? (previewData as [PayrollPreviewItem[], bigint, bigint, bigint])[3] : 0n;
 
   function refetchAll() {
     refetchCompany();
@@ -1351,6 +1379,37 @@ function CompanyCard({
         (err as { message?: string }).message ??
         'Simulation failed';
       setPayAllError(msg);
+    }
+  }
+
+  async function handlePayBatch(fromIndex: bigint, toIndex: bigint) {
+    setPayBatchError(null);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const result = await (publicClientCompany!.simulateContract as any)({
+        address: companiesHouseAddress,
+        abi: companiesHouseABI,
+        functionName: 'payEmployeesBatch',
+        args: [companyId, fromIndex, toIndex],
+        account: address,
+      });
+      writePayBatch(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { ...result.request, gas: result.request.gas ? result.request.gas * 12n / 10n : undefined } as any,
+        {
+          onSuccess: (hash) => { setPayBatchError(null); setPayBatchTxHash(hash); },
+          onError: (err) => {
+            const msg = (err as { shortMessage?: string }).shortMessage ?? err.message;
+            setPayBatchError(msg);
+          },
+        }
+      );
+    } catch (err: unknown) {
+      const msg =
+        (err as { shortMessage?: string }).shortMessage ??
+        (err as { message?: string }).message ??
+        'Simulation failed';
+      setPayBatchError(msg);
     }
   }
 
@@ -1658,45 +1717,113 @@ function CompanyCard({
             )}
           </div>
           {isAuthorized && activeEmployees.length > 0 && (
-            <div className="flex flex-col items-end gap-0.5">
             <button
-              onClick={handlePayAll}
-              disabled={isPayAllLoading || !canPayAll}
-              title={
-                isPayAllLoading
-                  ? (isPayAllPending ? 'Waiting for wallet…' : 'Transaction confirming…')
-                  : canPayAll
-                    ? 'Pay all employees in USDT'
-                    : !allAboveMinimum
-                      ? 'All employees must have at least $1.00 USDT pending before paying'
-                      : `USDT balance below minimum ${monthly > 0n && reserve > 0n ? fmtMonths(Math.floor(Number(reserve / monthly))) : 'reserve'} threshold`
-              }
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                isPayAllLoading || !canPayAll
-                  ? 'bg-white/5 text-white/30 cursor-not-allowed'
-                  : 'bg-[#8e2421] text-white hover:bg-[#a12926]'
-              }`}
+              onClick={() => {
+                const next = !showPayrollPreview;
+                setShowPayrollPreview(next);
+                if (next) refetchPreview();
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors bg-white/5 text-white/60 hover:bg-white/10 hover:text-white/80 border border-white/10"
             >
-              {isPayAllLoading && (
-                <svg className="animate-spin h-3 w-3 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-              )}
-              {isPayAllPending ? 'Confirm…' : isPayAllMining ? 'Processing…' : 'Pay All'}
+              {showPayrollPreview ? 'Close Preview' : 'Preview Payroll'}
             </button>
-            {canPayAll && (
-              <span className="text-xs text-white/25">Fee: ${fmtUSDT(totalPendingAllUSDT * 500n / 10_000n)} USDT (5%) → employees receive ${fmtUSDT(totalPendingAllUSDT * 9_500n / 10_000n)}</span>
-            )}
-            </div>
           )}
         </div>
 
-        {isPayAllSuccess && (
-          <p className="text-xs text-green-400">All employees paid successfully.</p>
-        )}
-        {payAllError && (
-          <p className="text-xs text-red-400 break-words">{payAllError}</p>
+        {/* Payroll preview panel */}
+        {showPayrollPreview && (
+          <div className="rounded-lg border border-white/10 bg-white/3 p-4 space-y-3">
+            {isPreviewFetching ? (
+              <p className="text-xs text-white/40">Calculating payroll…</p>
+            ) : previewItems && previewItems.length > 0 ? (
+              <>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-white/40 border-b border-white/10">
+                      <th className="text-left pb-1.5 font-medium">Employee</th>
+                      <th className="text-right pb-1.5 font-medium">Gross</th>
+                      <th className="text-right pb-1.5 font-medium">Fee (5%)</th>
+                      <th className="text-right pb-1.5 font-medium">Net</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {previewItems.map((item) => (
+                      <tr key={item.employeeAddress} className="text-white/70">
+                        <td className="py-1.5">{item.name}</td>
+                        <td className="text-right py-1.5">${fmtUSDT(item.grossUSDT)}</td>
+                        <td className="text-right py-1.5 text-white/40">${fmtUSDT(item.fee)}</td>
+                        <td className="text-right py-1.5 text-green-400">${fmtUSDT(item.netUSDT)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="text-white/80 border-t border-white/10 font-semibold">
+                      <td className="pt-1.5">Total</td>
+                      <td className="text-right pt-1.5">${fmtUSDT(previewTotalGross)}</td>
+                      <td className="text-right pt-1.5 text-white/40">${fmtUSDT(previewTotalFee)}</td>
+                      <td className="text-right pt-1.5 text-green-400">${fmtUSDT(previewTotalNet)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+
+                {canPayAll && (() => {
+                  const BATCH_SIZE = 50;
+                  const totalRaw = company.employees.length;
+                  if (totalRaw <= BATCH_SIZE) {
+                    return (
+                      <div className="flex flex-col items-start gap-1">
+                        <button
+                          onClick={handlePayAll}
+                          disabled={isPayAllLoading}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${isPayAllLoading ? 'bg-white/5 text-white/30 cursor-not-allowed' : 'bg-[#8e2421] text-white hover:bg-[#a12926]'}`}
+                        >
+                          {isPayAllLoading && <svg className="animate-spin h-3 w-3 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>}
+                          {isPayAllPending ? 'Confirm…' : isPayAllMining ? 'Processing…' : 'Confirm & Pay All'}
+                        </button>
+                        {isPayAllSuccess && <p className="text-xs text-green-400">All employees paid successfully.</p>}
+                        {payAllError && <p className="text-xs text-red-400 break-words">{payAllError}</p>}
+                      </div>
+                    );
+                  }
+                  const chunks = Array.from({ length: Math.ceil(totalRaw / BATCH_SIZE) }, (_, i) => ({
+                    from: BigInt(i * BATCH_SIZE),
+                    to: BigInt(Math.min((i + 1) * BATCH_SIZE, totalRaw)),
+                    label: `${i * BATCH_SIZE + 1}–${Math.min((i + 1) * BATCH_SIZE, totalRaw)}`,
+                  }));
+                  return (
+                    <div className="space-y-1">
+                      <p className="text-xs text-white/40">Large company — pay in batches of {BATCH_SIZE}:</p>
+                      <div className="flex flex-wrap gap-2">
+                        {chunks.map((chunk, i) => (
+                          <button
+                            key={i}
+                            onClick={() => handlePayBatch(chunk.from, chunk.to)}
+                            disabled={isPayBatchLoading}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${isPayBatchLoading ? 'bg-white/5 text-white/30 cursor-not-allowed' : 'bg-[#8e2421] text-white hover:bg-[#a12926]'}`}
+                          >
+                            {isPayBatchLoading && <svg className="animate-spin h-3 w-3 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>}
+                            Pay {chunk.label}
+                          </button>
+                        ))}
+                      </div>
+                      {isPayBatchSuccess && <p className="text-xs text-green-400">Batch paid successfully.</p>}
+                      {payBatchError && <p className="text-xs text-red-400 break-words">{payBatchError}</p>}
+                    </div>
+                  );
+                })()}
+
+                {!canPayAll && (
+                  <p className="text-xs text-red-400">
+                    {!allAboveMinimum
+                      ? 'All employees must have at least $1.00 USDT pending before paying.'
+                      : `USDT balance below minimum ${monthly > 0n && reserve > 0n ? fmtMonths(Math.floor(Number(reserve / monthly))) : 'reserve'} threshold.`}
+                  </p>
+                )}
+              </>
+            ) : previewItems && previewItems.length === 0 ? (
+              <p className="text-xs text-white/40">All employees are up to date — nothing owed right now.</p>
+            ) : null}
+          </div>
         )}
 
         {activeEmployees.length === 0 && (

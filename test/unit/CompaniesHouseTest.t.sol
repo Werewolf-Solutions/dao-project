@@ -728,4 +728,119 @@ contract CompaniesHouseTest is BaseTest {
             employeeAddress: newCeo, name: "New CEO", companyId: id, salaryItems: items
         }));
     }
+
+    // ── Tests: previewPayroll ──────────────────────────────────────────────────
+
+    /**
+     * @notice previewPayroll amounts must match what payEmployees actually transfers.
+     */
+    function test_PreviewPayroll_MatchesActualPayment() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id); // employee1 = Engineer
+
+        // Accrue one month of salary for both founder and employee1
+        vm.warp(block.timestamp + 730 hours);
+
+        // Deposit enough for pay + reserve
+        uint256 needed = _requiredUSDT(id, 2 * MONTHLY_SALARY) + 1_000e6;
+        _depositUSDT(id, needed);
+
+        // Snapshot preview
+        (
+            CompaniesHouseV1.PayrollPreviewItem[] memory items,
+            uint256 totalGross,
+            uint256 totalFee,
+            uint256 totalNet
+        ) = companiesHouse.previewPayroll(id);
+
+        assertEq(items.length, 2, "Should have 2 employees with pending pay");
+        assertGt(totalGross, 0, "Total gross must be > 0");
+        assertEq(totalGross, totalFee + totalNet, "gross = fee + net");
+
+        // Capture balances before paying
+        uint256 founderBefore  = mockUSDT.balanceOf(founder);
+        uint256 employee1Before = mockUSDT.balanceOf(employee1);
+
+        companiesHouse.payEmployees(id);
+
+        // Each employee receives exactly their netUSDT from the preview
+        uint256 founderPreviewNet;
+        uint256 employee1PreviewNet;
+        for (uint256 i = 0; i < items.length; i++) {
+            if (items[i].employeeAddress == founder)    founderPreviewNet   = items[i].netUSDT;
+            if (items[i].employeeAddress == employee1)  employee1PreviewNet = items[i].netUSDT;
+        }
+
+        assertEq(mockUSDT.balanceOf(founder)   - founderBefore,   founderPreviewNet,   "Founder net mismatch");
+        assertEq(mockUSDT.balanceOf(employee1) - employee1Before,  employee1PreviewNet, "Employee net mismatch");
+    }
+
+    /**
+     * @notice previewPayroll returns empty array when no pay is accrued yet.
+     */
+    function test_PreviewPayroll_EmptyWhenNothingOwed() public {
+        uint96 id = _createCompany();
+
+        (CompaniesHouseV1.PayrollPreviewItem[] memory items,,,) = companiesHouse.previewPayroll(id);
+        assertEq(items.length, 0, "Nothing owed at t=0");
+    }
+
+    // ── Tests: payEmployeesBatch ───────────────────────────────────────────────
+
+    /**
+     * @notice payEmployeesBatch with slice [0,1) pays only the founder (index 0).
+     */
+    function test_PayEmployeesBatch_SlicedCorrectly() public {
+        uint96 id = _createCompany(); // founder at index 0
+        _hireEmployee(id);             // employee1 at index 1
+
+        vm.warp(block.timestamp + 730 hours);
+
+        // Deposit enough for both + reserve
+        uint256 needed = _requiredUSDT(id, 2 * MONTHLY_SALARY) + 1_000e6;
+        _depositUSDT(id, needed);
+
+        uint256 founderBefore  = mockUSDT.balanceOf(founder);
+        uint256 employee1Before = mockUSDT.balanceOf(employee1);
+
+        // Pay only index 0 (founder)
+        companiesHouse.payEmployeesBatch(id, 0, 1);
+
+        assertGt(mockUSDT.balanceOf(founder),    founderBefore,   "Founder should be paid");
+        assertEq(mockUSDT.balanceOf(employee1), employee1Before, "Employee1 should NOT be paid yet");
+    }
+
+    /**
+     * @notice payEmployeesBatch covers all employees when slice spans full array.
+     */
+    function test_PayEmployeesBatch_FullArray_PaysAll() public {
+        uint96 id = _createCompany();
+        _hireEmployee(id);
+
+        vm.warp(block.timestamp + 730 hours);
+        uint256 needed = _requiredUSDT(id, 2 * MONTHLY_SALARY) + 1_000e6;
+        _depositUSDT(id, needed);
+
+        uint256 founderBefore  = mockUSDT.balanceOf(founder);
+        uint256 employee1Before = mockUSDT.balanceOf(employee1);
+
+        CompaniesHouseV1.CompanyStruct memory co = companiesHouse.retrieveCompany(id);
+        companiesHouse.payEmployeesBatch(id, 0, co.employees.length);
+
+        assertGt(mockUSDT.balanceOf(founder),    founderBefore,   "Founder should be paid");
+        assertGt(mockUSDT.balanceOf(employee1), employee1Before, "Employee1 should be paid");
+    }
+
+    /**
+     * @notice payEmployeesBatch reverts when toIndex is out of bounds.
+     */
+    function test_PayEmployeesBatch_OutOfBounds_Reverts() public {
+        uint96 id = _createCompany(); // 1 employee
+
+        vm.warp(block.timestamp + 730 hours);
+        _depositUSDT(id, _requiredUSDT(id, MONTHLY_SALARY) + 1_000e6);
+
+        vm.expectRevert(CompaniesHouseV1.BatchIndexInvalid.selector);
+        companiesHouse.payEmployeesBatch(id, 0, 999);
+    }
 }

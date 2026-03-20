@@ -163,6 +163,18 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         uint96 employeeIndex;
     }
 
+    /**
+     * @notice Per-employee payroll preview returned by previewPayroll().
+     * @dev Amounts are in USDT with 6 decimal places. fee is 0 for the DAO company.
+     */
+    struct PayrollPreviewItem {
+        address employeeAddress;
+        string  name;
+        uint256 grossUSDT;  // accrued salary + queued pending earnings
+        uint256 fee;        // protocol fee deducted at payment
+        uint256 netUSDT;    // what the employee actually receives
+    }
+
     ///////////////////////////////////////
     //           Custom Errors           //
     ///////////////////////////////////////
@@ -179,6 +191,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     error BeaconNotSet();
     error VaultAlreadyExists();
     error FeeTooHigh();
+    error BatchIndexInvalid();
 
 
     ///////////////////////////////////////
@@ -532,30 +545,25 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     function payEmployees(uint96 _companyId) external whenNotPaused {
         if (companyBrief[_companyId].owner == address(0)) revert CompanyNotFound();
         CompanyBrief memory compBrief = companyBrief[_companyId];
+        _payBatch(_companyId, 0, ownerToCompanies[compBrief.owner][compBrief.index].employees.length);
+    }
 
-        Employee[] storage employees = ownerToCompanies[compBrief.owner][compBrief.index].employees;
-
-        // ── 1. Sum total USDT owed across all active employees ───────────────
-        uint256 totalUSDTAll;
-        for (uint256 i = 0; i < employees.length; i++) {
-            if (!employees[i].active) continue;
-            for (uint256 j = 0; j < employees[i].salaryItems.length; j++) {
-                uint256 payPeriod = block.timestamp - employees[i].salaryItems[j].lastPayDate;
-                totalUSDTAll += (payPeriod * employees[i].salaryItems[j].salaryPerHour) / 1 hours;
-            }
-        }
-        if (totalUSDTAll == 0) return;
-
-        // ── 2. Single reserve check for the whole batch ──────────────────────
-        uint256 minReserve = getMonthlyBurnUSDT(_companyId) * _effectiveReserveMonths(_companyId);
-        if (_stableBalance(_companyId) < totalUSDTAll + minReserve) revert BelowReserve();
-
-        // ── 3. Pay each employee (no per-employee reserve re-check) ─────────
-        for (uint256 i = 0; i < employees.length; i++) {
-            if (employees[i].active) {
-                _payEmployeeUSDT(employees[i], _companyId);
-            }
-        }
+    /**
+     * @notice Pays a contiguous slice of employees in a single transaction.
+     * @dev    Intended for companies with large employee counts that would exceed block
+     *         gas limits in a single payEmployees() call. Indices are into the raw
+     *         employees array (including inactive employees); inactive entries are
+     *         skipped automatically.
+     * @param _companyId  The company to run payroll for.
+     * @param fromIndex   First employee array index to include (inclusive).
+     * @param toIndex     Last employee array index to include (exclusive).
+     */
+    function payEmployeesBatch(uint96 _companyId, uint256 fromIndex, uint256 toIndex) external whenNotPaused {
+        if (companyBrief[_companyId].owner == address(0)) revert CompanyNotFound();
+        if (fromIndex >= toIndex) revert BatchIndexInvalid();
+        CompanyBrief memory compBrief = companyBrief[_companyId];
+        if (toIndex > ownerToCompanies[compBrief.owner][compBrief.index].employees.length) revert BatchIndexInvalid();
+        _payBatch(_companyId, fromIndex, toIndex);
     }
 
     ///////////////////////////////////////
@@ -625,7 +633,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
      * @notice Soft-deletes a company (marks it inactive, clears the brief lookup).
      * @dev Uses soft delete to avoid storage issues with nested dynamic arrays.
      */
-    function deleteCompany(uint96 _companyId) public {
+    function deleteCompany(uint96 _companyId) external {
         if (companyBrief[_companyId].owner != msg.sender) revert NotAuthorized();
         uint96 companyIndex = companyBrief[_companyId].index;
         ownerToCompanies[msg.sender][companyIndex].active = false;
@@ -640,7 +648,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
      * @param _companyId ID of the company to update
      * @param _params New values for name, industry, domain, roles, powerRoles, operatorAddress
      */
-    function updateCompany(uint96 _companyId, UpdateCompany memory _params) public {
+    function updateCompany(uint96 _companyId, UpdateCompany calldata _params) external {
         if (companyBrief[_companyId].owner != msg.sender) revert NotAuthorized();
         uint96 idx = companyBrief[_companyId].index;
         CompanyStruct storage compPtr = ownerToCompanies[msg.sender][idx];
@@ -667,17 +675,14 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     function updateEmployee(
         address _employeeAddress,
         uint96 _companyId,
-        UpdateEmployee memory _params
-    ) public {
+        UpdateEmployee calldata _params
+    ) external {
         if (!_canOperateOn(msg.sender, _employeeAddress, _companyId, AuthRule.STRICT)) revert NotAuthorized();
 
-        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
-        if (!empBrief.isMember) revert NotAuthorized();
-
+        Employee storage emp = _loadEmployee(_employeeAddress, _companyId);
+        if (!emp.active) revert NotAuthorized();
         CompanyBrief memory compBrief = companyBrief[_companyId];
         CompanyStruct storage s_company = ownerToCompanies[compBrief.owner][compBrief.index];
-        Employee storage emp = s_company.employees[empBrief.employeeIndex];
-        if (!emp.active) revert NotAuthorized();
 
         for (uint256 i = 0; i < _params.salaryItems.length; i++) {
             if (_findRoleLevel(_params.salaryItems[i].role, s_company.roles) == 0) revert RoleNotFound();
@@ -747,17 +752,13 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         address _employeeAddress,
         uint96 _companyId,
         SalaryItem memory _item
-    ) public {
+    ) external {
         if (!_canOperateOn(msg.sender, _employeeAddress, _companyId, AuthRule.STRICT)) revert NotAuthorized();
 
-        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
-        if (!empBrief.isMember) revert NotAuthorized();
-
+        Employee storage emp = _loadEmployee(_employeeAddress, _companyId);
         CompanyBrief memory compBrief = companyBrief[_companyId];
-        CompanyStruct storage compPtr = ownerToCompanies[compBrief.owner][compBrief.index];
-        if (_findRoleLevel(_item.role, compPtr.roles) == 0) revert RoleNotFound();
+        if (_findRoleLevel(_item.role, ownerToCompanies[compBrief.owner][compBrief.index].roles) == 0) revert RoleNotFound();
 
-        Employee storage emp = compPtr.employees[empBrief.employeeIndex];
         emp.salaryItems.push(SalaryItem({
             role: _item.role,
             earningsType: _item.earningsType,
@@ -787,16 +788,12 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         EarningsType _earningsType,
         uint256 _amount,
         string calldata _description
-    ) public whenNotPaused {
+    ) external whenNotPaused {
         if (!_canOperateOn(msg.sender, _employeeAddress, _companyId, AuthRule.LENIENT)) revert NotAuthorized();
         if (_earningsType == EarningsType.SALARY) revert InvalidSalaryIndex();
         if (_amount == 0) revert NothingToPay();
 
-        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
-        if (!empBrief.isMember) revert NotAuthorized();
-
-        CompanyBrief memory compBrief = companyBrief[_companyId];
-        Employee storage emp = ownerToCompanies[compBrief.owner][compBrief.index].employees[empBrief.employeeIndex];
+        Employee storage emp = _loadEmployee(_employeeAddress, _companyId);
         if (!emp.active) revert NotAuthorized();
 
         emp.pendingEarnings.push(PendingEarning({
@@ -812,14 +809,11 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     /**
      * @notice Soft-fires an employee (marks them inactive, clears their brief).
      */
-    function fireEmployee(address _employeeAddress, uint96 _companyId) public {
+    function fireEmployee(address _employeeAddress, uint96 _companyId) external {
         if (!_canOperateOn(msg.sender, _employeeAddress, _companyId, AuthRule.STRICT)) revert NotAuthorized();
-        CompanyBrief memory compBrief = companyBrief[_companyId];
 
-        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
-        if (!empBrief.isMember) revert NotAuthorized();
-
-        ownerToCompanies[compBrief.owner][compBrief.index].employees[empBrief.employeeIndex].active = false;
+        Employee storage emp = _loadEmployee(_employeeAddress, _companyId);
+        emp.active = false;
         delete employeeBrief[_employeeAddress][_companyId];
 
         emit EmployeeFired(_employeeAddress);
@@ -836,29 +830,15 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
      * @param _employeeAddress the employee to pay
      * @param _companyId company the employee belongs to
      */
-    function payEmployee(address _employeeAddress, uint96 _companyId) public whenNotPaused {
+    function payEmployee(address _employeeAddress, uint96 _companyId) external whenNotPaused {
         if (!_canOperateOn(msg.sender, _employeeAddress, _companyId, AuthRule.LENIENT)) revert NotAuthorized();
 
-        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
-        if (!empBrief.isMember) revert NotAuthorized();
-
-        CompanyBrief memory compBrief = companyBrief[_companyId];
-        Employee storage s_emp = ownerToCompanies[compBrief.owner][compBrief.index].employees[empBrief.employeeIndex];
+        Employee storage s_emp = _loadEmployee(_employeeAddress, _companyId);
         if (!s_emp.active) revert NotAuthorized();
 
-        // ── 1. Checks ────────────────────────────────────────────────────────
-
-        uint256 totalUSDT;
-        for (uint256 i = 0; i < s_emp.salaryItems.length; i++) {
-            uint256 payPeriod = block.timestamp - s_emp.salaryItems[i].lastPayDate;
-            totalUSDT += (payPeriod * s_emp.salaryItems[i].salaryPerHour) / 1 hours;
-        }
-        if (totalUSDT == 0) revert NothingToPay();
-
-        uint256 minReserve = getMonthlyBurnUSDT(_companyId) * _effectiveReserveMonths(_companyId);
-        if (_stableBalance(_companyId) < totalUSDT + minReserve) revert BelowReserve();
-
-        // ── 2+3. Effects + Interactions ───────────────────────────────────────
+        uint256 gross = _calcEmployeeGross(s_emp);
+        if (gross == 0) revert NothingToPay();
+        _checkReserve(_companyId, gross);
 
         _payEmployeeUSDT(s_emp, _companyId);
     }
@@ -880,22 +860,15 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         uint256 _usdtAmount,
         address _wlfToken,
         uint256 _wlfAmount
-    ) public {
+    ) external {
         if (!_canOperateOn(msg.sender, _employeeAddress, _companyId, AuthRule.LENIENT)) revert NotAuthorized();
 
-        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
-        if (!empBrief.isMember) revert NotAuthorized();
-
-        CompanyBrief memory compBrief = companyBrief[_companyId];
-        Employee storage s_emp = ownerToCompanies[compBrief.owner][compBrief.index].employees[empBrief.employeeIndex];
+        Employee storage s_emp = _loadEmployee(_employeeAddress, _companyId);
         if (!s_emp.active) revert NotAuthorized();
         if (_usdtAmount == 0 && _wlfAmount == 0) revert NothingToPay();
 
         // ── 1. Checks ────────────────────────────────────────────────────────
-        if (_usdtAmount > 0) {
-            uint256 minReserve = getMonthlyBurnUSDT(_companyId) * _effectiveReserveMonths(_companyId);
-            if (_stableBalance(_companyId) < _usdtAmount + minReserve) revert BelowReserve();
-        }
+        if (_usdtAmount > 0) _checkReserve(_companyId, _usdtAmount);
         if (_wlfAmount > 0) {
             if (companyTokenBalances[_companyId][_wlfToken] < _wlfAmount) revert InsufficientWLF();
         }
@@ -933,17 +906,12 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         uint256 _salaryItemIndex,
         string memory _newRole,
         uint96 _companyId
-    ) public {
+    ) external {
         if (!_canOperateOn(msg.sender, _employeeAddress, _companyId, AuthRule.STRICT)) revert NotAuthorized();
 
-        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
-        if (!empBrief.isMember) revert NotAuthorized();
-
+        Employee storage emp = _loadEmployee(_employeeAddress, _companyId);
         CompanyBrief memory compBrief = companyBrief[_companyId];
-        CompanyStruct storage s_company = ownerToCompanies[compBrief.owner][compBrief.index];
-        if (_findRoleLevel(_newRole, s_company.roles) == 0) revert RoleNotFound();
-
-        Employee storage emp = s_company.employees[empBrief.employeeIndex];
+        if (_findRoleLevel(_newRole, ownerToCompanies[compBrief.owner][compBrief.index].roles) == 0) revert RoleNotFound();
         if (_salaryItemIndex >= emp.salaryItems.length) revert InvalidSalaryIndex();
         emp.salaryItems[_salaryItemIndex].role = _newRole;
     }
@@ -952,7 +920,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
      * @notice Returns all active company IDs owned by the given address.
      * @dev Use this to enumerate the caller's companies in the frontend.
      */
-    function getOwnerCompanyIds(address _owner) public view returns (uint96[] memory) {
+    function getOwnerCompanyIds(address _owner) external view returns (uint96[] memory) {
         CompanyStruct[] storage companies = ownerToCompanies[_owner];
         uint256 count;
         for (uint256 i = 0; i < companies.length; i++) {
@@ -970,11 +938,11 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
      * @notice Returns true if `_caller` has any authority level in the given company.
      * @dev Exposes the level check so CompanyDeFiV1 can delegate auth without duplicating logic.
      */
-    function isAuthorized(address _caller, uint96 _companyId) public view returns (bool) {
+    function isAuthorized(address _caller, uint96 _companyId) external view returns (bool) {
         return _getLevel(_caller, _companyId) > 0;
     }
 
-    function retrieveCompany(uint96 _companyId) public view returns (CompanyStruct memory) {
+    function retrieveCompany(uint96 _companyId) external view returns (CompanyStruct memory) {
         CompanyBrief memory compBrief = companyBrief[_companyId];
         if (compBrief.owner == address(0)) revert CompanyNotFound();
         return ownerToCompanies[compBrief.owner][compBrief.index];
@@ -983,28 +951,18 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     function retrieveEmployee(
         uint96 _companyId,
         address _employeeAddress
-    ) public view returns (Employee memory) {
-        CompanyBrief memory compBrief = companyBrief[_companyId];
-        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
-        if (!empBrief.isMember) revert NotAuthorized();
-        return ownerToCompanies[compBrief.owner][compBrief.index].employees[empBrief.employeeIndex];
+    ) external view returns (Employee memory) {
+        return _loadEmployee(_employeeAddress, _companyId);
     }
 
     /**
      * @notice Returns total USDT (6 dec) owed to all active employees right now.
      */
-    function getTotalPendingUSDT(uint96 _companyId) public view returns (uint256 totalUSDT) {
+    function getTotalPendingUSDT(uint96 _companyId) external view returns (uint256 totalUSDT) {
         CompanyBrief memory compBrief = companyBrief[_companyId];
         Employee[] storage employees = ownerToCompanies[compBrief.owner][compBrief.index].employees;
-        for (uint256 i = 0; i < employees.length; i++) {
-            if (!employees[i].active) continue;
-            for (uint256 j = 0; j < employees[i].salaryItems.length; j++) {
-                SalaryItem storage item = employees[i].salaryItems[j];
-                totalUSDT += ((block.timestamp - item.lastPayDate) * item.salaryPerHour) / 1 hours;
-            }
-            for (uint256 j = 0; j < employees[i].pendingEarnings.length; j++) {
-                totalUSDT += employees[i].pendingEarnings[j].amount;
-            }
+        for (uint256 i; i < employees.length; i++) {
+            if (employees[i].active) totalUSDT += _calcEmployeeGross(employees[i]);
         }
     }
 
@@ -1036,13 +994,99 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     /**
      * @notice Returns the combined USDT + USDC internal balance for a company.
      */
-    function getCompanyStableBalance(uint96 _companyId) public view returns (uint256) {
+    function getCompanyStableBalance(uint96 _companyId) external view returns (uint256) {
         return _stableBalance(_companyId);
+    }
+
+    /**
+     * @notice Calculates what each active employee would receive if payEmployees() ran now.
+     * @dev    Pure calculation — no state changes. Mirrors _payEmployeeUSDT logic exactly.
+     *         Use this to show a confirmation preview in the UI before the user signs the tx.
+     * @param _companyId The company to preview payroll for.
+     * @return items       Per-employee breakdown (only active employees with amount > 0).
+     * @return totalGross  Sum of all grossUSDT across employees.
+     * @return totalFee    Sum of all protocol fees.
+     * @return totalNet    Sum of all netUSDT employees will receive.
+     */
+    function previewPayroll(uint96 _companyId)
+        external
+        view
+        returns (
+            PayrollPreviewItem[] memory items,
+            uint256 totalGross,
+            uint256 totalFee,
+            uint256 totalNet
+        )
+    {
+        CompanyBrief memory compBrief = companyBrief[_companyId];
+        Employee[] storage employees = ownerToCompanies[compBrief.owner][compBrief.index].employees;
+        bool isDao = daoCompanyId > 0 && _companyId == daoCompanyId;
+
+        // Single pass: fill into max-size buffer, then trim
+        PayrollPreviewItem[] memory tmp = new PayrollPreviewItem[](employees.length);
+        uint256 idx;
+        for (uint256 i; i < employees.length; i++) {
+            if (!employees[i].active) continue;
+            uint256 gross = _calcEmployeeGross(employees[i]);
+            if (gross == 0) continue;
+            uint256 fee = isDao ? 0 : gross * nonWlfFeeBps / 10_000;
+            uint256 net = gross - fee;
+            tmp[idx++] = PayrollPreviewItem({
+                employeeAddress: employees[i].employeeId,
+                name:            employees[i].name,
+                grossUSDT:       gross,
+                fee:             fee,
+                netUSDT:         net
+            });
+            totalGross += gross;
+            totalFee   += fee;
+            totalNet   += net;
+        }
+        items = new PayrollPreviewItem[](idx);
+        for (uint256 i; i < idx; i++) items[i] = tmp[i];
     }
 
     ///////////////////////////////////////
     //         Internal Functions        //
     ///////////////////////////////////////
+
+    /// @dev Reverts if stable balance is below amount + required reserve.
+    function _checkReserve(uint96 _companyId, uint256 amount) internal view {
+        if (_stableBalance(_companyId) < amount + getRequiredReserveUSDT(_companyId)) revert BelowReserve();
+    }
+
+    /// @dev Resolves employee storage from address + companyId, reverting if not a member.
+    function _loadEmployee(address _employeeAddress, uint96 _companyId) internal view returns (Employee storage) {
+        EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
+        if (!empBrief.isMember) revert NotAuthorized();
+        CompanyBrief memory compBrief = companyBrief[_companyId];
+        return ownerToCompanies[compBrief.owner][compBrief.index].employees[empBrief.employeeIndex];
+    }
+
+    /// @dev Returns the total USDT gross owed to one employee right now (salary accrual + pending earnings).
+    function _calcEmployeeGross(Employee storage emp) internal view returns (uint256 gross) {
+        for (uint256 j; j < emp.salaryItems.length; j++) {
+            gross += ((block.timestamp - emp.salaryItems[j].lastPayDate) * emp.salaryItems[j].salaryPerHour) / 1 hours;
+        }
+        for (uint256 j; j < emp.pendingEarnings.length; j++) {
+            gross += emp.pendingEarnings[j].amount;
+        }
+    }
+
+    /// @dev Core batch-pay logic shared by payEmployees and payEmployeesBatch.
+    function _payBatch(uint96 _companyId, uint256 fromIndex, uint256 toIndex) internal {
+        CompanyBrief memory compBrief = companyBrief[_companyId];
+        Employee[] storage employees = ownerToCompanies[compBrief.owner][compBrief.index].employees;
+        uint256 total;
+        for (uint256 i = fromIndex; i < toIndex; i++) {
+            if (employees[i].active) total += _calcEmployeeGross(employees[i]);
+        }
+        if (total == 0) return;
+        _checkReserve(_companyId, total);
+        for (uint256 i = fromIndex; i < toIndex; i++) {
+            if (employees[i].active) _payEmployeeUSDT(employees[i], _companyId);
+        }
+    }
 
     function _hireEmployeeInternal(
         address _employeeAddress,

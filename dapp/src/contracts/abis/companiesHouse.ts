@@ -403,6 +403,42 @@ export const companiesHouseABI = [
   },
   {
     "type": "function",
+    "name": "previewPayroll",
+    "inputs": [
+      { "name": "_companyId", "type": "uint96", "internalType": "uint96" }
+    ],
+    "outputs": [
+      {
+        "name": "items",
+        "type": "tuple[]",
+        "internalType": "struct CompaniesHouseV1.PayrollPreviewItem[]",
+        "components": [
+          { "name": "employeeAddress", "type": "address", "internalType": "address" },
+          { "name": "name", "type": "string", "internalType": "string" },
+          { "name": "grossUSDT", "type": "uint256", "internalType": "uint256" },
+          { "name": "fee", "type": "uint256", "internalType": "uint256" },
+          { "name": "netUSDT", "type": "uint256", "internalType": "uint256" }
+        ]
+      },
+      { "name": "totalGross", "type": "uint256", "internalType": "uint256" },
+      { "name": "totalFee", "type": "uint256", "internalType": "uint256" },
+      { "name": "totalNet", "type": "uint256", "internalType": "uint256" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "payEmployeesBatch",
+    "inputs": [
+      { "name": "_companyId", "type": "uint96", "internalType": "uint96" },
+      { "name": "fromIndex", "type": "uint256", "internalType": "uint256" },
+      { "name": "toIndex", "type": "uint256", "internalType": "uint256" }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "usdcAddress",
     "inputs": [],
     "outputs": [
