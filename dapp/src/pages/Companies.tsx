@@ -49,7 +49,7 @@ function CreateCompanyForm({
   const [industry, setIndustry] = useState('');
   const [domain, setDomain] = useState('');
 
-  const [rolesStr, setRolesStr] = useState('Founder:2,CEO:2,CTO:2,HR:3,Developer:3');
+  const [rolesStr, setRolesStr] = useState('Founder:1,CEO:1,CTO:2,HR:3,Developer:3');
   const [ownerRole, setOwnerRole] = useState('Founder');
   const [ownerName, setOwnerName] = useState('');
   const [monthlyUSD, setMonthlyUSD] = useState('500');
@@ -114,7 +114,7 @@ function CreateCompanyForm({
           roles: rolesArr,
           operatorAddress: address,
           ownerRole,
-          ownerRoleLevel: rolesArr.find(r => r.name === ownerRole)?.level ?? 2,
+          ownerRoleLevel: rolesArr.find(r => r.name === ownerRole)?.level ?? 1,
           ownerSalaryPerHour: salaryPerHour,
           ownerName,
         }],
@@ -134,9 +134,9 @@ function CreateCompanyForm({
       </div>
 
       <div>
-        <label className={`block text-xs mb-1 ${theme.textMuted}`}>Roles with levels — format: Name:Level (e.g. <span className="font-mono">Founder:2,CEO:2,Engineer:3</span>)</label>
+        <label className={`block text-xs mb-1 ${theme.textMuted}`}>Roles with levels — format: Name:Level (e.g. <span className="font-mono">Founder:1,CEO:1,Engineer:2</span>)</label>
         <input className={theme.input} value={rolesStr} onChange={e => setRolesStr(e.target.value)} />
-        <p className={`text-xs mt-1 ${theme.textMuted}`}>L2 = highest authority (after owner), L3+ = lower. Level 1 is reserved for the owner.</p>
+        <p className={`text-xs mt-1 ${theme.textMuted}`}>L1 = owner/founder level, L2 = senior management, L3+ = staff.</p>
       </div>
 
       <div className={`p-3 rounded-lg ${theme.cardNested} space-y-3`}>

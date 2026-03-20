@@ -1080,7 +1080,7 @@ function EditCompanyForm({
 
       {/* Role Hierarchy */}
       <div>
-        <label className={`block text-xs mb-1 ${theme.textMuted}`}>Role hierarchy (L2 = highest, L3+= lower)</label>
+        <label className={`block text-xs mb-1 ${theme.textMuted}`}>Role hierarchy (L1 = owner/founder, L2 = management, L3+ = staff)</label>
         <div className="space-y-1 mb-2">
           {[...roles].sort((a, b) => a.level - b.level).map(r => (
             <div key={r.name} className="flex items-center gap-2">
@@ -1100,12 +1100,12 @@ function EditCompanyForm({
           />
           <input
             type="number"
-            min={2}
+            min={1}
             max={99}
             value={newRoleLevel}
             onChange={e => setNewRoleLevel(Number(e.target.value))}
             className={`${theme.input} w-16 text-center`}
-            title="Level (2=highest non-owner, 3=lower, etc.)"
+            title="Level (1=owner/founder, 2=management, 3+=staff)"
           />
           <button
             onClick={addRole}

@@ -354,11 +354,11 @@ contract Deploy is Script {
 
         // 3. Build the Werewolf DAO company params
         CompaniesHouseV1.RoleDefinition[] memory roles = new CompaniesHouseV1.RoleDefinition[](7);
-        roles[0] = CompaniesHouseV1.RoleDefinition({ name: "Founder",   level: 2 });
-        roles[1] = CompaniesHouseV1.RoleDefinition({ name: "Engineer",  level: 3 });
-        roles[2] = CompaniesHouseV1.RoleDefinition({ name: "Advisor",   level: 3 });
-        roles[3] = CompaniesHouseV1.RoleDefinition({ name: "HR",        level: 3 });
-        roles[4] = CompaniesHouseV1.RoleDefinition({ name: "SMM",       level: 3 });
+        roles[0] = CompaniesHouseV1.RoleDefinition({ name: "Founder",   level: 1 });
+        roles[1] = CompaniesHouseV1.RoleDefinition({ name: "Engineer",  level: 2 });
+        roles[2] = CompaniesHouseV1.RoleDefinition({ name: "Advisor",   level: 2 });
+        roles[3] = CompaniesHouseV1.RoleDefinition({ name: "HR",        level: 2 });
+        roles[4] = CompaniesHouseV1.RoleDefinition({ name: "SMM",       level: 2 });
         roles[5] = CompaniesHouseV1.RoleDefinition({ name: "Developer", level: 3 });
         roles[6] = CompaniesHouseV1.RoleDefinition({ name: "Tester",    level: 3 });
 
@@ -369,7 +369,7 @@ contract Deploy is Script {
             roles:              roles,
             operatorAddress:    founder,
             ownerRole:          "Founder",
-            ownerRoleLevel:     2,
+            ownerRoleLevel:     1,
             ownerSalaryPerHour: hourlyWei,
             ownerName:          "Lorenzo"
         });
@@ -425,7 +425,7 @@ contract Deploy is Script {
 
         // 3. Build Werewolf Solutions company params
         CompaniesHouseV1.RoleDefinition[] memory roles = new CompaniesHouseV1.RoleDefinition[](8);
-        roles[0] = CompaniesHouseV1.RoleDefinition({ name: "Founder",  level: 2 });
+        roles[0] = CompaniesHouseV1.RoleDefinition({ name: "Founder",  level: 1 });
         roles[1] = CompaniesHouseV1.RoleDefinition({ name: "CEO",      level: 2 });
         roles[2] = CompaniesHouseV1.RoleDefinition({ name: "CTO",      level: 2 });
         roles[3] = CompaniesHouseV1.RoleDefinition({ name: "Engineer", level: 3 });
@@ -441,7 +441,7 @@ contract Deploy is Script {
             roles:              roles,
             operatorAddress:    founder,
             ownerRole:          "Founder",
-            ownerRoleLevel:     2,
+            ownerRoleLevel:     1,
             ownerSalaryPerHour: hourlyWei,
             ownerName:          "Lorenzo"
         });
