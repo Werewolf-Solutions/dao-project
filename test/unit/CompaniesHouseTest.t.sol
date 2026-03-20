@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {Test, console} from "forge-std/Test.sol";
 import {BaseTest} from "../BaseTest.t.sol";
 import {CompaniesHouseV1} from "../../src/CompaniesHouseV1.sol";
+import {PayrollExecutor} from "../../src/PayrollExecutor.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
 contract CompaniesHouseTest is BaseTest {
@@ -11,6 +12,7 @@ contract CompaniesHouseTest is BaseTest {
     // ── Contracts ──────────────────────────────────────────────────────────────
 
     CompaniesHouseV1 companiesHouse;
+    PayrollExecutor payrollExecutor;
 
     // ── Test actors ────────────────────────────────────────────────────────────
 
@@ -48,6 +50,18 @@ contract CompaniesHouseTest is BaseTest {
         );
         address proxy = address(new TransparentUpgradeableProxy(address(impl), multiSig, initData));
         companiesHouse = CompaniesHouseV1(proxy);
+
+        // Deploy PayrollExecutor and wire into CompaniesHouseV1
+        PayrollExecutor peImpl = new PayrollExecutor();
+        bytes memory peInitData = abi.encodeWithSelector(
+            PayrollExecutor.initialize.selector,
+            address(companiesHouse),
+            founder
+        );
+        address peProxy = address(new TransparentUpgradeableProxy(address(peImpl), multiSig, peInitData));
+        payrollExecutor = PayrollExecutor(peProxy);
+        vm.prank(founder);
+        companiesHouse.setPayrollExecutor(address(payrollExecutor));
 
         // Fund founder
         vm.prank(address(timelock));
@@ -222,7 +236,7 @@ contract CompaniesHouseTest is BaseTest {
         uint256 companyBefore = companiesHouse.companyTokenBalances(id, address(mockUSDT));
 
         vm.prank(founder);
-        companiesHouse.payEmployee(employee1, id);
+        payrollExecutor.payEmployee(employee1, id);
 
         uint256 usdtAfter = mockUSDT.balanceOf(employee1);
         uint256 companyAfter = companiesHouse.companyTokenBalances(id, address(mockUSDT));
@@ -244,7 +258,7 @@ contract CompaniesHouseTest is BaseTest {
         uint256 expectedUSDT = grossUSDT * 9_500 / 10_000; // 5% protocol fee
 
         vm.prank(founder);
-        companiesHouse.payEmployee(employee1, id);
+        payrollExecutor.payEmployee(employee1, id);
 
         assertEq(mockUSDT.balanceOf(employee1), expectedUSDT, "USDT amount should match salary formula");
     }
@@ -264,7 +278,7 @@ contract CompaniesHouseTest is BaseTest {
         emit CompaniesHouseV1.EmployeePaid(employee1, expectedUSDT);
 
         vm.prank(founder);
-        companiesHouse.payEmployee(employee1, id);
+        payrollExecutor.payEmployee(employee1, id);
     }
 
     function test_PayEmployee_UpdatesLastPayDate() public {
@@ -275,12 +289,12 @@ contract CompaniesHouseTest is BaseTest {
         vm.warp(block.timestamp + 730 hours);
 
         vm.prank(founder);
-        companiesHouse.payEmployee(employee1, id);
+        payrollExecutor.payEmployee(employee1, id);
 
         // Second call immediately should revert — nothing owed yet
         vm.prank(founder);
-        vm.expectRevert(CompaniesHouseV1.NothingToPay.selector);
-        companiesHouse.payEmployee(employee1, id);
+        vm.expectRevert(PayrollExecutor.NothingToPay.selector);
+        payrollExecutor.payEmployee(employee1, id);
     }
 
     function test_PayEmployee_NothingOwed_Reverts() public {
@@ -290,8 +304,8 @@ contract CompaniesHouseTest is BaseTest {
 
         // No time has passed → 0 USDT owed
         vm.prank(founder);
-        vm.expectRevert(CompaniesHouseV1.NothingToPay.selector);
-        companiesHouse.payEmployee(employee1, id);
+        vm.expectRevert(PayrollExecutor.NothingToPay.selector);
+        payrollExecutor.payEmployee(employee1, id);
     }
 
     function test_PayEmployee_BelowReserve_Reverts() public {
@@ -306,8 +320,8 @@ contract CompaniesHouseTest is BaseTest {
         vm.warp(block.timestamp + 730 hours);
 
         vm.prank(founder);
-        vm.expectRevert(CompaniesHouseV1.BelowReserve.selector);
-        companiesHouse.payEmployee(employee1, id);
+        vm.expectRevert(PayrollExecutor.ReserveTooLow.selector);
+        payrollExecutor.payEmployee(employee1, id);
     }
 
     function test_PayEmployee_ExactlyAtReserve_Passes() public {
@@ -323,7 +337,7 @@ contract CompaniesHouseTest is BaseTest {
         _depositUSDT(id, totalUSDT + reserve);
 
         vm.prank(founder);
-        companiesHouse.payEmployee(employee1, id); // should not revert
+        payrollExecutor.payEmployee(employee1, id); // should not revert
         assertEq(mockUSDT.balanceOf(employee1), totalUSDT * 9_500 / 10_000, "Employee receives net USDT owed (after 5% fee)");
     }
 
@@ -336,8 +350,8 @@ contract CompaniesHouseTest is BaseTest {
 
         address stranger = makeAddr("stranger");
         vm.prank(stranger);
-        vm.expectRevert(CompaniesHouseV1.NotAuthorized.selector);
-        companiesHouse.payEmployee(employee1, id);
+        vm.expectRevert(PayrollExecutor.NotAuthorized.selector);
+        payrollExecutor.payEmployee(employee1, id);
     }
 
     // ── Tests: payEmployees (batch) ────────────────────────────────────────────
@@ -356,7 +370,7 @@ contract CompaniesHouseTest is BaseTest {
         uint256 employeeBefore = mockUSDT.balanceOf(employee1);
 
         vm.prank(founder);
-        companiesHouse.payEmployees(id);
+        payrollExecutor.payEmployees(id);
 
         assertGt(mockUSDT.balanceOf(founder),   founderBefore,   "Founder should be paid in USDT");
         assertGt(mockUSDT.balanceOf(employee1), employeeBefore, "Employee should be paid in USDT");
@@ -371,7 +385,7 @@ contract CompaniesHouseTest is BaseTest {
         uint256 founderBefore = mockUSDT.balanceOf(founder);
 
         vm.prank(stranger); // anyone can trigger payroll
-        companiesHouse.payEmployees(id);
+        payrollExecutor.payEmployees(id);
 
         assertGt(mockUSDT.balanceOf(founder), founderBefore, "Founder should be paid");
     }
@@ -388,7 +402,7 @@ contract CompaniesHouseTest is BaseTest {
         vm.warp(block.timestamp + 730 hours);
 
         vm.prank(founder);
-        companiesHouse.payEmployees(id); // should not revert even though employee1 is inactive
+        payrollExecutor.payEmployees(id); // should not revert even though employee1 is inactive
 
         assertEq(mockUSDT.balanceOf(employee1), 0, "Fired employee should receive nothing");
     }
@@ -548,7 +562,7 @@ contract CompaniesHouseTest is BaseTest {
         uint256 pendingBefore = companiesHouse.getTotalPendingUSDT(id);
 
         vm.prank(founder);
-        companiesHouse.payEmployee(employee1, id);
+        payrollExecutor.payEmployee(employee1, id);
 
         assertApproxEqAbs(
             mockUSDT.balanceOf(employee1) - balanceBefore,
@@ -583,7 +597,7 @@ contract CompaniesHouseTest is BaseTest {
         uint256 balanceBefore = mockUSDT.balanceOf(employee1);
 
         vm.prank(founder);
-        companiesHouse.payEmployees(id);
+        payrollExecutor.payEmployees(id);
 
         // Employee received more than salary alone (bonus included)
         uint256 salaryOnly = HOURLY_SALARY * 30 days / 1 hours;
@@ -640,7 +654,7 @@ contract CompaniesHouseTest is BaseTest {
 
         // employee1 (level 3) pays eng2 (level 3) — should succeed
         vm.prank(employee1);
-        companiesHouse.payEmployee(eng2, id);
+        payrollExecutor.payEmployee(eng2, id);
     }
 
     /// @dev Level 3 (Engineer) cannot fire another Level 3 (Engineer) — STRICT rule.
@@ -761,7 +775,7 @@ contract CompaniesHouseTest is BaseTest {
         uint256 founderBefore  = mockUSDT.balanceOf(founder);
         uint256 employee1Before = mockUSDT.balanceOf(employee1);
 
-        companiesHouse.payEmployees(id);
+        payrollExecutor.payEmployees(id);
 
         // Each employee receives exactly their netUSDT from the preview
         uint256 founderPreviewNet;
@@ -804,7 +818,7 @@ contract CompaniesHouseTest is BaseTest {
         uint256 employee1Before = mockUSDT.balanceOf(employee1);
 
         // Pay only index 0 (founder)
-        companiesHouse.payEmployeesBatch(id, 0, 1);
+        payrollExecutor.payEmployeesBatch(id, 0, 1);
 
         assertGt(mockUSDT.balanceOf(founder),    founderBefore,   "Founder should be paid");
         assertEq(mockUSDT.balanceOf(employee1), employee1Before, "Employee1 should NOT be paid yet");
@@ -825,7 +839,7 @@ contract CompaniesHouseTest is BaseTest {
         uint256 employee1Before = mockUSDT.balanceOf(employee1);
 
         CompaniesHouseV1.CompanyStruct memory co = companiesHouse.retrieveCompany(id);
-        companiesHouse.payEmployeesBatch(id, 0, co.employees.length);
+        payrollExecutor.payEmployeesBatch(id, 0, co.employees.length);
 
         assertGt(mockUSDT.balanceOf(founder),    founderBefore,   "Founder should be paid");
         assertGt(mockUSDT.balanceOf(employee1), employee1Before, "Employee1 should be paid");
@@ -840,7 +854,7 @@ contract CompaniesHouseTest is BaseTest {
         vm.warp(block.timestamp + 730 hours);
         _depositUSDT(id, _requiredUSDT(id, MONTHLY_SALARY) + 1_000e6);
 
-        vm.expectRevert(CompaniesHouseV1.BatchIndexInvalid.selector);
-        companiesHouse.payEmployeesBatch(id, 0, 999);
+        vm.expectRevert(PayrollExecutor.BatchIndexInvalid.selector);
+        payrollExecutor.payEmployeesBatch(id, 0, 999);
     }
 }

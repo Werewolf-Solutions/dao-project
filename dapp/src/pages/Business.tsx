@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useAccount, useBalance, useChainId, useReadContract, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi';
 import { formatEther, parseUnits } from 'viem';
 import { theme } from '@/contexts/ThemeContext';
-import { companiesHouseABI, erc20ABI, getAddress } from '@/contracts';
+import { companiesHouseABI, payrollExecutorABI, erc20ABI, getAddress } from '@/contracts';
 import { useWLFPrice } from '@/hooks/useWLFPrice';
 import { monthlyUSDToHourlyWei, hourlyWeiToMonthlyUSD, fmtUSDT, fmtWLF, usdtToWlf, fmtMonths } from '@/utils/formatters';
 
@@ -351,6 +351,9 @@ function EmployeeCard({
   wlfPrice,
   connectedAddress,
   companiesHouseAddress,
+  payrollExecutorAddress,
+  nonWlfFeeBps,
+  wlfFeeBps,
   onRefetch,
 }: {
   employee: Employee;
@@ -361,6 +364,9 @@ function EmployeeCard({
   wlfPrice: bigint;
   connectedAddress: `0x${string}`;
   companiesHouseAddress: `0x${string}`;
+  payrollExecutorAddress: `0x${string}` | undefined;
+  nonWlfFeeBps: bigint;
+  wlfFeeBps: bigint;
   onRefetch: () => void;
 }) {
   // Effective level of this employee (min role level across all salary streams; 99 = no role)
@@ -466,8 +472,8 @@ function EmployeeCard({
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const result = await (publicClient!.simulateContract as any)({
-        address: companiesHouseAddress,
-        abi: companiesHouseABI,
+        address: payrollExecutorAddress ?? companiesHouseAddress,
+        abi: payrollExecutorABI,
         functionName: 'payEmployee',
         args: [employee.employeeId, company.companyId],
         account: connectedAddress,
@@ -615,16 +621,16 @@ function EmployeeCard({
                   {isPending ? 'Confirm…' : isMining ? 'Processing…' : `Pay ${employee.name.split(' ')[0]}`}
                 </button>
                 <span
-                  title="WLF payment option is coming in a future version"
+                  title={`WLF payment option is coming in a future version (${Number(wlfFeeBps) / 100}% fee)`}
                   className="px-2 py-0.5 rounded text-xs bg-white/5 text-white/20 cursor-not-allowed select-none"
                 >
                   WLF soon™
                 </span>
               </div>
             )}
-            {canPayOrSubmit && canPay && (
+            {canPayOrSubmit && canPay && nonWlfFeeBps > 0n && (
               <p className="text-xs text-white/25 mt-1">
-                Fee: ${fmtUSDT(totalPendingUSDT * 500n / 10_000n)} USDT (5%) → employee receives ${fmtUSDT(totalPendingUSDT * 9_500n / 10_000n)}
+                Fee: ${fmtUSDT(totalPendingUSDT * nonWlfFeeBps / 10_000n)} USDT ({Number(nonWlfFeeBps) / 100}%) → employee receives ${fmtUSDT(totalPendingUSDT * (10_000n - nonWlfFeeBps) / 10_000n)}
               </p>
             )}
           </div>
@@ -1157,6 +1163,7 @@ function CompanyCard({
   companyId,
   address,
   companiesHouseAddress,
+  payrollExecutorAddress,
   usdtAddress,
   defiUsdtAddress,
   wlfAddress,
@@ -1166,6 +1173,7 @@ function CompanyCard({
   companyId: bigint;
   address: `0x${string}`;
   companiesHouseAddress: `0x${string}`;
+  payrollExecutorAddress: `0x${string}` | undefined;
   usdtAddress: `0x${string}` | undefined;
   defiUsdtAddress: `0x${string}` | undefined;
   wlfAddress: `0x${string}` | undefined;
@@ -1254,6 +1262,23 @@ function CompanyCard({
     query: { refetchInterval: 60_000 },
   });
   const minResMo = minReserveMonthsData !== undefined ? Number(minReserveMonthsData) : undefined;
+
+  const { data: nonWlfFeeBpsData } = useReadContract({
+    address: companiesHouseAddress,
+    abi: companiesHouseABI,
+    functionName: 'nonWlfFeeBps',
+    query: { refetchInterval: 60_000 },
+  });
+  const { data: wlfFeeBpsData } = useReadContract({
+    address: companiesHouseAddress,
+    abi: companiesHouseABI,
+    functionName: 'wlfFeeBps',
+    query: { refetchInterval: 60_000 },
+  });
+  const nonWlfFeeBps = nonWlfFeeBpsData ?? 500n;
+  const wlfFeeBps    = wlfFeeBpsData    ?? 50n;
+  const nonWlfFeePct = `${(Number(nonWlfFeeBps) / 100).toFixed(1).replace(/\.0$/, '')}%`;
+  const wlfFeePct    = `${(Number(wlfFeeBps)    / 100).toFixed(1).replace(/\.0$/, '')}%`;
 
   const { data: previewData, isFetching: isPreviewFetching, refetch: refetchPreview } = useReadContract({
     address: companiesHouseAddress,
@@ -1356,8 +1381,8 @@ function CompanyCard({
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const result = await (publicClientCompany!.simulateContract as any)({
-        address: companiesHouseAddress,
-        abi: companiesHouseABI,
+        address: payrollExecutorAddress ?? companiesHouseAddress,
+        abi: payrollExecutorABI,
         functionName: 'payEmployees',
         args: [companyId],
         account: address,
@@ -1387,8 +1412,8 @@ function CompanyCard({
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const result = await (publicClientCompany!.simulateContract as any)({
-        address: companiesHouseAddress,
-        abi: companiesHouseABI,
+        address: payrollExecutorAddress ?? companiesHouseAddress,
+        abi: payrollExecutorABI,
         functionName: 'payEmployeesBatch',
         args: [companyId, fromIndex, toIndex],
         account: address,
@@ -1742,7 +1767,7 @@ function CompanyCard({
                     <tr className="text-white/40 border-b border-white/10">
                       <th className="text-left pb-1.5 font-medium">Employee</th>
                       <th className="text-right pb-1.5 font-medium">Gross</th>
-                      <th className="text-right pb-1.5 font-medium">Fee (5%)</th>
+                      <th className="text-right pb-1.5 font-medium">Fee ({nonWlfFeePct})</th>
                       <th className="text-right pb-1.5 font-medium">Net</th>
                     </tr>
                   </thead>
@@ -1841,6 +1866,9 @@ function CompanyCard({
             wlfPrice={wlfPrice}
             connectedAddress={address}
             companiesHouseAddress={companiesHouseAddress}
+            payrollExecutorAddress={payrollExecutorAddress}
+            nonWlfFeeBps={nonWlfFeeBps}
+            wlfFeeBps={wlfFeeBps}
             onRefetch={refetchAll}
           />
         ))}
@@ -1879,6 +1907,7 @@ export default function Business() {
   const wlfPrice = wlfPriceHuman !== null ? BigInt(Math.round(wlfPriceHuman * 1e18)) : 0n;
 
   const companiesHouseAddress = getAddress(chainId, 'CompaniesHouse');
+  const payrollExecutorAddress = getAddress(chainId, 'PayrollExecutor');
   const wlfAddress = getAddress(chainId, 'WerewolfToken');
   const usdtAddress = getAddress(chainId, 'USDT');
   const defiUsdtAddress = getAddress(chainId, 'AaveUSDT') ?? getAddress(chainId, 'AaveToken');
@@ -1919,6 +1948,7 @@ export default function Business() {
         companyId={companyId}
         address={address}
         companiesHouseAddress={companiesHouseAddress}
+        payrollExecutorAddress={payrollExecutorAddress}
         usdtAddress={usdtAddress}
         defiUsdtAddress={defiUsdtAddress}
         wlfAddress={wlfAddress}

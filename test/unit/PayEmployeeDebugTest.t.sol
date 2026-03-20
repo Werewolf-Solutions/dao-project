@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {Test, console} from "forge-std/Test.sol";
 import {BaseTest} from "../BaseTest.t.sol";
 import {CompaniesHouseV1} from "../../src/CompaniesHouseV1.sol";
+import {PayrollExecutor} from "../../src/PayrollExecutor.sol";
 import {MockSwapRouter} from "../mocks/MockSwapRouter.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
@@ -16,6 +17,7 @@ import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transpa
 contract PayEmployeeDebugTest is BaseTest {
 
     CompaniesHouseV1 companiesHouse;
+    PayrollExecutor  payrollExecutor;
     MockSwapRouter   mockSwapRouter;
 
     address employee1 = makeAddr("employee1");
@@ -55,6 +57,13 @@ contract PayEmployeeDebugTest is BaseTest {
         );
         address proxy = address(new TransparentUpgradeableProxy(address(impl), multiSig, initData));
         companiesHouse = CompaniesHouseV1(proxy);
+
+        PayrollExecutor peImpl = new PayrollExecutor();
+        bytes memory peInitData = abi.encodeWithSelector(PayrollExecutor.initialize.selector, address(companiesHouse), founder);
+        address peProxy = address(new TransparentUpgradeableProxy(address(peImpl), multiSig, peInitData));
+        payrollExecutor = PayrollExecutor(peProxy);
+        vm.prank(founder);
+        companiesHouse.setPayrollExecutor(address(payrollExecutor));
 
         vm.startPrank(address(timelock));
         werewolfToken.airdrop(founder,                 FOUNDER_WLF);
@@ -234,7 +243,7 @@ contract PayEmployeeDebugTest is BaseTest {
 
         uint256 emp1Before = werewolfToken.balanceOf(employee1);
         vm.prank(founder);
-        companiesHouse.payEmployee(employee1, companyId);
+        payrollExecutor.payEmployee(employee1, companyId);
 
         uint256 emp1After = werewolfToken.balanceOf(employee1);
         console.log("[result] employee1 WLF received:", emp1After - emp1Before);
@@ -261,7 +270,7 @@ contract PayEmployeeDebugTest is BaseTest {
 
         uint256 emp1Before = werewolfToken.balanceOf(employee1);
         vm.prank(founder);
-        companiesHouse.payEmployee(employee1, companyId);
+        payrollExecutor.payEmployee(employee1, companyId);
 
         uint256 emp1After = werewolfToken.balanceOf(employee1);
         console.log("[result] employee1 WLF received:", emp1After - emp1Before);
@@ -284,8 +293,8 @@ contract PayEmployeeDebugTest is BaseTest {
         _logState("PATH B RESERVE FAIL: expected shortfall shown above", companyId, employee1);
 
         vm.prank(founder);
-        vm.expectRevert(CompaniesHouseV1.BelowReserve.selector);
-        companiesHouse.payEmployee(employee1, companyId);
+        vm.expectRevert(PayrollExecutor.ReserveTooLow.selector);
+        payrollExecutor.payEmployee(employee1, companyId);
         console.log("PATH B RESERVE FAIL TEST: PASSED (revert confirmed)");
     }
 
@@ -321,7 +330,7 @@ contract PayEmployeeDebugTest is BaseTest {
 
         uint256 emp1Before = werewolfToken.balanceOf(employee1);
         vm.prank(founder);
-        companiesHouse.payEmployees(companyId);
+        payrollExecutor.payEmployees(companyId);
 
         uint256 emp1After = werewolfToken.balanceOf(employee1);
         console.log("[result] employee1 WLF received:", emp1After - emp1Before);

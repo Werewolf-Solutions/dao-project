@@ -133,35 +133,58 @@ export const companiesHouseABI = [
   },
   {
     "type": "function",
-    "name": "payEmployee",
+    "name": "setPayrollExecutor",
     "inputs": [
-      { "name": "_employeeAddress", "type": "address", "internalType": "address" },
-      { "name": "_companyId",       "type": "uint96",  "internalType": "uint96"  }
+      { "name": "_payrollExecutor", "type": "address", "internalType": "address" }
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
     "type": "function",
-    "name": "payEmployeeWithTokens",
-    "inputs": [
-      { "name": "_employeeAddress", "type": "address",  "internalType": "address" },
-      { "name": "_companyId",       "type": "uint96",   "internalType": "uint96"  },
-      { "name": "_usdtAmount",      "type": "uint256",  "internalType": "uint256" },
-      { "name": "_wlfToken",        "type": "address",  "internalType": "address" },
-      { "name": "_wlfAmount",       "type": "uint256",  "internalType": "uint256" }
+    "name": "payrollExecutor",
+    "inputs": [],
+    "outputs": [
+      { "name": "", "type": "address", "internalType": "address" }
     ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "view"
   },
   {
     "type": "function",
-    "name": "payEmployees",
+    "name": "canPayEmployee",
     "inputs": [
-      { "name": "_companyId", "type": "uint96", "internalType": "uint96" }
+      { "name": "caller",    "type": "address", "internalType": "address" },
+      { "name": "employee",  "type": "address", "internalType": "address" },
+      { "name": "companyId", "type": "uint96",  "internalType": "uint96"  }
     ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
+    "outputs": [
+      { "name": "", "type": "bool", "internalType": "bool" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "calcEmployeeGross",
+    "inputs": [
+      { "name": "employee",  "type": "address", "internalType": "address" },
+      { "name": "companyId", "type": "uint96",  "internalType": "uint96"  }
+    ],
+    "outputs": [
+      { "name": "", "type": "uint256", "internalType": "uint256" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "checkCanPay",
+    "inputs": [
+      { "name": "companyId", "type": "uint96",  "internalType": "uint96"  },
+      { "name": "amount",    "type": "uint256", "internalType": "uint256" }
+    ],
+    "outputs": [
+      { "name": "", "type": "bool", "internalType": "bool" }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -425,17 +448,6 @@ export const companiesHouseABI = [
       { "name": "totalNet", "type": "uint256", "internalType": "uint256" }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "payEmployeesBatch",
-    "inputs": [
-      { "name": "_companyId", "type": "uint96", "internalType": "uint96" },
-      { "name": "fromIndex", "type": "uint256", "internalType": "uint256" },
-      { "name": "toIndex", "type": "uint256", "internalType": "uint256" }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",

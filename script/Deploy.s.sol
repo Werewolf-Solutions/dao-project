@@ -14,6 +14,7 @@ import {Staking} from "../src/Staking.sol";
 import {LPStaking} from "../src/LPStaking.sol";
 import {UniswapHelper} from "../src/UniswapHelper.sol";
 import {CompaniesHouseV1} from "../src/CompaniesHouseV1.sol";
+import {PayrollExecutor} from "../src/PayrollExecutor.sol";
 import {CompanyVault} from "../src/CompanyVault.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {UpgradeableBeacon} from "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
@@ -49,6 +50,7 @@ contract Deploy is Script {
     TokenSale tokenSale;
     UniswapHelper uniswapHelper;
     CompaniesHouseV1 companiesHouse;
+    PayrollExecutor payrollExecutor;
     address companyVaultImpl;
 
 
@@ -114,6 +116,9 @@ contract Deploy is Script {
         // Deploy CompaniesHouseV1
         _deployCompaniesHouse();
 
+        // Deploy PayrollExecutor and wire it into CompaniesHouseV1
+        _deployPayrollExecutor();
+
         // Authorize CompaniesHouseV1 to pay DAO company employees from Treasury
         treasury.setCompaniesHouse(address(companiesHouse));
 
@@ -170,6 +175,7 @@ contract Deploy is Script {
         treasury.transferOwnership(address(timelock));
         tokenSale.transferOwnership(address(timelock));
         staking.transferOwnership(address(timelock));
+        payrollExecutor.setAdmin(address(timelock));
 
         // Transfer Timelock admin to DAO (must be last action as founder)
         // setPendingAdmin now accepts msg.sender == admin, no queue needed
@@ -235,6 +241,23 @@ contract Deploy is Script {
         companiesHouse = CompaniesHouseV1(address(companiesHouseProxy));
         // Admin starts as founder so we can call setDaoCompanyId after createCompany.
         // Transferred to Timelock at end of _createDaoCompany().
+    }
+
+    function _deployPayrollExecutor() internal {
+        PayrollExecutor payrollExecutorImpl = new PayrollExecutor();
+        bytes memory initData = abi.encodeWithSelector(
+            PayrollExecutor.initialize.selector,
+            address(companiesHouse),
+            founder  // admin starts as founder; transferred to Timelock at end of run()
+        );
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(
+            address(payrollExecutorImpl),
+            netConfig.multiSig,
+            initData
+        );
+        payrollExecutor = PayrollExecutor(address(proxy));
+        companiesHouse.setPayrollExecutor(address(payrollExecutor));
+        console.log("PayrollExecutor:     ", address(payrollExecutor));
     }
 
     function _deployCompanyVault() internal {
@@ -409,6 +432,10 @@ contract Deploy is Script {
         // 6. Set DAO company reserve to 6 months (admin still = founder here)
         companiesHouse.setCompanyReserveMonths(daoId, 6);
 
+        // 6b. Confirm protocol fee rates (initialize already sets these; explicit here for clarity)
+        //     50 bps = 0.5% on WLF payments, 500 bps = 5% on USDT payments
+        companiesHouse.setFees(50, 500);
+
         // 7. Transfer CompaniesHouse admin to Timelock
         companiesHouse.setAdmin(address(timelock));
 
@@ -538,6 +565,12 @@ contract Deploy is Script {
             vm.toString(address(companiesHouse))
         );
         vm.writeLine(path, companiesHouseStr);
+
+        string memory payrollExecutorStr = string.concat(
+            "PayrollExecutor:",
+            vm.toString(address(payrollExecutor))
+        );
+        vm.writeLine(path, payrollExecutorStr);
 
         string memory companyVaultImplStr = string.concat(
             "CompanyVaultImpl:",

@@ -245,7 +245,10 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     /// @notice Per-company minimum reserve months override. 0 = fall back to global minReserveMonths.
     mapping(uint96 => uint256) public companyReserveMonths;
 
-    uint256[25] private __gap;
+    /// @notice PayrollExecutor proxy — authorized to call executeQueuedPayment and executeTokenPayment
+    address public payrollExecutor;
+
+    uint256[24] private __gap;
 
     ///////////////////////////////////////
     //           Events                  //
@@ -286,6 +289,11 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
 
     modifier onlyCompanyDefi() {
         if (msg.sender != companyDefi) revert NotAuthorized();
+        _;
+    }
+
+    modifier onlyPayrollExecutor() {
+        if (msg.sender != payrollExecutor) revert NotAuthorized();
         _;
     }
 
@@ -522,6 +530,160 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     }
 
     /**
+     * @notice Sets the PayrollExecutor contract address.
+     * @dev onlyAdmin. Must be called after deploying PayrollExecutor to enable payroll operations.
+     *      PayrollExecutor is then authorized to call executeQueuedPayment and executeTokenPayment.
+     */
+    function setPayrollExecutor(address _payrollExecutor) external onlyAdmin {
+        payrollExecutor = _payrollExecutor;
+    }
+
+    /**
+     * @notice Returns whether `caller` is authorized to trigger payment for `employee` in `companyId`.
+     * @dev Wraps the LENIENT auth rule. Used by PayrollExecutor before executing payments.
+     * @return true if caller has LENIENT authority over employee in the company
+     */
+    function canPayEmployee(
+        address caller,
+        address employee,
+        uint96 companyId
+    ) external view returns (bool) {
+        return _canOperateOn(caller, employee, companyId, AuthRule.LENIENT);
+    }
+
+    /**
+     * @notice Returns the total USDT gross owed to one employee right now.
+     * @dev Used by PayrollExecutor for immediate-pay flows. Returns 0 if employee is not a member.
+     * @param employee  Employee address
+     * @param companyId Company the employee belongs to
+     * @return gross Total USDT (6 dec) owed: accrued salary + all pending earnings
+     */
+    function calcEmployeeGross(
+        address employee,
+        uint96 companyId
+    ) external view returns (uint256 gross) {
+        EmployeeBrief memory empBrief = employeeBrief[employee][companyId];
+        if (!empBrief.isMember) return 0;
+        CompanyBrief memory compBrief = companyBrief[companyId];
+        Employee storage emp = ownerToCompanies[compBrief.owner][compBrief.index].employees[empBrief.employeeIndex];
+        if (!emp.active) return 0;
+        return _calcEmployeeGross(emp);
+    }
+
+    /**
+     * @notice Returns whether the company can afford to pay `amount` USDT while maintaining reserve.
+     * @dev PayrollExecutor uses this before queuePayroll to avoid queuing unpayable payrolls.
+     * @return true if stableBalance >= amount + requiredReserve
+     */
+    function checkCanPay(uint96 companyId, uint256 amount) external view returns (bool) {
+        return _stableBalance(companyId) >= amount + getRequiredReserveUSDT(companyId);
+    }
+
+    /**
+     * @notice Executes a single queued payment — transfers USDT to employee, fees to treasury.
+     * @dev onlyPayrollExecutor. Sets lastPayDate to snapshotTimestamp (not block.timestamp) to
+     *      honor the locked snapshot. Drains pendingEarnings submitted at or before snapshotTimestamp,
+     *      preserving newer entries for the next pay cycle.
+     * @param companyId         Company running payroll
+     * @param employee          Employee address (resolved via employeeBrief)
+     * @param grossUSDT         Amount locked at snapshot time (from previewPayroll)
+     * @param snapshotTimestamp block.timestamp when queuePayroll() was called
+     */
+    function executeQueuedPayment(
+        uint96 companyId,
+        address employee,
+        uint256 grossUSDT,
+        uint256 snapshotTimestamp
+    ) external onlyPayrollExecutor {
+        if (companyBrief[companyId].owner == address(0)) revert CompanyNotFound();
+        if (grossUSDT == 0) revert NothingToPay();
+        if (companyTokenBalances[companyId][usdtAddress] < grossUSDT) revert BelowReserve();
+
+        Employee storage s_emp = _loadEmployee(employee, companyId);
+
+        // Set lastPayDate to snapshotTimestamp across all salary streams
+        for (uint256 i = 0; i < s_emp.salaryItems.length; i++) {
+            s_emp.salaryItems[i].lastPayDate = snapshotTimestamp;
+        }
+
+        // Drain pendingEarnings submitted at or before snapshotTimestamp; preserve newer ones
+        uint256 writeIdx;
+        uint256 originalLen = s_emp.pendingEarnings.length;
+        for (uint256 i = 0; i < originalLen; i++) {
+            if (s_emp.pendingEarnings[i].submittedAt > snapshotTimestamp) {
+                if (writeIdx != i) s_emp.pendingEarnings[writeIdx] = s_emp.pendingEarnings[i];
+                writeIdx++;
+            }
+        }
+        for (uint256 i = writeIdx; i < originalLen; i++) {
+            s_emp.pendingEarnings.pop();
+        }
+
+        companyTokenBalances[companyId][usdtAddress] -= grossUSDT;
+
+        bool isDao = daoCompanyId > 0 && companyId == daoCompanyId;
+        if (isDao) {
+            IERC20(usdtAddress).transfer(s_emp.payableAddress, grossUSDT);
+            emit EmployeePaid(s_emp.employeeId, grossUSDT);
+        } else {
+            uint256 fee    = grossUSDT * nonWlfFeeBps / 10_000;
+            uint256 netPay = grossUSDT - fee;
+            if (fee > 0) IERC20(usdtAddress).transfer(treasuryAddress, fee);
+            IERC20(usdtAddress).transfer(s_emp.payableAddress, netPay);
+            emit EmployeePaid(s_emp.employeeId, netPay);
+            if (fee > 0) emit ProtocolFeePaid(companyId, usdtAddress, fee);
+        }
+    }
+
+    /**
+     * @notice Executes a mixed USDT + WLF payment for an employee.
+     * @dev onlyPayrollExecutor. Sets lastPayDate to payTimestamp. Either amount may be zero.
+     *      The USDT portion is subject to the minimum reserve check (checked by PayrollExecutor before calling).
+     * @param companyId   Company running payroll
+     * @param employee    Employee address
+     * @param usdtAmount  USDT (6 dec) to pay from company balance
+     * @param wlfToken    WLF token address (ignored when wlfAmount == 0)
+     * @param wlfAmount   WLF (18 dec) to pay from company balance
+     * @param payTimestamp block.timestamp at time of PayrollExecutor call
+     */
+    function executeTokenPayment(
+        uint96 companyId,
+        address employee,
+        uint256 usdtAmount,
+        address wlfToken,
+        uint256 wlfAmount,
+        uint256 payTimestamp
+    ) external onlyPayrollExecutor {
+        if (usdtAmount == 0 && wlfAmount == 0) revert NothingToPay();
+        if (usdtAmount > 0 && companyTokenBalances[companyId][usdtAddress] < usdtAmount) revert BelowReserve();
+        if (wlfAmount > 0 && companyTokenBalances[companyId][wlfToken] < wlfAmount) revert InsufficientWLF();
+
+        Employee storage s_emp = _loadEmployee(employee, companyId);
+        if (!s_emp.active) revert NotAuthorized();
+
+        for (uint256 i = 0; i < s_emp.salaryItems.length; i++) {
+            s_emp.salaryItems[i].lastPayDate = payTimestamp;
+        }
+
+        if (usdtAmount > 0) companyTokenBalances[companyId][usdtAddress] -= usdtAmount;
+        if (wlfAmount  > 0) companyTokenBalances[companyId][wlfToken]    -= wlfAmount;
+
+        uint256 usdtFee = usdtAmount > 0 ? usdtAmount * nonWlfFeeBps / 10_000 : 0;
+        uint256 usdtNet = usdtAmount - usdtFee;
+        uint256 wlfFee  = wlfAmount  > 0 ? wlfAmount  * wlfFeeBps    / 10_000 : 0;
+        uint256 wlfNet  = wlfAmount  - wlfFee;
+
+        if (usdtFee > 0) IERC20(usdtAddress).transfer(treasuryAddress, usdtFee);
+        if (usdtNet > 0) IERC20(usdtAddress).transfer(s_emp.payableAddress, usdtNet);
+        if (wlfFee  > 0) IERC20(wlfToken).transfer(treasuryAddress, wlfFee);
+        if (wlfNet  > 0) IERC20(wlfToken).transfer(s_emp.payableAddress, wlfNet);
+
+        emit EmployeePaid(employee, usdtNet);
+        if (usdtFee > 0) emit ProtocolFeePaid(companyId, usdtAddress, usdtFee);
+        if (wlfFee  > 0) emit ProtocolFeePaid(companyId, wlfToken,   wlfFee);
+    }
+
+    /**
      * @notice Emergency pause — halts employee hiring, payments, and company creation.
      * @dev Callable by admin.
      */
@@ -535,35 +697,6 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
      */
     function unpause() external onlyAdmin {
         _unpause();
-    }
-
-    /**
-     * @notice Pays all active employees in a company in one transaction.
-     * @dev Performs a single reserve check against the total batch amount before paying
-     *      anyone, so the balance drawdown from earlier payments does not block later ones.
-     */
-    function payEmployees(uint96 _companyId) external whenNotPaused {
-        if (companyBrief[_companyId].owner == address(0)) revert CompanyNotFound();
-        CompanyBrief memory compBrief = companyBrief[_companyId];
-        _payBatch(_companyId, 0, ownerToCompanies[compBrief.owner][compBrief.index].employees.length);
-    }
-
-    /**
-     * @notice Pays a contiguous slice of employees in a single transaction.
-     * @dev    Intended for companies with large employee counts that would exceed block
-     *         gas limits in a single payEmployees() call. Indices are into the raw
-     *         employees array (including inactive employees); inactive entries are
-     *         skipped automatically.
-     * @param _companyId  The company to run payroll for.
-     * @param fromIndex   First employee array index to include (inclusive).
-     * @param toIndex     Last employee array index to include (exclusive).
-     */
-    function payEmployeesBatch(uint96 _companyId, uint256 fromIndex, uint256 toIndex) external whenNotPaused {
-        if (companyBrief[_companyId].owner == address(0)) revert CompanyNotFound();
-        if (fromIndex >= toIndex) revert BatchIndexInvalid();
-        CompanyBrief memory compBrief = companyBrief[_companyId];
-        if (toIndex > ownerToCompanies[compBrief.owner][compBrief.index].employees.length) revert BatchIndexInvalid();
-        _payBatch(_companyId, fromIndex, toIndex);
     }
 
     ///////////////////////////////////////
@@ -820,84 +953,6 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     }
 
     /**
-     * @notice Pays all pending salary to an employee directly in USDT.
-     * @dev The company must hold at least totalUSDT + (monthlyBurn × minReserveMonths) USDT
-     *      after the payment. Salary is transferred directly from the company's internal
-     *      USDT balance to the employee's payable address.
-     *
-     *      WLF payment option (direct or via Uniswap swap) is planned for a future version.
-     *
-     * @param _employeeAddress the employee to pay
-     * @param _companyId company the employee belongs to
-     */
-    function payEmployee(address _employeeAddress, uint96 _companyId) external whenNotPaused {
-        if (!_canOperateOn(msg.sender, _employeeAddress, _companyId, AuthRule.LENIENT)) revert NotAuthorized();
-
-        Employee storage s_emp = _loadEmployee(_employeeAddress, _companyId);
-        if (!s_emp.active) revert NotAuthorized();
-
-        uint256 gross = _calcEmployeeGross(s_emp);
-        if (gross == 0) revert NothingToPay();
-        _checkReserve(_companyId, gross);
-
-        _payEmployeeUSDT(s_emp, _companyId);
-    }
-
-    /**
-     * @notice Pays an employee with a split of USDT and/or WLF from the company's internal balances.
-     * @dev Either amount may be zero (pay entirely in one token). The USDT portion is subject to the
-     *      minimum reserve check; the WLF portion only requires sufficient company WLF balance.
-     *      Updates lastPayDate across all salary streams (same as payEmployee).
-     * @param _employeeAddress the employee to pay
-     * @param _companyId company the employee belongs to
-     * @param _usdtAmount USDT (6 dec) to pay from company balance
-     * @param _wlfToken WLF token address (ignored when _wlfAmount == 0)
-     * @param _wlfAmount WLF (18 dec) to pay from company balance
-     */
-    function payEmployeeWithTokens(
-        address _employeeAddress,
-        uint96 _companyId,
-        uint256 _usdtAmount,
-        address _wlfToken,
-        uint256 _wlfAmount
-    ) external {
-        if (!_canOperateOn(msg.sender, _employeeAddress, _companyId, AuthRule.LENIENT)) revert NotAuthorized();
-
-        Employee storage s_emp = _loadEmployee(_employeeAddress, _companyId);
-        if (!s_emp.active) revert NotAuthorized();
-        if (_usdtAmount == 0 && _wlfAmount == 0) revert NothingToPay();
-
-        // ── 1. Checks ────────────────────────────────────────────────────────
-        if (_usdtAmount > 0) _checkReserve(_companyId, _usdtAmount);
-        if (_wlfAmount > 0) {
-            if (companyTokenBalances[_companyId][_wlfToken] < _wlfAmount) revert InsufficientWLF();
-        }
-
-        // ── 2. Effects ────────────────────────────────────────────────────────
-        uint256 payTimestamp = block.timestamp;
-        for (uint256 i = 0; i < s_emp.salaryItems.length; i++) {
-            s_emp.salaryItems[i].lastPayDate = payTimestamp;
-        }
-        if (_usdtAmount > 0) companyTokenBalances[_companyId][usdtAddress] -= _usdtAmount;
-        if (_wlfAmount > 0) companyTokenBalances[_companyId][_wlfToken] -= _wlfAmount;
-
-        // ── 3. Interactions ───────────────────────────────────────────────────
-        uint256 usdtFee = _usdtAmount > 0 ? _usdtAmount * nonWlfFeeBps / 10_000 : 0;
-        uint256 usdtNet = _usdtAmount - usdtFee;
-        uint256 wlfFee  = _wlfAmount  > 0 ? _wlfAmount  * wlfFeeBps    / 10_000 : 0;
-        uint256 wlfNet  = _wlfAmount  - wlfFee;
-
-        if (usdtFee > 0) IERC20(usdtAddress).transfer(treasuryAddress, usdtFee);
-        if (usdtNet > 0) IERC20(usdtAddress).transfer(s_emp.payableAddress, usdtNet);
-        if (wlfFee  > 0) IERC20(_wlfToken).transfer(treasuryAddress, wlfFee);
-        if (wlfNet  > 0) IERC20(_wlfToken).transfer(s_emp.payableAddress, wlfNet);
-
-        emit EmployeePaid(_employeeAddress, usdtNet);
-        if (usdtFee > 0) emit ProtocolFeePaid(_companyId, usdtAddress, usdtFee);
-        if (wlfFee  > 0) emit ProtocolFeePaid(_companyId, _wlfToken,   wlfFee);
-    }
-
-    /**
      * @notice Updates the role string on a specific salary stream of an employee.
      * @param _salaryItemIndex index into the employee's salaryItems[] array
      */
@@ -1050,11 +1105,6 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     //         Internal Functions        //
     ///////////////////////////////////////
 
-    /// @dev Reverts if stable balance is below amount + required reserve.
-    function _checkReserve(uint96 _companyId, uint256 amount) internal view {
-        if (_stableBalance(_companyId) < amount + getRequiredReserveUSDT(_companyId)) revert BelowReserve();
-    }
-
     /// @dev Resolves employee storage from address + companyId, reverting if not a member.
     function _loadEmployee(address _employeeAddress, uint96 _companyId) internal view returns (Employee storage) {
         EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
@@ -1070,21 +1120,6 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         }
         for (uint256 j; j < emp.pendingEarnings.length; j++) {
             gross += emp.pendingEarnings[j].amount;
-        }
-    }
-
-    /// @dev Core batch-pay logic shared by payEmployees and payEmployeesBatch.
-    function _payBatch(uint96 _companyId, uint256 fromIndex, uint256 toIndex) internal {
-        CompanyBrief memory compBrief = companyBrief[_companyId];
-        Employee[] storage employees = ownerToCompanies[compBrief.owner][compBrief.index].employees;
-        uint256 total;
-        for (uint256 i = fromIndex; i < toIndex; i++) {
-            if (employees[i].active) total += _calcEmployeeGross(employees[i]);
-        }
-        if (total == 0) return;
-        _checkReserve(_companyId, total);
-        for (uint256 i = fromIndex; i < toIndex; i++) {
-            if (employees[i].active) _payEmployeeUSDT(employees[i], _companyId);
         }
     }
 
@@ -1193,38 +1228,6 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         }
     }
 
-    /**
-     * @dev Transfers all pending USDT to an employee. No auth or reserve checks —
-     *      callers are responsible for ensuring those invariants hold before calling.
-     */
-    function _payEmployeeUSDT(Employee storage s_emp, uint96 _companyId) internal {
-        uint256 totalUSDT;
-        uint256 payTimestamp = block.timestamp;
-        for (uint256 i = 0; i < s_emp.salaryItems.length; i++) {
-            totalUSDT += ((payTimestamp - s_emp.salaryItems[i].lastPayDate) * s_emp.salaryItems[i].salaryPerHour) / 1 hours;
-            s_emp.salaryItems[i].lastPayDate = payTimestamp;
-        }
-        for (uint256 i = 0; i < s_emp.pendingEarnings.length; i++) {
-            totalUSDT += s_emp.pendingEarnings[i].amount;
-        }
-        delete s_emp.pendingEarnings; // drain all discrete earnings on payment
-        if (totalUSDT == 0) return;
-
-        if (daoCompanyId > 0 && _companyId == daoCompanyId) {
-            // DAO company: pay from internal balance — no fee (would be circular)
-            companyTokenBalances[_companyId][usdtAddress] -= totalUSDT;
-            IERC20(usdtAddress).transfer(s_emp.payableAddress, totalUSDT);
-            emit EmployeePaid(s_emp.employeeId, totalUSDT);
-        } else {
-            uint256 fee    = totalUSDT * nonWlfFeeBps / 10_000;
-            uint256 netPay = totalUSDT - fee;
-            companyTokenBalances[_companyId][usdtAddress] -= totalUSDT;
-            if (fee > 0) IERC20(usdtAddress).transfer(treasuryAddress, fee);
-            IERC20(usdtAddress).transfer(s_emp.payableAddress, netPay);
-            emit EmployeePaid(s_emp.employeeId, netPay);
-            if (fee > 0) emit ProtocolFeePaid(_companyId, usdtAddress, fee);
-        }
-    }
 
 }
 
