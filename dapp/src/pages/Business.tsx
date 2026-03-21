@@ -1200,7 +1200,7 @@ function CompanyCard({
   const isPayBatchLoading = isPayBatchPending || isPayBatchMining;
   const publicClientCompany = usePublicClient();
 
-  useEffect(() => { if (isPayAllSuccess) { refetchCompany(); setPayAllError(null); } }, [isPayAllSuccess]);
+  useEffect(() => { if (isPayAllSuccess) { refetchCompany(); setPayAllError(null); setShowPayrollPreview(false); } }, [isPayAllSuccess]);
   useEffect(() => { if (isPayBatchSuccess) { refetchCompany(); setPayBatchError(null); refetchPreview(); } }, [isPayBatchSuccess]);
 
   const { writeContract: writeDelete, isPending: isDeletePending } = useWriteContract();
@@ -1372,9 +1372,11 @@ function CompanyCard({
       const elapsed = nowSec > item.lastPayDate ? nowSec - item.lastPayDate : 0n;
       return a + (elapsed * item.salaryPerHour) / 3600n;
     }, 0n);
-    return pending >= MIN_PAY_USDT;
+    // Employees with nothing owed are skipped by the contract — don't block others
+    return pending === 0n || pending >= MIN_PAY_USDT;
   });
-  const canPayAll = allAboveMinimum && companyBalance >= totalPendingAllUSDT + reserve;
+  const hasSomethingToPay = totalPendingAllUSDT > 0n;
+  const canPayAll = hasSomethingToPay && allAboveMinimum && companyBalance >= totalPendingAllUSDT + reserve;
 
   async function handlePayAll() {
     setPayAllError(null);
@@ -1737,23 +1739,48 @@ function CompanyCard({
             </p>
             {activeEmployees.length > 0 && totalPendingAllUSDT > 0n && (
               <p className="text-xs text-white/40 mt-0.5">
-                Total pending: ${fmtUSDT(totalPendingAllUSDT)} USDT
+                ${fmtUSDT(totalPendingAllUSDT)} gross
+                {nonWlfFeeBps > 0n && (
+                  <> · <span className="text-white/25">${fmtUSDT(totalPendingAllUSDT * nonWlfFeeBps / 10_000n)} fee</span> · <span className="text-green-400/60">${fmtUSDT(totalPendingAllUSDT * (10_000n - nonWlfFeeBps) / 10_000n)} net</span></>
+                )}
               </p>
             )}
           </div>
           {isAuthorized && activeEmployees.length > 0 && (
-            <button
-              onClick={() => {
-                const next = !showPayrollPreview;
-                setShowPayrollPreview(next);
-                if (next) refetchPreview();
-              }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors bg-white/5 text-white/60 hover:bg-white/10 hover:text-white/80 border border-white/10"
-            >
-              {showPayrollPreview ? 'Close Preview' : 'Preview Payroll'}
-            </button>
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              {showPayrollPreview && canPayAll && (
+                <button
+                  onClick={handlePayAll}
+                  disabled={isPayAllLoading}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${isPayAllLoading ? 'bg-white/5 text-white/30 cursor-not-allowed' : 'bg-[#8e2421] text-white hover:bg-[#a12926]'}`}
+                >
+                  {isPayAllLoading && <svg className="animate-spin h-3 w-3 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>}
+                  {isPayAllPending ? 'Confirm…' : isPayAllMining ? 'Processing…' : 'Confirm & Pay All'}
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  const next = !showPayrollPreview;
+                  setShowPayrollPreview(next);
+                  if (next) refetchPreview();
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors bg-white/5 text-white/60 hover:bg-white/10 hover:text-white/80 border border-white/10"
+              >
+                {showPayrollPreview ? 'Close Preview' : 'Preview Payroll'}
+              </button>
+            </div>
           )}
         </div>
+
+        {/* Pay All feedback — shown below the header buttons */}
+        {showPayrollPreview && (isPayAllSuccess || payAllError || isPayBatchSuccess || payBatchError) && (
+          <div className="space-y-0.5">
+            {isPayAllSuccess && <p className="text-xs text-green-400">All employees paid successfully.</p>}
+            {payAllError && <p className="text-xs text-red-400 break-words">{payAllError}</p>}
+            {isPayBatchSuccess && <p className="text-xs text-green-400">Batch paid successfully.</p>}
+            {payBatchError && <p className="text-xs text-red-400 break-words">{payBatchError}</p>}
+          </div>
+        )}
 
         {/* Payroll preview panel */}
         {showPayrollPreview && (
@@ -1791,52 +1818,34 @@ function CompanyCard({
                   </tfoot>
                 </table>
 
-                {canPayAll && (() => {
+                {(() => {
                   const BATCH_SIZE = 50;
                   const totalRaw = company.employees.length;
-                  if (totalRaw <= BATCH_SIZE) {
-                    return (
-                      <div className="flex flex-col items-start gap-1">
-                        <button
-                          onClick={handlePayAll}
-                          disabled={isPayAllLoading}
-                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${isPayAllLoading ? 'bg-white/5 text-white/30 cursor-not-allowed' : 'bg-[#8e2421] text-white hover:bg-[#a12926]'}`}
-                        >
-                          {isPayAllLoading && <svg className="animate-spin h-3 w-3 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>}
-                          {isPayAllPending ? 'Confirm…' : isPayAllMining ? 'Processing…' : 'Confirm & Pay All'}
-                        </button>
-                        {isPayAllSuccess && <p className="text-xs text-green-400">All employees paid successfully.</p>}
-                        {payAllError && <p className="text-xs text-red-400 break-words">{payAllError}</p>}
-                      </div>
-                    );
-                  }
+                  if (totalRaw <= BATCH_SIZE) return null;
                   const chunks = Array.from({ length: Math.ceil(totalRaw / BATCH_SIZE) }, (_, i) => ({
                     from: BigInt(i * BATCH_SIZE),
                     to: BigInt(Math.min((i + 1) * BATCH_SIZE, totalRaw)),
                     label: `${i * BATCH_SIZE + 1}–${Math.min((i + 1) * BATCH_SIZE, totalRaw)}`,
                   }));
                   return (
-                    <div className="space-y-1">
-                      <p className="text-xs text-white/40">Large company — pay in batches of {BATCH_SIZE}:</p>
-                      <div className="flex flex-wrap gap-2">
+                    <div className="space-y-1 pt-1 border-t border-white/10">
+                      <p className="text-xs text-white/40">Or pay manually by batch:</p>
+                      <div className="flex flex-wrap gap-1.5">
                         {chunks.map((chunk, i) => (
                           <button
                             key={i}
                             onClick={() => handlePayBatch(chunk.from, chunk.to)}
                             disabled={isPayBatchLoading}
-                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${isPayBatchLoading ? 'bg-white/5 text-white/30 cursor-not-allowed' : 'bg-[#8e2421] text-white hover:bg-[#a12926]'}`}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${isPayBatchLoading ? 'bg-white/5 text-white/30 cursor-not-allowed' : 'bg-white/5 text-white/60 hover:bg-white/10 hover:text-white/80 border border-white/10'}`}
                           >
                             {isPayBatchLoading && <svg className="animate-spin h-3 w-3 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>}
                             Pay {chunk.label}
                           </button>
                         ))}
                       </div>
-                      {isPayBatchSuccess && <p className="text-xs text-green-400">Batch paid successfully.</p>}
-                      {payBatchError && <p className="text-xs text-red-400 break-words">{payBatchError}</p>}
                     </div>
                   );
                 })()}
-
                 {!canPayAll && (
                   <p className="text-xs text-red-400">
                     {!allAboveMinimum

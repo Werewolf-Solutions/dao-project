@@ -9,4 +9,6 @@ export * from './abis/companiesHouse';
 export * from './abis/payrollExecutor';
 export * from './abis/companyDefi';
 export * from './abis/companyVault';
+export * from './abis/orgWallet';
+export * from './abis/paymentEngine';
 export * from './addresses';

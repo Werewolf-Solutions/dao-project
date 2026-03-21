@@ -82,4 +82,20 @@ interface ICompaniesHouseV1 {
         uint256 wlfAmount,
         uint256 payTimestamp
     ) external;
+
+    /**
+     * @notice Settles a non-payroll payment edge — deducts USDT from company balance,
+     *         applies protocol fee, and transfers net USDT to `recipient`.
+     * @dev Callable only by the registered paymentEngine address.
+     * @param companyId       Company whose balance is debited.
+     * @param recipient       USDT recipient (vendor, employee wallet, etc.).
+     * @param usdtAmount      Gross USDT (6 dec) to transfer.
+     * @param enginePaymentId PaymentEdge.id from PaymentEngine (for event indexing).
+     */
+    function executeEdgePayment(
+        uint96 companyId,
+        address recipient,
+        uint256 usdtAmount,
+        uint256 enginePaymentId
+    ) external;
 }

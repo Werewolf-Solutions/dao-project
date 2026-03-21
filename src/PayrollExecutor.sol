@@ -432,4 +432,24 @@ contract PayrollExecutor is Initializable, PausableUpgradeable {
     function hasActiveQueue(uint96 companyId) external view returns (bool) {
         return companyQueues[companyId].active;
     }
+
+    /**
+     * @notice Executes multiple calls to this contract in a single transaction.
+     * @dev Enables the frontend to bundle several payEmployeesBatch calls into one
+     *      wallet confirmation. Each call runs independently — if one reverts its
+     *      revert reason is bubbled up and the entire multicall reverts.
+     * @param data ABI-encoded calldata for each call (e.g. payEmployeesBatch selectors)
+     * @return results Return data from each call
+     */
+    function multicall(bytes[] calldata data) external whenNotPaused returns (bytes[] memory results) {
+        results = new bytes[](data.length);
+        for (uint256 i = 0; i < data.length; i++) {
+            (bool success, bytes memory result) = address(this).call(data[i]);
+            if (!success) {
+                // Bubble up the original revert reason
+                assembly { revert(add(result, 32), mload(result)) }
+            }
+            results[i] = result;
+        }
+    }
 }

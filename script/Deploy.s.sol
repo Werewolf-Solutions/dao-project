@@ -16,6 +16,9 @@ import {UniswapHelper} from "../src/UniswapHelper.sol";
 import {CompaniesHouseV1} from "../src/CompaniesHouseV1.sol";
 import {PayrollExecutor} from "../src/PayrollExecutor.sol";
 import {CompanyVault} from "../src/CompanyVault.sol";
+import {OrgWalletImpl} from "../src/OrgWalletImpl.sol";
+import {OrgBeaconFactory} from "../src/OrgBeaconFactory.sol";
+import {PaymentEngine} from "../src/PaymentEngine.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {UpgradeableBeacon} from "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
 
@@ -52,6 +55,9 @@ contract Deploy is Script {
     CompaniesHouseV1 companiesHouse;
     PayrollExecutor payrollExecutor;
     address companyVaultImpl;
+    address orgWalletImplAddr;
+    OrgBeaconFactory orgBeaconFactory;
+    PaymentEngine paymentEngine;
 
 
     function run() external {
@@ -128,6 +134,10 @@ contract Deploy is Script {
         // Deploy CompanyVault logic contract and register it in CompaniesHouseV1
         _deployCompanyVault();
 
+        // Deploy OrgWallet beacon system and PaymentEngine
+        _deployOrgWalletSystem();
+        _deployPaymentEngine();
+
         // Airdrop tokens to TokenSale
         werewolfToken.airdrop(address(tokenSale), tokenSaleAirdrop);
 
@@ -176,6 +186,7 @@ contract Deploy is Script {
         tokenSale.transferOwnership(address(timelock));
         staking.transferOwnership(address(timelock));
         payrollExecutor.setAdmin(address(timelock));
+        paymentEngine.setAdmin(address(timelock));
 
         // Transfer Timelock admin to DAO (must be last action as founder)
         // setPendingAdmin now accepts msg.sender == admin, no queue needed
@@ -258,6 +269,37 @@ contract Deploy is Script {
         payrollExecutor = PayrollExecutor(address(proxy));
         companiesHouse.setPayrollExecutor(address(payrollExecutor));
         console.log("PayrollExecutor:     ", address(payrollExecutor));
+    }
+
+    function _deployOrgWalletSystem() internal {
+        // Deploy OrgWalletImpl — plain implementation, no proxy (it IS the beacon target)
+        orgWalletImplAddr = address(new OrgWalletImpl());
+
+        // Deploy OrgBeaconFactory — plain contract (not upgradeable)
+        orgBeaconFactory = new OrgBeaconFactory(orgWalletImplAddr);
+
+        console.log("OrgWalletImpl:       ", orgWalletImplAddr);
+        console.log("OrgBeaconFactory:    ", address(orgBeaconFactory));
+    }
+
+    function _deployPaymentEngine() internal {
+        PaymentEngine peImpl = new PaymentEngine();
+        bytes memory initData = abi.encodeWithSelector(
+            PaymentEngine.initialize.selector,
+            address(companiesHouse),
+            address(payrollExecutor),
+            founder,      // oracle starts as founder; update via governance after deployment
+            founder,      // admin starts as founder; transferred to Timelock at end of run()
+            netConfig.usdt
+        );
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(
+            address(peImpl),
+            netConfig.multiSig,
+            initData
+        );
+        paymentEngine = PaymentEngine(address(proxy));
+        companiesHouse.setPaymentEngine(address(paymentEngine));
+        console.log("PaymentEngine:       ", address(paymentEngine));
     }
 
     function _deployCompanyVault() internal {
@@ -451,15 +493,14 @@ contract Deploy is Script {
         uint256 hourlyWei = uint256(5_000 * 1_000_000) / 730; // ≈ 6,849,315 USDT-wei/hr
 
         // 3. Build Werewolf Solutions company params
-        CompaniesHouseV1.RoleDefinition[] memory roles = new CompaniesHouseV1.RoleDefinition[](8);
+        CompaniesHouseV1.RoleDefinition[] memory roles = new CompaniesHouseV1.RoleDefinition[](7);
         roles[0] = CompaniesHouseV1.RoleDefinition({ name: "Founder",  level: 1 });
         roles[1] = CompaniesHouseV1.RoleDefinition({ name: "CEO",      level: 2 });
         roles[2] = CompaniesHouseV1.RoleDefinition({ name: "CTO",      level: 2 });
-        roles[3] = CompaniesHouseV1.RoleDefinition({ name: "Engineer", level: 3 });
-        roles[4] = CompaniesHouseV1.RoleDefinition({ name: "Designer", level: 3 });
-        roles[5] = CompaniesHouseV1.RoleDefinition({ name: "HR",       level: 3 });
-        roles[6] = CompaniesHouseV1.RoleDefinition({ name: "Advisor",  level: 3 });
-        roles[7] = CompaniesHouseV1.RoleDefinition({ name: "SMM",      level: 3 });
+        roles[3] = CompaniesHouseV1.RoleDefinition({ name: "Developer", level: 3 });
+        roles[4] = CompaniesHouseV1.RoleDefinition({ name: "HR",       level: 3 });
+        roles[5] = CompaniesHouseV1.RoleDefinition({ name: "Advisor",  level: 3 });
+        roles[6] = CompaniesHouseV1.RoleDefinition({ name: "SMM",      level: 3 });
 
         CompaniesHouseV1.CreateCompany memory params = CompaniesHouseV1.CreateCompany({
             name:               "Werewolf Solutions",
@@ -481,7 +522,35 @@ contract Deploy is Script {
         address vaultToken = netConfig.aaveUsdt != address(0) ? netConfig.aaveUsdt : netConfig.usdt;
         companiesHouse.createVault(wsId, netConfig.aavePool, vaultToken);
 
+        // 5. Hire 200 test employees
+        _hireBulkEmployees(wsId);
+
         console.log("Werewolf Solutions company created. ID:", wsId);
+    }
+
+    function _hireBulkEmployees(uint96 companyId) internal {
+        // $3,000/month = 3_000_000_000 USDT-wei / 730 hours ≈ 4,109,589 USDT-wei/hr
+        uint256 empHourlyWei = uint256(3_000 * 1_000_000) / 730;
+
+        CompaniesHouseV1.SalaryItem[] memory salaryItems = new CompaniesHouseV1.SalaryItem[](1);
+        salaryItems[0] = CompaniesHouseV1.SalaryItem({
+            role: "Engineer",
+            earningsType: CompaniesHouseV1.EarningsType.SALARY,
+            salaryPerHour: empHourlyWei,
+            lastPayDate: 0 // ignored during hire
+        });
+
+        for (uint256 i = 0; i < 200; i++) {
+            // Deterministic unique addresses starting well above zero/system addresses
+            address empAddr = address(uint160(0x10000 + i));
+            companiesHouse.hireEmployee(CompaniesHouseV1.HireEmployee({
+                employeeAddress: empAddr,
+                name: string.concat("Employee ", vm.toString(i + 1)),
+                companyId: companyId,
+                salaryItems: salaryItems
+            }));
+        }
+        console.log("Hired 200 employees in Werewolf Solutions");
     }
 
     function _startSaleOne() internal {
@@ -577,6 +646,10 @@ contract Deploy is Script {
             vm.toString(companyVaultImpl)
         );
         vm.writeLine(path, companyVaultImplStr);
+
+        vm.writeLine(path, string.concat("OrgWalletImpl:", vm.toString(orgWalletImplAddr)));
+        vm.writeLine(path, string.concat("OrgBeaconFactory:", vm.toString(address(orgBeaconFactory))));
+        vm.writeLine(path, string.concat("PaymentEngine:", vm.toString(address(paymentEngine))));
 
         // Write separate AaveUSDT address when it differs from the token-sale USDT
         if (netConfig.aaveUsdt != address(0)) {

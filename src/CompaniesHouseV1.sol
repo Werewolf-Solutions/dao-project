@@ -248,7 +248,10 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     /// @notice PayrollExecutor proxy — authorized to call executeQueuedPayment and executeTokenPayment
     address public payrollExecutor;
 
-    uint256[24] private __gap;
+    /// @notice PaymentEngine proxy — authorized to call executeEdgePayment
+    address public paymentEngine;
+
+    uint256[23] private __gap;
 
     ///////////////////////////////////////
     //           Events                  //
@@ -277,6 +280,11 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     /// @param amount       USDT (6 dec) queued for payment
     /// @param description  Free-text reason (e.g. "Q1 bonus", "10hrs overtime week 12")
     event EarningSubmitted(address indexed employee, uint96 indexed companyId, EarningsType earningsType, uint256 amount, string description);
+    /// @param companyId       Company whose balance was debited
+    /// @param recipient       Address that received the net USDT
+    /// @param usdtAmount      Gross USDT (6 dec) debited from company balance
+    /// @param enginePaymentId PaymentEdge.id from PaymentEngine
+    event EdgePaymentExecuted(uint96 indexed companyId, address indexed recipient, uint256 usdtAmount, uint256 enginePaymentId);
 
     ///////////////////////////////////////
     //           Modifiers               //
@@ -294,6 +302,11 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
 
     modifier onlyPayrollExecutor() {
         if (msg.sender != payrollExecutor) revert NotAuthorized();
+        _;
+    }
+
+    modifier onlyPaymentEngine() {
+        if (msg.sender != paymentEngine) revert NotAuthorized();
         _;
     }
 
@@ -356,7 +369,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
      * @param amount Amount to deposit (token decimals)
      */
     function depositToCompany(uint96 companyId, address token, uint256 amount) external {
-        if (companyBrief[companyId].owner == address(0)) revert CompanyNotFound();
+        _requireCompanyExists(companyId);
         IERC20(token).transferFrom(msg.sender, address(this), amount);
         companyTokenBalances[companyId][token] += amount;
         emit CompanyFunded(companyId, token, amount);
@@ -373,7 +386,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
      * @param amount Amount to credit (token decimals)
      */
     function creditToCompany(uint96 companyId, address token, uint256 amount) external onlyAdmin {
-        if (companyBrief[companyId].owner == address(0)) revert CompanyNotFound();
+        _requireCompanyExists(companyId);
         companyTokenBalances[companyId][token] += amount;
         emit CompanyFunded(companyId, token, amount);
     }
@@ -458,7 +471,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         address _allowedToken
     ) external returns (address vault) {
         if (beacon == address(0)) revert BeaconNotSet();
-        if (companyBrief[_companyId].owner == address(0)) revert CompanyNotFound();
+        _requireCompanyExists(_companyId);
         if (_getLevel(msg.sender, _companyId) != 1) revert NotAuthorized(); // owner only
         if (companyVault[_companyId] != address(0)) revert VaultAlreadyExists();
 
@@ -485,7 +498,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
      * @param amount    Amount to transfer (token decimals)
      */
     function withdrawForDeFi(uint96 companyId, address token, uint256 amount) external onlyCompanyDefi {
-        if (companyBrief[companyId].owner == address(0)) revert CompanyNotFound();
+        _requireCompanyExists(companyId);
         if (companyTokenBalances[companyId][token] < amount) revert InsufficientWLF();
         companyTokenBalances[companyId][token] -= amount;
         IERC20(token).transfer(msg.sender, amount);
@@ -501,7 +514,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
      * @param amount    Amount to credit (token decimals)
      */
     function creditFromDeFi(uint96 companyId, address token, uint256 amount) external onlyCompanyDefi {
-        if (companyBrief[companyId].owner == address(0)) revert CompanyNotFound();
+        _requireCompanyExists(companyId);
         IERC20(token).transferFrom(msg.sender, address(this), amount);
         companyTokenBalances[companyId][token] += amount;
         emit CompanyFunded(companyId, token, amount);
@@ -539,6 +552,40 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     }
 
     /**
+     * @notice Sets the PaymentEngine contract address.
+     * @dev onlyAdmin. Must be called after deploying PaymentEngine.
+     *      PaymentEngine is then authorised to call executeEdgePayment.
+     */
+    function setPaymentEngine(address _paymentEngine) external onlyAdmin {
+        paymentEngine = _paymentEngine;
+    }
+
+    /**
+     * @notice Settles a non-payroll payment edge — deducts USDT from company balance,
+     *         applies protocol fee, and transfers net USDT to `recipient`.
+     * @dev onlyPaymentEngine + whenNotPaused. Mirrors fee logic in executeQueuedPayment.
+     *      DAO companies pay zero fee (daoCompanyId match).
+     * @param companyId       Company whose balance is debited.
+     * @param recipient       USDT recipient.
+     * @param usdtAmount      Gross USDT (6 dec) to transfer.
+     * @param enginePaymentId PaymentEdge.id from PaymentEngine (emitted for indexing).
+     */
+    function executeEdgePayment(
+        uint96 companyId,
+        address recipient,
+        uint256 usdtAmount,
+        uint256 enginePaymentId
+    ) external onlyPaymentEngine whenNotPaused {
+        _requireCompanyExists(companyId);
+        if (usdtAmount == 0) revert NothingToPay();
+        if (companyTokenBalances[companyId][usdtAddress] < usdtAmount) revert BelowReserve();
+
+        companyTokenBalances[companyId][usdtAddress] -= usdtAmount;
+        _disburseUSDT(companyId, recipient, usdtAmount);
+        emit EdgePaymentExecuted(companyId, recipient, usdtAmount, enginePaymentId);
+    }
+
+    /**
      * @notice Returns whether `caller` is authorized to trigger payment for `employee` in `companyId`.
      * @dev Wraps the LENIENT auth rule. Used by PayrollExecutor before executing payments.
      * @return true if caller has LENIENT authority over employee in the company
@@ -564,8 +611,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     ) external view returns (uint256 gross) {
         EmployeeBrief memory empBrief = employeeBrief[employee][companyId];
         if (!empBrief.isMember) return 0;
-        CompanyBrief memory compBrief = companyBrief[companyId];
-        Employee storage emp = ownerToCompanies[compBrief.owner][compBrief.index].employees[empBrief.employeeIndex];
+        Employee storage emp = _getCompany(companyId).employees[empBrief.employeeIndex];
         if (!emp.active) return 0;
         return _calcEmployeeGross(emp);
     }
@@ -595,7 +641,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         uint256 grossUSDT,
         uint256 snapshotTimestamp
     ) external onlyPayrollExecutor {
-        if (companyBrief[companyId].owner == address(0)) revert CompanyNotFound();
+        _requireCompanyExists(companyId);
         if (grossUSDT == 0) revert NothingToPay();
         if (companyTokenBalances[companyId][usdtAddress] < grossUSDT) revert BelowReserve();
 
@@ -621,18 +667,8 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
 
         companyTokenBalances[companyId][usdtAddress] -= grossUSDT;
 
-        bool isDao = daoCompanyId > 0 && companyId == daoCompanyId;
-        if (isDao) {
-            IERC20(usdtAddress).transfer(s_emp.payableAddress, grossUSDT);
-            emit EmployeePaid(s_emp.employeeId, grossUSDT);
-        } else {
-            uint256 fee    = grossUSDT * nonWlfFeeBps / 10_000;
-            uint256 netPay = grossUSDT - fee;
-            if (fee > 0) IERC20(usdtAddress).transfer(treasuryAddress, fee);
-            IERC20(usdtAddress).transfer(s_emp.payableAddress, netPay);
-            emit EmployeePaid(s_emp.employeeId, netPay);
-            if (fee > 0) emit ProtocolFeePaid(companyId, usdtAddress, fee);
-        }
+        uint256 netPay = _disburseUSDT(companyId, s_emp.payableAddress, grossUSDT);
+        emit EmployeePaid(s_emp.employeeId, netPay);
     }
 
     /**
@@ -668,19 +704,15 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         if (usdtAmount > 0) companyTokenBalances[companyId][usdtAddress] -= usdtAmount;
         if (wlfAmount  > 0) companyTokenBalances[companyId][wlfToken]    -= wlfAmount;
 
-        uint256 usdtFee = usdtAmount > 0 ? usdtAmount * nonWlfFeeBps / 10_000 : 0;
-        uint256 usdtNet = usdtAmount - usdtFee;
-        uint256 wlfFee  = wlfAmount  > 0 ? wlfAmount  * wlfFeeBps    / 10_000 : 0;
-        uint256 wlfNet  = wlfAmount  - wlfFee;
+        uint256 usdtNet = usdtAmount > 0 ? _disburseUSDT(companyId, s_emp.payableAddress, usdtAmount) : 0;
+        uint256 wlfFee  = wlfAmount > 0 ? wlfAmount * wlfFeeBps / 10_000 : 0;
+        uint256 wlfNet  = wlfAmount - wlfFee;
 
-        if (usdtFee > 0) IERC20(usdtAddress).transfer(treasuryAddress, usdtFee);
-        if (usdtNet > 0) IERC20(usdtAddress).transfer(s_emp.payableAddress, usdtNet);
-        if (wlfFee  > 0) IERC20(wlfToken).transfer(treasuryAddress, wlfFee);
-        if (wlfNet  > 0) IERC20(wlfToken).transfer(s_emp.payableAddress, wlfNet);
+        if (wlfFee > 0) IERC20(wlfToken).transfer(treasuryAddress, wlfFee);
+        if (wlfNet > 0) IERC20(wlfToken).transfer(s_emp.payableAddress, wlfNet);
 
         emit EmployeePaid(employee, usdtNet);
-        if (usdtFee > 0) emit ProtocolFeePaid(companyId, usdtAddress, usdtFee);
-        if (wlfFee  > 0) emit ProtocolFeePaid(companyId, wlfToken,   wlfFee);
+        if (wlfFee > 0) emit ProtocolFeePaid(companyId, wlfToken, wlfFee);
     }
 
     /**
@@ -754,8 +786,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
             msg.sender,
             _params.ownerName,
             currentCompanyIndex,
-            ownerSalary,
-            uint96(nextCompIndex)
+            ownerSalary
         );
 
         emit CompanyCreated(msg.sender, currentCompanyIndex);
@@ -814,8 +845,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
 
         Employee storage emp = _loadEmployee(_employeeAddress, _companyId);
         if (!emp.active) revert NotAuthorized();
-        CompanyBrief memory compBrief = companyBrief[_companyId];
-        CompanyStruct storage s_company = ownerToCompanies[compBrief.owner][compBrief.index];
+        CompanyStruct storage s_company = _getCompany(_companyId);
 
         for (uint256 i = 0; i < _params.salaryItems.length; i++) {
             if (_findRoleLevel(_params.salaryItems[i].role, s_company.roles) == 0) revert RoleNotFound();
@@ -857,8 +887,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         uint8 callerLevel = _getLevel(msg.sender, _hireParams.companyId);
         if (callerLevel == 0) revert NotAuthorized();
 
-        CompanyBrief memory compBrief = companyBrief[_hireParams.companyId];
-        CompanyStruct storage compPtr = ownerToCompanies[compBrief.owner][compBrief.index];
+        CompanyStruct storage compPtr = _getCompany(_hireParams.companyId);
 
         // Validate roles exist; non-owners must also outrank every role being assigned
         for (uint256 i = 0; i < _hireParams.salaryItems.length; i++) {
@@ -871,8 +900,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
             _hireParams.employeeAddress,
             _hireParams.name,
             _hireParams.companyId,
-            _hireParams.salaryItems,
-            compBrief.index
+            _hireParams.salaryItems
         );
     }
 
@@ -889,8 +917,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         if (!_canOperateOn(msg.sender, _employeeAddress, _companyId, AuthRule.STRICT)) revert NotAuthorized();
 
         Employee storage emp = _loadEmployee(_employeeAddress, _companyId);
-        CompanyBrief memory compBrief = companyBrief[_companyId];
-        if (_findRoleLevel(_item.role, ownerToCompanies[compBrief.owner][compBrief.index].roles) == 0) revert RoleNotFound();
+        if (_findRoleLevel(_item.role, _getCompany(_companyId).roles) == 0) revert RoleNotFound();
 
         emp.salaryItems.push(SalaryItem({
             role: _item.role,
@@ -965,8 +992,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         if (!_canOperateOn(msg.sender, _employeeAddress, _companyId, AuthRule.STRICT)) revert NotAuthorized();
 
         Employee storage emp = _loadEmployee(_employeeAddress, _companyId);
-        CompanyBrief memory compBrief = companyBrief[_companyId];
-        if (_findRoleLevel(_newRole, ownerToCompanies[compBrief.owner][compBrief.index].roles) == 0) revert RoleNotFound();
+        if (_findRoleLevel(_newRole, _getCompany(_companyId).roles) == 0) revert RoleNotFound();
         if (_salaryItemIndex >= emp.salaryItems.length) revert InvalidSalaryIndex();
         emp.salaryItems[_salaryItemIndex].role = _newRole;
     }
@@ -998,9 +1024,8 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     }
 
     function retrieveCompany(uint96 _companyId) external view returns (CompanyStruct memory) {
-        CompanyBrief memory compBrief = companyBrief[_companyId];
-        if (compBrief.owner == address(0)) revert CompanyNotFound();
-        return ownerToCompanies[compBrief.owner][compBrief.index];
+        _requireCompanyExists(_companyId);
+        return _getCompany(_companyId);
     }
 
     function retrieveEmployee(
@@ -1014,8 +1039,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
      * @notice Returns total USDT (6 dec) owed to all active employees right now.
      */
     function getTotalPendingUSDT(uint96 _companyId) external view returns (uint256 totalUSDT) {
-        CompanyBrief memory compBrief = companyBrief[_companyId];
-        Employee[] storage employees = ownerToCompanies[compBrief.owner][compBrief.index].employees;
+        Employee[] storage employees = _getCompany(_companyId).employees;
         for (uint256 i; i < employees.length; i++) {
             if (employees[i].active) totalUSDT += _calcEmployeeGross(employees[i]);
         }
@@ -1026,8 +1050,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
      * @dev Assumes 730 hours per month (365 * 24 / 12).
      */
     function getMonthlyBurnUSDT(uint96 _companyId) public view returns (uint256 usdtPerMonth) {
-        CompanyBrief memory compBrief = companyBrief[_companyId];
-        Employee[] storage employees = ownerToCompanies[compBrief.owner][compBrief.index].employees;
+        Employee[] storage employees = _getCompany(_companyId).employees;
         uint256 totalPerHour;
         for (uint256 i = 0; i < employees.length; i++) {
             if (!employees[i].active) continue;
@@ -1073,8 +1096,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
             uint256 totalNet
         )
     {
-        CompanyBrief memory compBrief = companyBrief[_companyId];
-        Employee[] storage employees = ownerToCompanies[compBrief.owner][compBrief.index].employees;
+        Employee[] storage employees = _getCompany(_companyId).employees;
         bool isDao = daoCompanyId > 0 && _companyId == daoCompanyId;
 
         // Single pass: fill into max-size buffer, then trim
@@ -1105,6 +1127,24 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     //         Internal Functions        //
     ///////////////////////////////////////
 
+    /**
+     * @dev Transfers `gross` USDT to `recipient` after deducting the protocol fee.
+     *      DAO companies pay zero fee. Emits ProtocolFeePaid when a fee is taken.
+     * @return net Amount received by the recipient after fee deduction.
+     */
+    function _disburseUSDT(uint96 companyId, address recipient, uint256 gross) private returns (uint256 net) {
+        bool isDao = daoCompanyId > 0 && companyId == daoCompanyId;
+        if (isDao) {
+            IERC20(usdtAddress).transfer(recipient, gross);
+            return gross;
+        }
+        uint256 fee = gross * nonWlfFeeBps / 10_000;
+        net = gross - fee;
+        if (fee > 0) IERC20(usdtAddress).transfer(treasuryAddress, fee);
+        IERC20(usdtAddress).transfer(recipient, net);
+        if (fee > 0) emit ProtocolFeePaid(companyId, usdtAddress, fee);
+    }
+
     /// @dev Resolves employee storage from address + companyId, reverting if not a member.
     function _loadEmployee(address _employeeAddress, uint96 _companyId) internal view returns (Employee storage) {
         EmployeeBrief memory empBrief = employeeBrief[_employeeAddress][_companyId];
@@ -1127,11 +1167,9 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         address _employeeAddress,
         string memory _name,
         uint96 _companyId,
-        SalaryItem[] memory _salaryItems,
-        uint96 _companyArrayIndex
+        SalaryItem[] memory _salaryItems
     ) internal {
-        CompanyBrief memory compBrief = companyBrief[_companyId];
-        CompanyStruct storage compPtr = ownerToCompanies[compBrief.owner][_companyArrayIndex];
+        CompanyStruct storage compPtr = _getCompany(_companyId);
 
         compPtr.employees.push();
         uint256 newEmpIdx = compPtr.employees.length - 1;
@@ -1226,6 +1264,17 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         if (usdcAddress != address(0)) {
             total += companyTokenBalances[_companyId][usdcAddress];
         }
+    }
+
+    /// @dev Reverts with CompanyNotFound if companyId is not registered.
+    function _requireCompanyExists(uint96 companyId) private view {
+        if (companyBrief[companyId].owner == address(0)) revert CompanyNotFound();
+    }
+
+    /// @dev Returns a storage pointer to the CompanyStruct for `companyId`. No existence check.
+    function _getCompany(uint96 companyId) private view returns (CompanyStruct storage) {
+        CompanyBrief memory b = companyBrief[companyId];
+        return ownerToCompanies[b.owner][b.index];
     }
 
 
