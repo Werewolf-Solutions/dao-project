@@ -14,6 +14,7 @@ import {Staking} from "../src/Staking.sol";
 import {LPStaking} from "../src/LPStaking.sol";
 import {UniswapHelper} from "../src/UniswapHelper.sol";
 import {CompaniesHouseV1} from "../src/CompaniesHouseV1.sol";
+import {CompaniesHouseViewsV1} from "../src/CompaniesHouseViewsV1.sol";
 import {PayrollExecutor} from "../src/PayrollExecutor.sol";
 import {CompanyVault} from "../src/CompanyVault.sol";
 import {OrgWalletImpl} from "../src/OrgWalletImpl.sol";
@@ -53,6 +54,7 @@ contract Deploy is Script {
     TokenSale tokenSale;
     UniswapHelper uniswapHelper;
     CompaniesHouseV1 companiesHouse;
+    CompaniesHouseViewsV1 companiesHouseViews;
     PayrollExecutor payrollExecutor;
     address companyVaultImpl;
     address orgWalletImplAddr;
@@ -252,6 +254,10 @@ contract Deploy is Script {
         companiesHouse = CompaniesHouseV1(address(companiesHouseProxy));
         // Admin starts as founder so we can call setDaoCompanyId after createCompany.
         // Transferred to Timelock at end of _createDaoCompany().
+
+        // Deploy stateless views lens (no proxy needed)
+        companiesHouseViews = new CompaniesHouseViewsV1(address(companiesHouseProxy));
+        console.log("CompaniesHouseViews: ", address(companiesHouseViews));
     }
 
     function _deployPayrollExecutor() internal {
@@ -534,7 +540,7 @@ contract Deploy is Script {
 
         CompaniesHouseV1.SalaryItem[] memory salaryItems = new CompaniesHouseV1.SalaryItem[](1);
         salaryItems[0] = CompaniesHouseV1.SalaryItem({
-            role: "Engineer",
+            role: "Developer",
             earningsType: CompaniesHouseV1.EarningsType.SALARY,
             salaryPerHour: empHourlyWei,
             lastPayDate: 0 // ignored during hire
@@ -650,6 +656,7 @@ contract Deploy is Script {
         vm.writeLine(path, string.concat("OrgWalletImpl:", vm.toString(orgWalletImplAddr)));
         vm.writeLine(path, string.concat("OrgBeaconFactory:", vm.toString(address(orgBeaconFactory))));
         vm.writeLine(path, string.concat("PaymentEngine:", vm.toString(address(paymentEngine))));
+        vm.writeLine(path, string.concat("CompaniesHouseViews:", vm.toString(address(companiesHouseViews))));
 
         // Write separate AaveUSDT address when it differs from the token-sale USDT
         if (netConfig.aaveUsdt != address(0)) {

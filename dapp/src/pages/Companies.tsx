@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAccount, useChainId, useReadContract, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi';
 import { formatEther } from 'viem';
 import { theme } from '@/contexts/ThemeContext';
-import { companiesHouseABI, erc20ABI, getAddress } from '@/contracts';
+import { companiesHouseABI, companiesHouseViewsABI, erc20ABI, getAddress } from '@/contracts';
 import { monthlyUSDToHourlyWei, fmtUSDT, fmtMonths } from '@/utils/formatters';
 
 // ─── types ────────────────────────────────────────────────────────────────────
@@ -218,13 +218,32 @@ function CompanyListCard({
     query: { refetchInterval: 30_000 },
   });
 
-  const { data: companyUSDTBalance } = useReadContract({
+  const { data: vaultAddress } = useReadContract({
+    address: companiesHouseAddress,
+    abi: companiesHouseABI,
+    functionName: 'companyVault',
+    args: [companyId],
+    query: { refetchInterval: 60_000 },
+  });
+  const hasVault = !!vaultAddress && vaultAddress !== '0x0000000000000000000000000000000000000000';
+
+  const { data: vaultUSDTBalance } = useReadContract({
+    address: usdtAddress,
+    abi: erc20ABI,
+    functionName: 'balanceOf',
+    args: [vaultAddress ?? '0x0000000000000000000000000000000000000000'],
+    query: { enabled: hasVault && !!usdtAddress, refetchInterval: 30_000 },
+  });
+
+  const { data: legacyUSDTBalance } = useReadContract({
     address: companiesHouseAddress,
     abi: companiesHouseABI,
     functionName: 'companyTokenBalances',
     args: [companyId, usdtAddress ?? '0x0000000000000000000000000000000000000000'],
-    query: { enabled: !!usdtAddress, refetchInterval: 30_000 },
+    query: { enabled: !hasVault && !!usdtAddress, refetchInterval: 30_000 },
   });
+
+  const companyUSDTBalance = hasVault ? vaultUSDTBalance : legacyUSDTBalance;
 
   const { data: monthlyBurn } = useReadContract({
     address: companiesHouseAddress,
@@ -338,6 +357,7 @@ export default function Companies() {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
   const companiesHouseAddress = getAddress(chainId, 'CompaniesHouse');
+  const companiesHouseViewsAddress = getAddress(chainId, 'CompaniesHouseViews');
   const wlfAddress = getAddress(chainId, 'WerewolfToken');
   const usdtAddress = getAddress(chainId, 'USDT');
 
@@ -346,11 +366,11 @@ export default function Companies() {
   const publicClient = usePublicClient();
 
   const { data: companyIds, refetch: refetchIds } = useReadContract({
-    address: companiesHouseAddress,
-    abi: companiesHouseABI,
+    address: companiesHouseViewsAddress,
+    abi: companiesHouseViewsABI,
     functionName: 'getOwnerCompanyIds',
     args: [address!],
-    query: { enabled: !!address && !!companiesHouseAddress },
+    query: { enabled: !!address && !!companiesHouseViewsAddress },
   });
 
   const { data: creationFee } = useReadContract({

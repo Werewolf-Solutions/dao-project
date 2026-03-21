@@ -111,6 +111,7 @@ contract CompanyVault is Initializable {
         if (
             msg.sender != admin &&
             msg.sender != companiesHouse.admin() &&
+            msg.sender != address(companiesHouse) &&
             !companiesHouse.isAuthorized(msg.sender, companyId)
         ) revert NotAuthorized();
         _;

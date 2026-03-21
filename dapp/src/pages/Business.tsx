@@ -1239,21 +1239,52 @@ function CompanyCard({
     query: { refetchInterval: 30_000 },
   });
 
-  const { data: companyUSDTBalance, refetch: refetchBalance } = useReadContract({
+  // Vault address for this company (non-zero means vault exists and holds the funds)
+  const { data: vaultAddress } = useReadContract({
+    address: companiesHouseAddress,
+    abi: companiesHouseABI,
+    functionName: 'companyVault',
+    args: [companyId],
+    query: { refetchInterval: 30_000 },
+  });
+  const hasVault = !!vaultAddress && vaultAddress !== '0x0000000000000000000000000000000000000000';
+
+  // Vault balances (used when vault exists — depositToCompany routes there)
+  const { data: vaultUSDTBalance, refetch: refetchBalance } = useReadContract({
+    address: usdtAddress,
+    abi: erc20ABI,
+    functionName: 'balanceOf',
+    args: [vaultAddress ?? '0x0000000000000000000000000000000000000000'],
+    query: { enabled: hasVault && !!usdtAddress, refetchInterval: 5_000 },
+  });
+
+  const { data: vaultWLFBalance, refetch: refetchWlfBalance } = useReadContract({
+    address: wlfAddress,
+    abi: erc20ABI,
+    functionName: 'balanceOf',
+    args: [vaultAddress ?? '0x0000000000000000000000000000000000000000'],
+    query: { enabled: hasVault && !!wlfAddress, refetchInterval: 5_000 },
+  });
+
+  // Legacy balances (used when no vault — funds sit in CH mapping)
+  const { data: legacyUSDTBalance } = useReadContract({
     address: companiesHouseAddress,
     abi: companiesHouseABI,
     functionName: 'companyTokenBalances',
     args: [companyId, usdtAddress ?? '0x0000000000000000000000000000000000000000'],
-    query: { enabled: !!usdtAddress, refetchInterval: 5_000 },
+    query: { enabled: !hasVault && !!usdtAddress, refetchInterval: 5_000 },
   });
 
-  const { data: companyWLFBalance, refetch: refetchWlfBalance } = useReadContract({
+  const { data: legacyWLFBalance } = useReadContract({
     address: companiesHouseAddress,
     abi: companiesHouseABI,
     functionName: 'companyTokenBalances',
     args: [companyId, wlfAddress ?? '0x0000000000000000000000000000000000000000'],
-    query: { enabled: !!wlfAddress, refetchInterval: 5_000 },
+    query: { enabled: !hasVault && !!wlfAddress, refetchInterval: 5_000 },
   });
+
+  const companyUSDTBalance = hasVault ? vaultUSDTBalance : legacyUSDTBalance;
+  const companyWLFBalance  = hasVault ? vaultWLFBalance  : legacyWLFBalance;
 
   const { data: minReserveMonthsData } = useReadContract({
     address: companiesHouseAddress,

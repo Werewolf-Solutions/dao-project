@@ -10,6 +10,10 @@ import "./interfaces/IWerewolfTokenV1.sol";
 import "./interfaces/IDAO.sol";
 import "./interfaces/ITokenSale.sol";
 
+interface ICompanyVault {
+    function withdraw(address token, uint256 amount, address to) external;
+}
+
 interface IV3SwapRouter {
     struct ExactInputSingleParams {
         address tokenIn;
@@ -370,9 +374,33 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
      */
     function depositToCompany(uint96 companyId, address token, uint256 amount) external {
         _requireCompanyExists(companyId);
-        IERC20(token).transferFrom(msg.sender, address(this), amount);
-        companyTokenBalances[companyId][token] += amount;
+        address v = companyVault[companyId];
+        if (v != address(0)) {
+            IERC20(token).transferFrom(msg.sender, v, amount);
+        } else {
+            IERC20(token).transferFrom(msg.sender, address(this), amount);
+            companyTokenBalances[companyId][token] += amount;
+        }
         emit CompanyFunded(companyId, token, amount);
+    }
+
+    /**
+     * @notice Migrates legacy companyTokenBalances into the company's vault.
+     * @dev Call after createVault() to physically move pre-vault deposits into isolation.
+     *      Only the company owner can sweep. Skips zero-balance tokens silently.
+     * @param companyId The company whose balances to sweep
+     * @param tokens    List of ERC20 token addresses to sweep (e.g. [usdtAddress])
+     */
+    function sweepToVault(uint96 companyId, address[] calldata tokens) external {
+        if (companyBrief[companyId].owner != msg.sender) revert NotAuthorized();
+        address v = companyVault[companyId];
+        if (v == address(0)) revert BeaconNotSet();
+        for (uint256 i; i < tokens.length; i++) {
+            uint256 bal = companyTokenBalances[companyId][tokens[i]];
+            if (bal == 0) continue;
+            companyTokenBalances[companyId][tokens[i]] = 0;
+            IERC20(tokens[i]).transfer(v, bal);
+        }
     }
 
     /**
@@ -578,9 +606,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     ) external onlyPaymentEngine whenNotPaused {
         _requireCompanyExists(companyId);
         if (usdtAmount == 0) revert NothingToPay();
-        if (companyTokenBalances[companyId][usdtAddress] < usdtAmount) revert BelowReserve();
-
-        companyTokenBalances[companyId][usdtAddress] -= usdtAmount;
+        _debitCompany(companyId, usdtAddress, usdtAmount);
         _disburseUSDT(companyId, recipient, usdtAmount);
         emit EdgePaymentExecuted(companyId, recipient, usdtAmount, enginePaymentId);
     }
@@ -643,7 +669,6 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     ) external onlyPayrollExecutor {
         _requireCompanyExists(companyId);
         if (grossUSDT == 0) revert NothingToPay();
-        if (companyTokenBalances[companyId][usdtAddress] < grossUSDT) revert BelowReserve();
 
         Employee storage s_emp = _loadEmployee(employee, companyId);
 
@@ -665,8 +690,7 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
             s_emp.pendingEarnings.pop();
         }
 
-        companyTokenBalances[companyId][usdtAddress] -= grossUSDT;
-
+        _debitCompany(companyId, usdtAddress, grossUSDT);
         uint256 netPay = _disburseUSDT(companyId, s_emp.payableAddress, grossUSDT);
         emit EmployeePaid(s_emp.employeeId, netPay);
     }
@@ -691,8 +715,6 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         uint256 payTimestamp
     ) external onlyPayrollExecutor {
         if (usdtAmount == 0 && wlfAmount == 0) revert NothingToPay();
-        if (usdtAmount > 0 && companyTokenBalances[companyId][usdtAddress] < usdtAmount) revert BelowReserve();
-        if (wlfAmount > 0 && companyTokenBalances[companyId][wlfToken] < wlfAmount) revert InsufficientWLF();
 
         Employee storage s_emp = _loadEmployee(employee, companyId);
         if (!s_emp.active) revert NotAuthorized();
@@ -701,9 +723,8 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
             s_emp.salaryItems[i].lastPayDate = payTimestamp;
         }
 
-        if (usdtAmount > 0) companyTokenBalances[companyId][usdtAddress] -= usdtAmount;
-        if (wlfAmount  > 0) companyTokenBalances[companyId][wlfToken]    -= wlfAmount;
-
+        if (usdtAmount > 0) _debitCompany(companyId, usdtAddress, usdtAmount);
+        if (wlfAmount  > 0) _debitCompany(companyId, wlfToken, wlfAmount);
         uint256 usdtNet = usdtAmount > 0 ? _disburseUSDT(companyId, s_emp.payableAddress, usdtAmount) : 0;
         uint256 wlfFee  = wlfAmount > 0 ? wlfAmount * wlfFeeBps / 10_000 : 0;
         uint256 wlfNet  = wlfAmount - wlfFee;
@@ -998,24 +1019,6 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
     }
 
     /**
-     * @notice Returns all active company IDs owned by the given address.
-     * @dev Use this to enumerate the caller's companies in the frontend.
-     */
-    function getOwnerCompanyIds(address _owner) external view returns (uint96[] memory) {
-        CompanyStruct[] storage companies = ownerToCompanies[_owner];
-        uint256 count;
-        for (uint256 i = 0; i < companies.length; i++) {
-            if (companies[i].active) count++;
-        }
-        uint96[] memory ids = new uint96[](count);
-        uint256 idx;
-        for (uint256 i = 0; i < companies.length; i++) {
-            if (companies[i].active) ids[idx++] = companies[i].companyId;
-        }
-        return ids;
-    }
-
-    /**
      * @notice Returns true if `_caller` has any authority level in the given company.
      * @dev Exposes the level check so CompanyDeFiV1 can delegate auth without duplicating logic.
      */
@@ -1033,16 +1036,6 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         address _employeeAddress
     ) external view returns (Employee memory) {
         return _loadEmployee(_employeeAddress, _companyId);
-    }
-
-    /**
-     * @notice Returns total USDT (6 dec) owed to all active employees right now.
-     */
-    function getTotalPendingUSDT(uint96 _companyId) external view returns (uint256 totalUSDT) {
-        Employee[] storage employees = _getCompany(_companyId).employees;
-        for (uint256 i; i < employees.length; i++) {
-            if (employees[i].active) totalUSDT += _calcEmployeeGross(employees[i]);
-        }
     }
 
     /**
@@ -1067,13 +1060,6 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
      */
     function getRequiredReserveUSDT(uint96 _companyId) public view returns (uint256) {
         return getMonthlyBurnUSDT(_companyId) * _effectiveReserveMonths(_companyId);
-    }
-
-    /**
-     * @notice Returns the combined USDT + USDC internal balance for a company.
-     */
-    function getCompanyStableBalance(uint96 _companyId) external view returns (uint256) {
-        return _stableBalance(_companyId);
     }
 
     /**
@@ -1258,12 +1244,20 @@ contract CompaniesHouseV1 is AccessControlUpgradeable, PausableUpgradeable {
         return perCompany > 0 ? perCompany : minReserveMonths;
     }
 
-    /// @dev Returns combined USDT + USDC internal balance for reserve checks.
+    /// @dev Returns combined USDT + USDC balance (vault or mapping) for reserve checks.
     function _stableBalance(uint96 _companyId) internal view returns (uint256 total) {
+        address v = companyVault[_companyId];
+        if (v != address(0)) return IERC20(usdtAddress).balanceOf(v);
         total = companyTokenBalances[_companyId][usdtAddress];
-        if (usdcAddress != address(0)) {
-            total += companyTokenBalances[_companyId][usdcAddress];
-        }
+        if (usdcAddress != address(0)) total += companyTokenBalances[_companyId][usdcAddress];
+    }
+
+    /// @dev Pulls `amount` of `token` from company funds (vault or mapping) into this contract.
+    function _debitCompany(uint96 companyId, address token, uint256 amount) private {
+        address v = companyVault[companyId];
+        if (v != address(0)) { ICompanyVault(v).withdraw(token, amount, address(this)); return; }
+        if (companyTokenBalances[companyId][token] < amount) revert BelowReserve();
+        companyTokenBalances[companyId][token] -= amount;
     }
 
     /// @dev Reverts with CompanyNotFound if companyId is not registered.

@@ -6,6 +6,7 @@ export * from './abis/lpStaking';
 export * from './abis/erc20';
 export * from './abis/treasury';
 export * from './abis/companiesHouse';
+export * from './abis/companiesHouseViews';
 export * from './abis/payrollExecutor';
 export * from './abis/companyDefi';
 export * from './abis/companyVault';

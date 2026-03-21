@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {Test, console} from "forge-std/Test.sol";
 import {BaseTest} from "../BaseTest.t.sol";
 import {CompaniesHouseV1} from "../../src/CompaniesHouseV1.sol";
+import {CompaniesHouseViewsV1} from "../../src/CompaniesHouseViewsV1.sol";
 import {PayrollExecutor} from "../../src/PayrollExecutor.sol";
 import {MockSwapRouter} from "../mocks/MockSwapRouter.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
@@ -15,6 +16,7 @@ import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transpa
 contract PayrollExecutorTest is BaseTest {
 
     CompaniesHouseV1 companiesHouse;
+    CompaniesHouseViewsV1 chViews;
     PayrollExecutor  payrollExecutor;
     MockSwapRouter   mockSwapRouter;
 
@@ -54,6 +56,7 @@ contract PayrollExecutorTest is BaseTest {
         );
         address proxy = address(new TransparentUpgradeableProxy(address(impl), multiSig, initData));
         companiesHouse = CompaniesHouseV1(proxy);
+        chViews = new CompaniesHouseViewsV1(proxy);
 
         PayrollExecutor peImpl = new PayrollExecutor();
         bytes memory peInitData = abi.encodeWithSelector(
@@ -120,7 +123,7 @@ contract PayrollExecutorTest is BaseTest {
 
     function _fundCompanyForPayroll() internal {
         uint256 monthly    = companiesHouse.getMonthlyBurnUSDT(companyId);
-        uint256 pending    = companiesHouse.getTotalPendingUSDT(companyId);
+        uint256 pending    = chViews.getTotalPendingUSDT(companyId);
         uint256 reserve    = companiesHouse.getRequiredReserveUSDT(companyId);
         uint256 usdtNeeded = pending + reserve + monthly; // extra buffer
 
@@ -276,7 +279,7 @@ contract PayrollExecutorTest is BaseTest {
         assertFalse(payrollExecutor.hasActiveQueue(companyId));
 
         // The bonus (submittedAt > snapshotTs) must still show as pending
-        uint256 pendingAfter = companiesHouse.getTotalPendingUSDT(companyId);
+        uint256 pendingAfter = chViews.getTotalPendingUSDT(companyId);
         assertGe(pendingAfter, bonusAmount, "post-snapshot bonus should remain pending after execute");
     }
 
@@ -305,7 +308,7 @@ contract PayrollExecutorTest is BaseTest {
         _warp30Days();
         // Fund only the pending amount — not enough to cover the required reserve
 
-        uint256 pending = companiesHouse.getTotalPendingUSDT(companyId);
+        uint256 pending = chViews.getTotalPendingUSDT(companyId);
         // Deposit just the pending — no reserve buffer
         mockUSDT.mint(founder, pending);
         vm.startPrank(founder);

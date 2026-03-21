@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {Test, console} from "forge-std/Test.sol";
 import {BaseTest} from "../BaseTest.t.sol";
 import {CompaniesHouseV1} from "../../src/CompaniesHouseV1.sol";
+import {CompaniesHouseViewsV1} from "../../src/CompaniesHouseViewsV1.sol";
 import {PayrollExecutor} from "../../src/PayrollExecutor.sol";
 import {MockSwapRouter} from "../mocks/MockSwapRouter.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
@@ -17,6 +18,7 @@ import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transpa
 contract PayEmployeeDebugTest is BaseTest {
 
     CompaniesHouseV1 companiesHouse;
+    CompaniesHouseViewsV1 chViews;
     PayrollExecutor  payrollExecutor;
     MockSwapRouter   mockSwapRouter;
 
@@ -57,6 +59,7 @@ contract PayEmployeeDebugTest is BaseTest {
         );
         address proxy = address(new TransparentUpgradeableProxy(address(impl), multiSig, initData));
         companiesHouse = CompaniesHouseV1(proxy);
+        chViews = new CompaniesHouseViewsV1(proxy);
 
         PayrollExecutor peImpl = new PayrollExecutor();
         bytes memory peInitData = abi.encodeWithSelector(PayrollExecutor.initialize.selector, address(companiesHouse), founder);
@@ -232,7 +235,7 @@ contract PayEmployeeDebugTest is BaseTest {
         companiesHouse.depositToCompany(companyId, address(werewolfToken), wlfDeposit);
         vm.stopPrank();
 
-        uint256 usdtNeeded = companiesHouse.getTotalPendingUSDT(companyId) + companiesHouse.getRequiredReserveUSDT(companyId);
+        uint256 usdtNeeded = chViews.getTotalPendingUSDT(companyId) + companiesHouse.getRequiredReserveUSDT(companyId);
         vm.startPrank(founder);
         mockUSDT.mint(founder, usdtNeeded);
         mockUSDT.approve(address(companiesHouse), usdtNeeded);
@@ -310,7 +313,7 @@ contract PayEmployeeDebugTest is BaseTest {
         companiesHouse.depositToCompany(companyId, address(werewolfToken), wlfDeposit);
         vm.stopPrank();
 
-        uint256 usdtNeeded = companiesHouse.getTotalPendingUSDT(companyId) + companiesHouse.getRequiredReserveUSDT(companyId);
+        uint256 usdtNeeded = chViews.getTotalPendingUSDT(companyId) + companiesHouse.getRequiredReserveUSDT(companyId);
         vm.startPrank(founder);
         mockUSDT.mint(founder, usdtNeeded);
         mockUSDT.approve(address(companiesHouse), usdtNeeded);

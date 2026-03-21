@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {Test, console} from "forge-std/Test.sol";
 import {BaseTest} from "../BaseTest.t.sol";
 import {CompaniesHouseV1} from "../../src/CompaniesHouseV1.sol";
+import {CompaniesHouseViewsV1} from "../../src/CompaniesHouseViewsV1.sol";
 import {PayrollExecutor} from "../../src/PayrollExecutor.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
@@ -12,6 +13,7 @@ contract CompaniesHouseTest is BaseTest {
     // ── Contracts ──────────────────────────────────────────────────────────────
 
     CompaniesHouseV1 companiesHouse;
+    CompaniesHouseViewsV1 chViews;
     PayrollExecutor payrollExecutor;
 
     // ── Test actors ────────────────────────────────────────────────────────────
@@ -50,6 +52,7 @@ contract CompaniesHouseTest is BaseTest {
         );
         address proxy = address(new TransparentUpgradeableProxy(address(impl), multiSig, initData));
         companiesHouse = CompaniesHouseV1(proxy);
+        chViews = new CompaniesHouseViewsV1(proxy);
 
         // Deploy PayrollExecutor and wire into CompaniesHouseV1
         PayrollExecutor peImpl = new PayrollExecutor();
@@ -200,7 +203,7 @@ contract CompaniesHouseTest is BaseTest {
 
     function test_GetOwnerCompanyIds() public {
         _createCompany();
-        uint96[] memory ids = companiesHouse.getOwnerCompanyIds(founder);
+        uint96[] memory ids = chViews.getOwnerCompanyIds(founder);
         assertEq(ids.length, 1);
         assertEq(ids[0], 1);
     }
@@ -475,7 +478,7 @@ contract CompaniesHouseTest is BaseTest {
         );
 
         // Bonus should be immediately visible in total pending
-        uint256 pending = companiesHouse.getTotalPendingUSDT(id);
+        uint256 pending = chViews.getTotalPendingUSDT(id);
         assertGe(pending, bonusUSDT, "Bonus not included in pending USDT");
     }
 
@@ -559,7 +562,7 @@ contract CompaniesHouseTest is BaseTest {
         uint256 fee = totalExpected * 500 / 10_000; // 5%
         uint256 netExpected = totalExpected - fee;
 
-        uint256 pendingBefore = companiesHouse.getTotalPendingUSDT(id);
+        uint256 pendingBefore = chViews.getTotalPendingUSDT(id);
 
         vm.prank(founder);
         payrollExecutor.payEmployee(employee1, id);
@@ -573,7 +576,7 @@ contract CompaniesHouseTest is BaseTest {
 
         // pendingEarnings cleared: total pending dropped by at least the bonus amount
         // (founder's salary still accrues, so pending is not exactly 0)
-        uint256 pendingAfter = companiesHouse.getTotalPendingUSDT(id);
+        uint256 pendingAfter = chViews.getTotalPendingUSDT(id);
         assertLe(pendingAfter, pendingBefore - bonusUSDT, "Bonus not drained from pendingEarnings");
     }
 
@@ -591,7 +594,7 @@ contract CompaniesHouseTest is BaseTest {
 
         vm.warp(block.timestamp + 30 days);
 
-        uint256 totalPending = companiesHouse.getTotalPendingUSDT(id);
+        uint256 totalPending = chViews.getTotalPendingUSDT(id);
         _depositUSDT(id, _requiredUSDT(id, totalPending));
 
         uint256 balanceBefore = mockUSDT.balanceOf(employee1);
